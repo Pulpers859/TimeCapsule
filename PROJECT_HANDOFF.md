@@ -1,6 +1,6 @@
 # Project Handoff
 
-This file is the `TimeCapsule`-specific companion to [AI_PROJECT_HANDOFF_TEMPLATE.md](</C:/Users/Patrick's Computer/OneDrive - WV School of Osteopathic Medicine/Desktop/TimeCapsule/AI_PROJECT_HANDOFF_TEMPLATE.md>), which defines the broader machine-wide repo and workflow standard.
+This file is the `TimeCapsule`-specific companion to [AI_PROJECT_HANDOFF_TEMPLATE.md](/C:/Dev/TimeCapsule/AI_PROJECT_HANDOFF_TEMPLATE.md), which defines the broader machine-wide repo and workflow standard.
 
 ## Project Identity
 - Project name: `TimeCapsule`
