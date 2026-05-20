@@ -4,7 +4,7 @@ import Photos
 class NotificationManager: NSObject {
 
     static let shared = NotificationManager()
-    private init() {
+    private override init() {
         super.init()
         NotificationCenter.default.addObserver(
             self,
