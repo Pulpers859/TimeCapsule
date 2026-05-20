@@ -205,7 +205,11 @@ struct FullScreenPhotoView: View {
             }
         } else {
             Task {
-                if let image = await loadImage(from: asset, targetSize: CGSize(width: 1290, height: 2796)) {
+                if let image = await loadImage(
+                    from: asset,
+                    targetSize: CGSize(width: 1290, height: 2796),
+                    contentMode: .aspectFit
+                ) {
                     await MainActor.run {
                         shareItem = ShareItem(items: [image, caption])
                     }
@@ -294,13 +298,9 @@ struct FullResAssetView: View {
             if shouldRender {
                 if asset.mediaType == .video {
                     ZStack(alignment: .bottom) {
-                        if let image {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                        }
                         if let player {
                             PlainVideoPlayerView(player: player)
+                                .background(Color.black)
 
                             if showControls && isActive {
                                 VideoPlaybackControls(
@@ -343,6 +343,7 @@ struct FullResAssetView: View {
                                 .tint(.white)
                         }
                     }
+                    .background(Color.black)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onToggleChrome)
                 } else {
@@ -373,8 +374,8 @@ struct FullResAssetView: View {
                 return
             }
 
-            image = await loadImage(from: asset, targetSize: CGSize(width: 1290, height: 2796))
             if asset.mediaType == .video {
+                image = nil
                 let loadedPlayer = await loadPlayer(from: asset)
                 player = loadedPlayer
                 progressObserver.attach(
@@ -386,6 +387,12 @@ struct FullResAssetView: View {
                 if isActive {
                     loadedPlayer?.play()
                 }
+            } else {
+                image = await loadImage(
+                    from: asset,
+                    targetSize: CGSize(width: 1290, height: 2796),
+                    contentMode: .aspectFit
+                )
             }
         }
         .onChange(of: isActive) { active in
@@ -557,6 +564,19 @@ struct VideoPlaybackControls: View {
 }
 
 final class PlayerContainerView: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .black
+        isOpaque = true
+        clipsToBounds = true
+        playerLayer.backgroundColor = UIColor.black.cgColor
+        playerLayer.needsDisplayOnBoundsChange = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     override static var layerClass: AnyClass {
         AVPlayerLayer.self
     }
@@ -570,6 +590,22 @@ final class PlayerContainerView: UIView {
         set {
             playerLayer.player = newValue
             playerLayer.videoGravity = .resizeAspect
+            setNeedsLayout()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        playerLayer.frame = bounds
+        CATransaction.commit()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            playerLayer.player = nil
         }
     }
 }
@@ -577,7 +613,8 @@ final class PlayerContainerView: UIView {
 @MainActor
 final class PlayerProgressObserver {
     private weak var player: AVPlayer?
-    private var pollingTask: Task<Void, Never>?
+    private var timeObserverToken: Any?
+    private var playbackEndObserver: NSObjectProtocol?
     private var onCurrentTimeChange: ((Double) -> Void)?
     private var onDurationChange: ((Double) -> Void)?
     private var onPlayingChange: ((Bool) -> Void)?
@@ -603,19 +640,37 @@ final class PlayerProgressObserver {
             onPlayingChange(false)
             return
         }
+
         publishSnapshot(for: player)
-        pollingTask = Task { [weak self, weak player] in
-            while !Task.isCancelled {
+
+        let interval = CMTime(seconds: 0.2, preferredTimescale: 600)
+        timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak player] time in
+            guard let self, let player else { return }
+            let seconds = time.seconds.isFinite ? time.seconds : nil
+            self.publishSnapshot(for: player, currentTimeOverride: seconds)
+        }
+
+        if let currentItem = player.currentItem {
+            playbackEndObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: currentItem,
+                queue: .main
+            ) { [weak self, weak player] _ in
                 guard let self, let player else { return }
                 self.publishSnapshot(for: player)
-                try? await Task.sleep(nanoseconds: 200_000_000)
             }
         }
     }
 
     func detach() {
-        pollingTask?.cancel()
-        pollingTask = nil
+        if let player, let timeObserverToken {
+            player.removeTimeObserver(timeObserverToken)
+        }
+        timeObserverToken = nil
+        if let playbackEndObserver {
+            NotificationCenter.default.removeObserver(playbackEndObserver)
+        }
+        playbackEndObserver = nil
         player = nil
         latestDuration = 0
         onCurrentTimeChange?(0)
@@ -641,8 +696,10 @@ final class PlayerProgressObserver {
             to: CMTime(seconds: bounded, preferredTimescale: 600),
             toleranceBefore: .zero,
             toleranceAfter: .zero
-        )
-        publishSnapshot(for: player, currentTimeOverride: bounded)
+        ) { [weak self, weak player] _ in
+            guard let self, let player else { return }
+            self.publishSnapshot(for: player, currentTimeOverride: bounded)
+        }
     }
 
     private func publishSnapshot(for player: AVPlayer, currentTimeOverride: Double? = nil) {

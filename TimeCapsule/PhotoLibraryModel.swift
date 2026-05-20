@@ -94,8 +94,13 @@ class PhotoLibraryModel: ObservableObject {
     }
 }
 
-// Helper to load UIImage from PHAsset
-func loadImage(from asset: PHAsset, targetSize: CGSize = CGSize(width: 800, height: 800)) async -> UIImage? {
+// Helper to load UIImage from PHAsset. Callers can choose whether they want a
+// cropped thumbnail-style result or a full-frame display image.
+func loadImage(
+    from asset: PHAsset,
+    targetSize: CGSize = CGSize(width: 800, height: 800),
+    contentMode: PHImageContentMode = .aspectFill
+) async -> UIImage? {
     await withCheckedContinuation { continuation in
         let manager = PHImageManager.default()
         let options = PHImageRequestOptions()
@@ -104,7 +109,7 @@ func loadImage(from asset: PHAsset, targetSize: CGSize = CGSize(width: 800, heig
         options.isSynchronous = false
         var didResume = false
 
-        _ = manager.requestImage(for: asset, targetSize: targetSize, contentMode: .aspectFill, options: options) { image, info in
+        _ = manager.requestImage(for: asset, targetSize: targetSize, contentMode: contentMode, options: options) { image, info in
             let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
             if isDegraded { return }
             if didResume { return }
