@@ -240,13 +240,6 @@ struct YearSection: View {
                                     VideoDurationBadge(duration: asset.duration)
                                 }
                             }
-                            .onTapGesture {
-                                if isSelecting {
-                                    toggleSelection(asset)
-                                } else {
-                                    selectedAsset = IdentifiableAsset(asset)
-                                }
-                            }
                             .id(asset.localIdentifier)
 
                         if isSelecting {
@@ -256,6 +249,15 @@ struct YearSection: View {
                                 .foregroundStyle(isSelected ? .white : .white.opacity(0.7))
                                 .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
                                 .padding(6)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if isSelecting {
+                            toggleSelection(asset)
+                        } else {
+                            selectedAsset = IdentifiableAsset(asset)
                         }
                     }
                 }

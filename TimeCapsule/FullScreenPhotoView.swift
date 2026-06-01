@@ -3,6 +3,7 @@ import Photos
 import AVKit
 import AVFoundation
 import UIKit
+import CoreLocation
 
 struct FullScreenPhotoView: View {
     let asset: PHAsset
@@ -19,8 +20,13 @@ struct FullScreenPhotoView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var isCurrentAssetZoomed = false
     @State private var isVideoScrubbing = false
+    @State private var locationName: String? = nil
+    private let geocoder = CLGeocoder()
     private var currentAssetIsVideo: Bool {
         visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .video
+    }
+    private var currentAssetIsImage: Bool {
+        visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .image
     }
 
     init(asset: PHAsset, allAssets: [PHAsset]) {
@@ -90,14 +96,25 @@ struct FullScreenPhotoView: View {
                                 .background(.ultraThinMaterial, in: Circle())
                         }
                         Spacer()
-                        if let date = visibleAssets[currentIndex].creationDate {
-                            Text(date.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(.ultraThinMaterial, in: Capsule())
+                        VStack(spacing: 4) {
+                            if let date = visibleAssets[currentIndex].creationDate {
+                                Text(date.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.white)
+                            }
+                            if currentAssetIsImage, let location = locationName {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "location.fill")
+                                        .font(.system(size: 8))
+                                    Text(location)
+                                        .font(.caption2)
+                                }
+                                .foregroundStyle(.white.opacity(0.8))
+                            }
                         }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         Spacer()
                         Button(action: { shareCurrentPhoto() }) {
                             Image(systemName: "square.and.arrow.up")
@@ -145,8 +162,12 @@ struct FullScreenPhotoView: View {
             isCurrentAssetZoomed = false
             isVideoScrubbing = false
             preloadAdjacentMedia()
+            resolveLocation()
         }
-        .onAppear(perform: preloadAdjacentMedia)
+        .onAppear {
+            preloadAdjacentMedia()
+            resolveLocation()
+        }
         .onDisappear {
             preheater.stopCaching()
         }
@@ -236,6 +257,7 @@ struct FullScreenPhotoView: View {
                         }
                     }
                     preloadAdjacentMedia()
+                    resolveLocation()
 
                     NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
 
@@ -253,6 +275,23 @@ struct FullScreenPhotoView: View {
 
     private func preloadAdjacentMedia() {
         preheater.updateCaching(for: visibleAssets, currentIndex: currentIndex)
+    }
+
+    private func resolveLocation() {
+        locationName = nil
+        guard visibleAssets.indices.contains(currentIndex) else { return }
+        let current = visibleAssets[currentIndex]
+        guard current.mediaType == .image, let coordinate = current.location else { return }
+
+        geocoder.cancelGeocode()
+        geocoder.reverseGeocodeLocation(coordinate) { placemarks, _ in
+            guard let place = placemarks?.first else { return }
+            let parts = [place.locality, place.administrativeArea].compactMap { $0 }
+            let resolved = parts.isEmpty ? place.name : parts.joined(separator: ", ")
+            DispatchQueue.main.async {
+                locationName = resolved
+            }
+        }
     }
 
     private var deleteErrorBinding: Binding<Bool> {
