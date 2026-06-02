@@ -1,0 +1,8 @@
+#!/bin/sh
+
+branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+
+if [ "$branch" = "main" ]; then
+  echo "Direct commits to main are blocked in this repo. Switch to dev or use an explicit release flow." >&2
+  exit 1
+fi
