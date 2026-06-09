@@ -31,6 +31,9 @@ struct TimeCapsuleView: View {
     private var totalFilteredCount: Int {
         filteredYearGroups.reduce(0) { $0 + $1.assets.count }
     }
+    private var allFilteredAssets: [PHAsset] {
+        filteredYearGroups.flatMap(\.assets)
+    }
 
     var body: some View {
         NavigationStack {
@@ -54,6 +57,7 @@ struct TimeCapsuleView: View {
                             ForEach(filteredYearGroups) { group in
                                 YearSection(
                                     group: group,
+                                    allAssets: allFilteredAssets,
                                     isSelecting: isSelecting,
                                     selectedIDs: $selectedIDs
                                 )
@@ -203,6 +207,7 @@ struct TimeCapsuleView: View {
 
 struct YearSection: View {
     let group: YearGroup
+    let allAssets: [PHAsset]
     let isSelecting: Bool
     @Binding var selectedIDs: Set<String>
     @State private var selectedAsset: IdentifiableAsset? = nil
@@ -264,7 +269,7 @@ struct YearSection: View {
             }
         }
         .fullScreenCover(item: $selectedAsset) { wrapper in
-            FullScreenPhotoView(asset: wrapper.asset, allAssets: group.assets)
+            FullScreenPhotoView(asset: wrapper.asset, allAssets: allAssets)
         }
     }
 
