@@ -4,6 +4,7 @@ import AVKit
 import AVFoundation
 import UIKit
 import CoreLocation
+import MapKit
 
 struct FullScreenPhotoView: View {
     let asset: PHAsset
@@ -21,6 +22,10 @@ struct FullScreenPhotoView: View {
     @State private var isCurrentAssetZoomed = false
     @State private var isVideoScrubbing = false
     @State private var locationName: String? = nil
+    @State private var isAutoPlaying = false
+    @State private var autoPlayProgress: Double = 0
+    @State private var showInfo = false
+    private let autoPlayTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     private let geocoder = CLGeocoder()
     private var currentAssetIsVideo: Bool {
         visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .video
@@ -86,6 +91,34 @@ struct FullScreenPhotoView: View {
             }
 
             if showChrome && !visibleAssets.isEmpty {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 130)
+                    Spacer()
+                    LinearGradient(colors: [.clear, .black.opacity(0.45)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 160)
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+                .transition(.opacity)
+            }
+
+            if isAutoPlaying && !visibleAssets.isEmpty {
+                VStack {
+                    StoryProgressBar(
+                        count: visibleAssets.count,
+                        currentIndex: currentIndex,
+                        progress: autoPlayProgress
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+                .transition(.opacity)
+            }
+
+            if showChrome && !visibleAssets.isEmpty {
                 VStack {
                     HStack {
                         Button(action: { dismiss() }) {
@@ -133,10 +166,32 @@ struct FullScreenPhotoView: View {
                     }
                     .padding()
                     Spacer()
-                    Text("\(currentIndex + 1) of \(visibleAssets.count)")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(.bottom, currentAssetIsVideo ? 92 : 8)
+                    HStack {
+                        Button(action: { showInfo = true }) {
+                            Image(systemName: "info.circle")
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(12)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                        Spacer()
+                        Text("\(currentIndex + 1) of \(visibleAssets.count)")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(.ultraThinMaterial, in: Capsule())
+                        Spacer()
+                        Button(action: toggleAutoPlay) {
+                            Image(systemName: isAutoPlaying ? "pause.fill" : "play.fill")
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(12)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, currentAssetIsVideo ? 92 : 8)
                 }
                 .transition(.opacity)
             }
@@ -158,11 +213,28 @@ struct FullScreenPhotoView: View {
         } message: {
             Text(deleteError ?? "Something went wrong while moving the item to Recently Deleted.")
         }
+        .sheet(isPresented: $showInfo) {
+            if visibleAssets.indices.contains(currentIndex) {
+                MemoryInfoSheet(asset: visibleAssets[currentIndex], locationName: locationName)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
         .onChange(of: currentIndex) { _ in
             isCurrentAssetZoomed = false
             isVideoScrubbing = false
+            autoPlayProgress = 0
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
             preloadAdjacentMedia()
             resolveLocation()
+        }
+        .onChange(of: isCurrentAssetZoomed) { zoomed in
+            if zoomed {
+                stopAutoPlay()
+            }
+        }
+        .onReceive(autoPlayTimer) { _ in
+            autoPlayTick()
         }
         .onAppear {
             preloadAdjacentMedia()
@@ -170,8 +242,67 @@ struct FullScreenPhotoView: View {
         }
         .onDisappear {
             preheater.stopCaching()
+            UIApplication.shared.isIdleTimerDisabled = false
         }
         .preferredColorScheme(.dark)
+    }
+
+    private var currentAutoPlayDuration: Double {
+        guard visibleAssets.indices.contains(currentIndex) else { return 4 }
+        let asset = visibleAssets[currentIndex]
+        if asset.mediaType == .video {
+            return min(max(asset.duration, 3), 15)
+        }
+        return 4
+    }
+
+    private func toggleAutoPlay() {
+        if isAutoPlaying {
+            stopAutoPlay()
+        } else {
+            guard !visibleAssets.isEmpty else { return }
+            autoPlayProgress = 0
+            withAnimation {
+                // Starting from the end means "replay" — wrap to the beginning.
+                if currentIndex == visibleAssets.count - 1 && visibleAssets.count > 1 {
+                    currentIndex = 0
+                }
+                isAutoPlaying = true
+                showChrome = false
+            }
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
+    }
+
+    private func stopAutoPlay() {
+        guard isAutoPlaying else { return }
+        withAnimation {
+            isAutoPlaying = false
+        }
+        autoPlayProgress = 0
+        UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    private func autoPlayTick() {
+        guard isAutoPlaying, !visibleAssets.isEmpty else { return }
+        // Hold while the user is mid-interaction or a sheet/dialog is up.
+        guard shareItem == nil, !showDeleteConfirm, !showInfo,
+              !isCurrentAssetZoomed, !isVideoScrubbing, dragOffset == 0 else { return }
+
+        autoPlayProgress += 0.05 / max(currentAutoPlayDuration, 0.5)
+        if autoPlayProgress >= 1 {
+            if currentIndex < visibleAssets.count - 1 {
+                autoPlayProgress = 0
+                withAnimation(.easeOut(duration: 0.25)) {
+                    currentIndex += 1
+                }
+            } else {
+                stopAutoPlay()
+                withAnimation {
+                    showChrome = true
+                }
+            }
+        }
     }
 
     private func pageDragGesture(pageWidth: CGFloat, isEnabled: Bool) -> some Gesture {
@@ -299,6 +430,163 @@ struct FullScreenPhotoView: View {
             get: { deleteError != nil },
             set: { if !$0 { deleteError = nil } }
         )
+    }
+}
+
+struct StoryProgressBar: View {
+    let count: Int
+    let currentIndex: Int
+    let progress: Double
+
+    /// Past this many items, segments get too thin to read — fall back to one
+    /// continuous bar instead of rendering sliver capsules.
+    private let maxSegments = 24
+
+    var body: some View {
+        if count > maxSegments {
+            bar(fraction: overallFraction)
+        } else {
+            HStack(spacing: 3) {
+                ForEach(0..<count, id: \.self) { index in
+                    bar(fraction: fraction(for: index))
+                }
+            }
+        }
+    }
+
+    private var overallFraction: Double {
+        guard count > 0 else { return 0 }
+        return (Double(currentIndex) + min(max(progress, 0), 1)) / Double(count)
+    }
+
+    private func fraction(for index: Int) -> Double {
+        if index < currentIndex { return 1 }
+        if index == currentIndex { return min(max(progress, 0), 1) }
+        return 0
+    }
+
+    private func bar(fraction: Double) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(.white.opacity(0.3))
+                Capsule()
+                    .fill(.white)
+                    .frame(width: max(geo.size.width * fraction, 0))
+            }
+        }
+        .frame(height: 3)
+    }
+}
+
+struct MemoryInfoSheet: View {
+    let asset: PHAsset
+    let locationName: String?
+    @State private var region: MKCoordinateRegion
+
+    init(asset: PHAsset, locationName: String?) {
+        self.asset = asset
+        self.locationName = locationName
+        let center = asset.location?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        _region = State(initialValue: MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+        ))
+    }
+
+    private struct MapPin: Identifiable {
+        let id = "memory-pin"
+        let coordinate: CLLocationCoordinate2D
+    }
+
+    private var yearsAgoLabel: String? {
+        guard let date = asset.creationDate else { return nil }
+        let yearsAgo = Calendar.current.component(.year, from: Date()) - Calendar.current.component(.year, from: date)
+        guard yearsAgo > 0 else { return nil }
+        return yearsAgo == 1 ? "1 year ago" : "\(yearsAgo) years ago"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let yearsAgoLabel {
+                        Text(yearsAgoLabel)
+                            .font(.title2.weight(.bold))
+                    }
+                    if let date = asset.creationDate {
+                        Text(date.formatted(date: .complete, time: .shortened))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(spacing: 0) {
+                    infoRow(
+                        label: "Kind",
+                        value: asset.mediaType == .video ? "Video" : "Photo",
+                        icon: asset.mediaType == .video ? "video" : "photo"
+                    )
+                    Divider().padding(.leading, 40)
+                    infoRow(
+                        label: "Dimensions",
+                        value: "\(asset.pixelWidth) × \(asset.pixelHeight)",
+                        icon: "aspectratio"
+                    )
+                    if asset.mediaType == .video {
+                        Divider().padding(.leading, 40)
+                        infoRow(
+                            label: "Duration",
+                            value: formattedDuration(asset.duration),
+                            icon: "timer"
+                        )
+                    }
+                    if let locationName {
+                        Divider().padding(.leading, 40)
+                        infoRow(label: "Location", value: locationName, icon: "location")
+                    }
+                }
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                if let coordinate = asset.location?.coordinate {
+                    Map(
+                        coordinateRegion: $region,
+                        interactionModes: [.zoom, .pan],
+                        annotationItems: [MapPin(coordinate: coordinate)]
+                    ) { pin in
+                        MapMarker(coordinate: pin.coordinate, tint: .red)
+                    }
+                    .frame(height: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .allowsHitTesting(false)
+                }
+            }
+            .padding(20)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private func infoRow(label: String, value: String, icon: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(width: 28)
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline.weight(.medium))
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+    }
+
+    private func formattedDuration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 

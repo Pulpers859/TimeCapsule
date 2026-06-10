@@ -57,21 +57,18 @@ class PhotoLibraryModel: ObservableObject {
         let calendar = Calendar.current
         let today = Date()
         let currentYear = calendar.component(.year, from: today)
-        let month = calendar.component(.month, from: today)
-        let day = calendar.component(.day, from: today)
 
         var groups: [YearGroup] = []
 
-        // Look back up to 20 years
-        for year in stride(from: currentYear - 1, through: currentYear - 20, by: -1) {
-            guard let startDate = calendar.date(from: DateComponents(year: year, month: month, day: day)),
-                  let endDate = calendar.date(byAdding: .day, value: 1, to: startDate) else { continue }
+        // Look back up to 20 years, widened by the user's day window setting.
+        for year in stride(from: currentYear - 1, through: currentYear - MemoryWindow.lookbackYears, by: -1) {
+            guard let range = MemoryWindow.range(for: today, anniversaryYear: year, calendar: calendar) else { continue }
 
             let fetchOptions = PHFetchOptions()
             fetchOptions.predicate = NSPredicate(
                 format: "creationDate >= %@ AND creationDate < %@",
-                startDate as NSDate,
-                endDate as NSDate
+                range.start as NSDate,
+                range.end as NSDate
             )
             fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
 

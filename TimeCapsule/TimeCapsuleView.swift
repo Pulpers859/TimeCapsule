@@ -1,5 +1,6 @@
 import SwiftUI
 import Photos
+import UIKit
 
 struct TimeCapsuleView: View {
     let yearGroups: [YearGroup]
@@ -8,6 +9,9 @@ struct TimeCapsuleView: View {
     @State private var showDeleteConfirm = false
     @State private var showSettings = false
     @State private var deleteError: String? = nil
+    @State private var recapProgress: Double? = nil
+    @State private var recapShareItem: ShareItem? = nil
+    @State private var recapError: String? = nil
     @SceneStorage("TimeCapsule.selectedFilter") private var selectedFilterRawValue = MemoryFilter.all.rawValue
 
     private var dateString: String {
@@ -84,6 +88,7 @@ struct TimeCapsuleView: View {
                         onOpenSettings: {
                             showSettings = true
                         },
+                        onCreateRecap: createRecap,
                         onJumpToYear: { group in
                             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                                 proxy.scrollTo(sectionID(for: group), anchor: .top)
@@ -129,12 +134,60 @@ struct TimeCapsuleView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
+            .sheet(item: $recapShareItem) { item in
+                ShareSheet(items: item.items)
+            }
             .alert("Couldn't Delete", isPresented: deleteErrorBinding) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(deleteError ?? "Something went wrong while moving the item to Recently Deleted.")
             }
+            .alert("Recap", isPresented: recapErrorBinding) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(recapError ?? "Couldn't create the recap video.")
+            }
+            .overlay {
+                if let progress = recapProgress {
+                    RecapExportOverlay(progress: progress)
+                }
+            }
         }
+    }
+
+    private func createRecap() {
+        guard recapProgress == nil else { return }
+        let photos = allFilteredAssets.filter { $0.mediaType == .image }
+        guard photos.count >= 2 else {
+            recapError = "A recap needs at least 2 photos from this day."
+            return
+        }
+        recapProgress = 0
+        let title = dateString
+        Task {
+            let url = await MemoryRecapExporter.export(assets: photos, title: title) { value in
+                DispatchQueue.main.async {
+                    if recapProgress != nil {
+                        recapProgress = min(max(value, 0), 1)
+                    }
+                }
+            }
+            await MainActor.run {
+                recapProgress = nil
+                if let url {
+                    recapShareItem = ShareItem(items: [url])
+                } else {
+                    recapError = "Couldn't create the recap video. Please try again."
+                }
+            }
+        }
+    }
+
+    private var recapErrorBinding: Binding<Bool> {
+        Binding(
+            get: { recapError != nil },
+            set: { if !$0 { recapError = nil } }
+        )
     }
 
     private func deleteSelectedPhotos() {
@@ -221,13 +274,16 @@ struct YearSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Year header
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(String(group.year))
                     .font(.system(size: 36, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary)
                 Text(group.label)
-                    .font(.subheadline)
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color(.secondarySystemGroupedBackground), in: Capsule())
             }
             .padding(.horizontal, 16)
             .padding(.top, 24)
@@ -280,6 +336,7 @@ struct YearSection: View {
         } else {
             selectedIDs.insert(id)
         }
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 }
 
@@ -309,7 +366,9 @@ struct AssetThumbnailView: View {
             image = nil
             let loadedImage = await loadImage(from: asset, targetSize: CGSize(width: 300, height: 300))
             guard !Task.isCancelled else { return }
-            image = loadedImage
+            withAnimation(.easeIn(duration: 0.18)) {
+                image = loadedImage
+            }
         }
     }
 }
@@ -320,6 +379,12 @@ struct OverviewHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.subheadline)
+                .foregroundStyle(
+                    LinearGradient(colors: [.orange, .pink], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+
             Text(totalCount == 1 ? "1 memory today" : "\(totalCount) memories today")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
@@ -383,6 +448,7 @@ struct MemoryControlsBar: View {
     let onSelectFilter: (MemoryFilter) -> Void
     let onToggleSelecting: () -> Void
     let onOpenSettings: () -> Void
+    let onCreateRecap: () -> Void
     let onJumpToYear: (YearGroup) -> Void
 
     var body: some View {
@@ -394,6 +460,7 @@ struct MemoryControlsBar: View {
 
                 HStack(spacing: 12) {
                     HeaderIconButton(systemImage: "gearshape", action: onOpenSettings)
+                    HeaderIconButton(systemImage: "sparkles", action: onCreateRecap)
                     Spacer()
                     Button(isSelecting ? "Done" : "Select", action: onToggleSelecting)
                         .font(.subheadline.weight(.semibold))
@@ -538,6 +605,29 @@ struct VideoDurationBadge: View {
         let minutes = total / 60
         let seconds = total % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+struct RecapExportOverlay: View {
+    let progress: Double
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.35).ignoresSafeArea()
+            VStack(spacing: 14) {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .frame(width: 180)
+                Text("Creating recap…")
+                    .font(.subheadline.weight(.medium))
+                Text("\(Int(progress * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .transition(.opacity)
     }
 }
 

@@ -125,12 +125,13 @@ class NotificationManager: NSObject {
 
                 let content = UNMutableNotificationContent()
                 content.title = "Time Capsule 📸"
+                let dayPhrase = MemoryWindow.dayWindow > 0 ? "around this day" : "this day"
                 if count == 1 {
-                    content.body = "You have 1 memory from this day in a past year."
+                    content.body = "You have 1 memory from \(dayPhrase) in a past year."
                 } else if count > 1 {
-                    content.body = "You have \(count) memories from this day in past years."
+                    content.body = "You have \(count) memories from \(dayPhrase) in past years."
                 } else {
-                    content.body = "Check today's memories from this day in past years."
+                    content.body = "Check today's memories from \(dayPhrase) in past years."
                 }
                 content.sound = .default
 
@@ -175,20 +176,19 @@ class NotificationManager: NSObject {
 
         let calendar = Calendar.current
         let currentYear = calendar.component(.year, from: date)
-        let month = calendar.component(.month, from: date)
-        let day = calendar.component(.day, from: date)
 
         var total = 0
 
-        for year in stride(from: currentYear - 1, through: currentYear - 20, by: -1) {
-            guard let startDate = calendar.date(from: DateComponents(year: year, month: month, day: day)),
-                  let endDate = calendar.date(byAdding: .day, value: 1, to: startDate) else { continue }
+        // Must mirror PhotoLibraryModel.fetchOnThisDay() exactly, including
+        // the user's day window, or the notification count drifts from the UI.
+        for year in stride(from: currentYear - 1, through: currentYear - MemoryWindow.lookbackYears, by: -1) {
+            guard let range = MemoryWindow.range(for: date, anniversaryYear: year, calendar: calendar) else { continue }
 
             let opts = PHFetchOptions()
             opts.predicate = NSPredicate(
                 format: "creationDate >= %@ AND creationDate < %@",
-                startDate as NSDate,
-                endDate as NSDate
+                range.start as NSDate,
+                range.end as NSDate
             )
             let result = PHAsset.fetchAssets(with: opts)
             result.enumerateObjects { asset, _, _ in
