@@ -1,42 +1,31 @@
 # TimeCapsule
 
-## What This App Is
-- Small SwiftUI iPhone app that shows photos and videos from this day in prior years.
-- Core flows: photo permission, "on this day" fetch, grouped browsing, full-screen viewing, sharing, deleting, and daily local notifications.
+`PROJECT_HANDOFF.md` is the canonical project brief. This file stays short on purpose so tool-specific instructions do not drift from the main handoff.
 
-## Architecture Map
-- `ContentView.swift` + `PhotoLibraryModel.swift`: permission state, loading state, fetch pipeline.
-- `TimeCapsuleView.swift`: grouped gallery, filters, multi-select, batch delete.
-- `FullScreenPhotoView.swift`: swipe, zoom, video playback, share, single delete, preheating.
-- `SettingsView.swift` + `NotificationManager.swift`: notification prefs, scheduling, refresh rules.
-- `TimeCapsuleApp.swift`: app launch and refresh-on-active behavior.
+## App Summary
+- SwiftUI iPhone app for "on this day" photo and video memories.
+- Core flows: photo permission, grouped browsing, full-screen viewing, deleting, sharing, and daily local notifications.
 
-## Real Failure Modes
-- UI memory counts drift from notification counts because date filtering exists in both `PhotoLibraryModel.fetchOnThisDay()` and `NotificationManager.countMemories(on:)`.
-- Delete behavior works in one surface but fails to refresh the gallery or notification schedule everywhere else.
-- `SettingsView` and `NotificationManager` drift on key names, defaults, or enable/disable behavior.
-- `FullScreenPhotoView.swift` regressions break swipe, zoom, scrub, player cleanup, or delete/share edge cases.
-- Windows can only verify the Swift toolchain here, not iPhone runtime behavior.
+## Live Runtime Structure
+- `TimeCapsule/App`: app launch and lifecycle wiring.
+- `TimeCapsule/Features`: home, gallery, full-screen, and settings UI.
+- `TimeCapsule/Models`: app-facing observable state.
+- `TimeCapsule/Services`: photo-memory and notification logic.
+- `TimeCapsule/Shared`: cross-feature support types and loaders.
+
+## High-Risk Contracts
+- Keep gallery memory counts and notification counts aligned through the shared memory service.
+- Keep settings `@AppStorage` keys and notification defaults aligned through shared notification preferences.
+- Keep delete refresh behavior aligned across gallery, full-screen, and `.timeCapsulePhotosDidChange`.
 
 ## Working Rules
-- Keep AI work narrow and tied to touched files.
-- If you change one side of a paired behavior, inspect the other side before finalizing:
-  - `PhotoLibraryModel.fetchOnThisDay()` and `NotificationManager.countMemories(on:)`
-  - `SettingsView` `@AppStorage` keys and `NotificationManager.Keys`
-  - `TimeCapsuleView.deleteSelectedPhotos()`, `FullScreenPhotoView.deleteCurrentPhoto()`, and `.timeCapsulePhotosDidChange`
-- Prefer opt-in review commands over automatic mutation.
-- No silent commits, pushes, destructive hooks, or broad auto-edits.
-- After Swift edits on Windows, run `swift-sanity-check` and separate validated behavior from iPhone-only behavior.
+- Keep edits narrow and evidence-based.
+- Prefer root-cause fixes over cosmetic duplication.
+- Run `swift-sanity-check` after Swift edits and separate Windows validation from iPhone-only behavior.
 
-## Use These
+## Useful Commands
 - `/preflight`
 - `/review-memory-counts`
 - `/review-delete-flow`
 - `/review-fullscreen`
 - `/session-brief`
-
-## Intentionally Omitted
-- Auto-commit or auto-push workflows.
-- Always-on hooks that mutate files or spam reminders.
-- Broad "analyze the whole app" commands.
-- Automation that claims to validate SwiftUI, Photos, AVKit, or notifications on Windows.

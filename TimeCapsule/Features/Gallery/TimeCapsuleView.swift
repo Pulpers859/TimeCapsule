@@ -544,7 +544,3 @@ struct IdentifiableAsset: Identifiable {
         self.asset = asset
     }
 }
-
-extension Notification.Name {
-    static let timeCapsulePhotosDidChange = Notification.Name("timeCapsulePhotosDidChange")
-}

@@ -1,6 +1,6 @@
 # Project Handoff
 
-This file is the `TimeCapsule`-specific companion to [AI_PROJECT_HANDOFF_TEMPLATE.md](/C:/Dev/TimeCapsule/AI_PROJECT_HANDOFF_TEMPLATE.md), which defines the broader machine-wide repo and workflow standard.
+This file is the `TimeCapsule`-specific companion to [AI_PROJECT_HANDOFF_TEMPLATE.md](/C:/Dev/TimeCapsule/docs/templates/AI_PROJECT_HANDOFF_TEMPLATE.md), which defines the broader machine-wide repo and workflow standard.
 
 ## Project Identity
 - Project name: `TimeCapsule`
@@ -104,14 +104,14 @@ The agent should confirm:
 
 ## Architecture / Product Notes
 - Main product purpose: Small SwiftUI iPhone app that shows photos and videos from this day in prior years, with grouped browsing, full-screen viewing, sharing, deleting, and daily local notifications.
-- Key modules or directories: `ContentView.swift`, `PhotoLibraryModel.swift`, `TimeCapsuleView.swift`, `FullScreenPhotoView.swift`, `SettingsView.swift`, `NotificationManager.swift`, `TimeCapsuleApp.swift`
+- Key modules or directories: `TimeCapsule/App`, `TimeCapsule/Features`, `TimeCapsule/Models`, `TimeCapsule/Services`, `TimeCapsule/Shared`, `TimeCapsule/Resources`
 - Known fragile areas:
-  - UI memory counts can drift from notification counts if date filtering logic diverges between `PhotoLibraryModel.fetchOnThisDay()` and `NotificationManager.countMemories(on:)`
+  - UI memory counts and notification counts should both flow through `MemoryLibrary`; bypassing that shared path can silently reintroduce drift
   - Delete behavior can succeed in one surface but fail to refresh the gallery or notification schedule everywhere else
-  - `SettingsView` and `NotificationManager` can drift on key names, defaults, or enable/disable behavior
+  - `SettingsView` and `NotificationManager` both depend on `NotificationPreferences`; edits should keep the shared defaults and keys authoritative
   - `FullScreenPhotoView.swift` is a regression-prone surface for swipe, zoom, scrub, player cleanup, and delete/share edge cases
 - Important evidence/product constraints:
-  - The current folder contains only loose Swift source files and no verified `.xcodeproj`, `.xcworkspace`, or `Package.swift`
+  - The live source of truth includes a verified `TimeCapsule.xcodeproj` at the repo root and the runtime app target under `TimeCapsule/`
   - Before bootstrap on 2026-05-19, no Git repo existed in the original OneDrive project folder
   - Windows can validate Swift syntax and toolchain behavior here, but not real iPhone runtime behavior for SwiftUI, Photos, AVKit, or local notifications
 - Runtime environments that matter: `iOS simulator`, `iPhone device`, `Windows Swift toolchain sanity check`

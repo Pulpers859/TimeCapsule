@@ -1,10 +1,11 @@
-import UserNotifications
 import Photos
+import UserNotifications
 
 class NotificationManager: NSObject {
 
     static let shared = NotificationManager()
     private override init() {
+        UserDefaults.standard.register(defaults: NotificationPreferences.defaults)
         super.init()
         NotificationCenter.default.addObserver(
             self,
@@ -17,47 +18,35 @@ class NotificationManager: NSObject {
     private let dailyPrefix = "timecapsule.daily."
     private let daysToSchedule = 60
     private let preferences = UserDefaults.standard
-
-    private enum Keys {
-        static let notificationsEnabled = "TimeCapsule.notificationsEnabled"
-        static let notificationHour = "TimeCapsule.notificationHour"
-        static let notificationMinute = "TimeCapsule.notificationMinute"
-        static let lastNotificationRefresh = "TimeCapsule.lastNotificationRefresh"
+    private var canAccessPhotoLibrary: Bool {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        return status == .authorized || status == .limited
     }
 
     var notificationsEnabled: Bool {
         get {
-            if preferences.object(forKey: Keys.notificationsEnabled) == nil {
-                return true
-            }
-            return preferences.bool(forKey: Keys.notificationsEnabled)
+            preferences.bool(forKey: NotificationPreferences.notificationsEnabledKey)
         }
         set {
-            preferences.set(newValue, forKey: Keys.notificationsEnabled)
+            preferences.set(newValue, forKey: NotificationPreferences.notificationsEnabledKey)
         }
     }
 
     var notificationHour: Int {
         get {
-            if preferences.object(forKey: Keys.notificationHour) == nil {
-                return 9
-            }
-            return preferences.integer(forKey: Keys.notificationHour)
+            preferences.integer(forKey: NotificationPreferences.notificationHourKey)
         }
         set {
-            preferences.set(newValue, forKey: Keys.notificationHour)
+            preferences.set(newValue, forKey: NotificationPreferences.notificationHourKey)
         }
     }
 
     var notificationMinute: Int {
         get {
-            if preferences.object(forKey: Keys.notificationMinute) == nil {
-                return 0
-            }
-            return preferences.integer(forKey: Keys.notificationMinute)
+            preferences.integer(forKey: NotificationPreferences.notificationMinuteKey)
         }
         set {
-            preferences.set(newValue, forKey: Keys.notificationMinute)
+            preferences.set(newValue, forKey: NotificationPreferences.notificationMinuteKey)
         }
     }
 
@@ -81,7 +70,7 @@ class NotificationManager: NSObject {
             return
         }
 
-        let lastRefresh = preferences.object(forKey: Keys.lastNotificationRefresh) as? Date
+        let lastRefresh = preferences.object(forKey: NotificationPreferences.lastNotificationRefreshKey) as? Date
         let shouldRefresh = force || lastRefresh == nil || Calendar.current.isDateInToday(lastRefresh!) == false
 
         if shouldRefresh {
@@ -93,8 +82,8 @@ class NotificationManager: NSObject {
         notificationsEnabled = enabled
 
         let components = Calendar.current.dateComponents([.hour, .minute], from: date)
-        notificationHour = components.hour ?? 9
-        notificationMinute = components.minute ?? 0
+        notificationHour = components.hour ?? NotificationPreferences.defaultNotificationHour
+        notificationMinute = components.minute ?? NotificationPreferences.defaultNotificationMinute
 
         if enabled {
             requestAndSchedule()
@@ -121,7 +110,7 @@ class NotificationManager: NSObject {
             // Keep a rolling 60-day window and refresh whenever the app becomes active.
             for dayOffset in 0..<self.daysToSchedule {
                 guard let targetDate = calendar.date(byAdding: .day, value: dayOffset, to: startOfToday) else { continue }
-                let count = self.countMemories(on: targetDate)
+                let count = self.canAccessPhotoLibrary ? MemoryLibrary.count(on: targetDate) : 0
 
                 let content = UNMutableNotificationContent()
                 content.title = "Time Capsule 📸"
@@ -151,7 +140,7 @@ class NotificationManager: NSObject {
                 center.add(request)
             }
 
-            self.preferences.set(Date(), forKey: Keys.lastNotificationRefresh)
+            self.preferences.set(Date(), forKey: NotificationPreferences.lastNotificationRefreshKey)
         }
     }
 
@@ -165,40 +154,6 @@ class NotificationManager: NSObject {
                 center.removePendingNotificationRequests(withIdentifiers: idsToRemove)
             }
         }
-    }
-
-    private func countMemories(on date: Date) -> Int {
-        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        guard status == .authorized || status == .limited else {
-            return 0
-        }
-
-        let calendar = Calendar.current
-        let currentYear = calendar.component(.year, from: date)
-        let month = calendar.component(.month, from: date)
-        let day = calendar.component(.day, from: date)
-
-        var total = 0
-
-        for year in stride(from: currentYear - 1, through: currentYear - 20, by: -1) {
-            guard let startDate = calendar.date(from: DateComponents(year: year, month: month, day: day)),
-                  let endDate = calendar.date(byAdding: .day, value: 1, to: startDate) else { continue }
-
-            let opts = PHFetchOptions()
-            opts.predicate = NSPredicate(
-                format: "creationDate >= %@ AND creationDate < %@",
-                startDate as NSDate,
-                endDate as NSDate
-            )
-            let result = PHAsset.fetchAssets(with: opts)
-            result.enumerateObjects { asset, _, _ in
-                if asset.mediaType == .image || asset.mediaType == .video {
-                    total += 1
-                }
-            }
-        }
-
-        return total
     }
 
     @objc private func handlePhotoLibraryChange() {

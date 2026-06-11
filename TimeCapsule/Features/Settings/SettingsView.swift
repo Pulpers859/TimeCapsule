@@ -4,9 +4,12 @@ import UIKit
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("TimeCapsule.notificationsEnabled") private var notificationsEnabled = true
-    @AppStorage("TimeCapsule.notificationHour") private var notificationHour = 9
-    @AppStorage("TimeCapsule.notificationMinute") private var notificationMinute = 0
+    @AppStorage(NotificationPreferences.notificationsEnabledKey)
+    private var notificationsEnabled = NotificationPreferences.defaultNotificationsEnabled
+    @AppStorage(NotificationPreferences.notificationHourKey)
+    private var notificationHour = NotificationPreferences.defaultNotificationHour
+    @AppStorage(NotificationPreferences.notificationMinuteKey)
+    private var notificationMinute = NotificationPreferences.defaultNotificationMinute
 
     @State private var notificationTime = Date()
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
@@ -78,12 +81,6 @@ struct SettingsView: View {
     }
 
     private func notificationDate(hour: Int, minute: Int) -> Date {
-        let calendar = Calendar.current
-        return calendar.date(
-            bySettingHour: hour,
-            minute: minute,
-            second: 0,
-            of: Date()
-        ) ?? Date()
+        NotificationPreferences.reminderDate(hour: hour, minute: minute)
     }
 }
