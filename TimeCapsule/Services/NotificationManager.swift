@@ -114,12 +114,13 @@ class NotificationManager: NSObject {
 
                 let content = UNMutableNotificationContent()
                 content.title = "Time Capsule 📸"
+                let dayPhrase = MemoryWindow.dayWindow > 0 ? "around this day" : "this day"
                 if count == 1 {
-                    content.body = "You have 1 memory from this day in a past year."
+                    content.body = "You have 1 memory from \(dayPhrase) in a past year."
                 } else if count > 1 {
-                    content.body = "You have \(count) memories from this day in past years."
+                    content.body = "You have \(count) memories from \(dayPhrase) in past years."
                 } else {
-                    content.body = "Check today's memories from this day in past years."
+                    content.body = "Check today's memories from \(dayPhrase) in past years."
                 }
                 content.sound = .default
 

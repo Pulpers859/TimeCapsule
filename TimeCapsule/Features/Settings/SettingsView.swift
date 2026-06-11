@@ -10,6 +10,8 @@ struct SettingsView: View {
     private var notificationHour = NotificationPreferences.defaultNotificationHour
     @AppStorage(NotificationPreferences.notificationMinuteKey)
     private var notificationMinute = NotificationPreferences.defaultNotificationMinute
+    @AppStorage(MemoryWindow.storageKey)
+    private var memoryDayWindow = MemoryWindow.defaultDayWindow
 
     @State private var notificationTime = Date()
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
@@ -17,6 +19,18 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Picker("Memory range", selection: $memoryDayWindow) {
+                        Text("Exact day").tag(0)
+                        Text("±1 day").tag(1)
+                        Text("±3 days").tag(3)
+                    }
+                } header: {
+                    Text("Memories")
+                } footer: {
+                    Text("Widen the range to include photos taken within a few days of today's date in past years. Helpful on days with no exact matches.")
+                }
+
                 Section("Daily Reminder") {
                     Toggle("Daily memory notification", isOn: $notificationsEnabled)
 
@@ -70,6 +84,11 @@ struct SettingsView: View {
         }
         .onChange(of: notificationTime) { newValue in
             NotificationManager.shared.updatePreferences(enabled: notificationsEnabled, notifyAt: newValue)
+        }
+        .onChange(of: memoryDayWindow) { _ in
+            // One post refreshes both surfaces: the model refetches the gallery
+            // and NotificationManager force-reschedules with the new counts.
+            NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
         }
     }
 

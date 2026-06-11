@@ -22,15 +22,11 @@ struct YearGroup: Identifiable {
 }
 
 enum MemoryLibrary {
-    static let lookbackYears = 20
-
     static func yearGroups(on date: Date, calendar: Calendar = .current) -> [YearGroup] {
         let currentYear = calendar.component(.year, from: date)
-        let month = calendar.component(.month, from: date)
-        let day = calendar.component(.day, from: date)
 
-        return stride(from: currentYear - 1, through: currentYear - lookbackYears, by: -1).compactMap { year in
-            let assets = assets(on: year, month: month, day: day, calendar: calendar)
+        return stride(from: currentYear - 1, through: currentYear - MemoryWindow.lookbackYears, by: -1).compactMap { year in
+            let assets = assets(on: date, anniversaryYear: year, calendar: calendar)
             guard !assets.isEmpty else { return nil }
             return YearGroup(year: year, assets: assets)
         }
@@ -42,17 +38,16 @@ enum MemoryLibrary {
         }
     }
 
-    private static func assets(on year: Int, month: Int, day: Int, calendar: Calendar) -> [PHAsset] {
-        guard let startDate = calendar.date(from: DateComponents(year: year, month: month, day: day)),
-              let endDate = calendar.date(byAdding: .day, value: 1, to: startDate) else {
+    private static func assets(on date: Date, anniversaryYear: Int, calendar: Calendar) -> [PHAsset] {
+        guard let range = MemoryWindow.range(for: date, anniversaryYear: anniversaryYear, calendar: calendar) else {
             return []
         }
 
         let fetchOptions = PHFetchOptions()
         fetchOptions.predicate = NSPredicate(
             format: "creationDate >= %@ AND creationDate < %@",
-            startDate as NSDate,
-            endDate as NSDate
+            range.start as NSDate,
+            range.end as NSDate
         )
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
 
