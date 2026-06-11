@@ -128,7 +128,7 @@ struct TimeCapsuleView: View {
             } message: {
                 Text("This moves \(selectedCount == 1 ? "this item" : "these items") to Recently Deleted in Photos, where it can still be recovered for a limited time.")
             }
-            .onChange(of: selectedFilterRawValue) { _ in
+            .onChange(of: selectedFilterRawValue) { _, _ in
                 pruneSelectionToVisibleItems()
             }
             .sheet(isPresented: $showSettings) {

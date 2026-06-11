@@ -78,14 +78,14 @@ struct SettingsView: View {
             notificationTime = notificationDate(hour: notificationHour, minute: notificationMinute)
             await loadNotificationSettings()
         }
-        .onChange(of: notificationsEnabled) { newValue in
+        .onChange(of: notificationsEnabled) { _, newValue in
             NotificationManager.shared.updatePreferences(enabled: newValue, notifyAt: notificationTime)
             Task { await loadNotificationSettings() }
         }
-        .onChange(of: notificationTime) { newValue in
+        .onChange(of: notificationTime) { _, newValue in
             NotificationManager.shared.updatePreferences(enabled: notificationsEnabled, notifyAt: newValue)
         }
-        .onChange(of: memoryDayWindow) { _ in
+        .onChange(of: memoryDayWindow) { _, _ in
             // One post refreshes both surfaces: the model refetches the gallery
             // and NotificationManager force-reschedules with the new counts.
             NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)

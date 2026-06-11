@@ -1,6 +1,7 @@
 import SwiftUI
 import Photos
 import AVFoundation
+import Combine
 import UIKit
 import CoreLocation
 import MapKit
@@ -24,8 +25,8 @@ struct FullScreenPhotoView: View {
     @State private var isAutoPlaying = false
     @State private var autoPlayProgress: Double = 0
     @State private var showInfo = false
+    @State private var reverseGeocodeTask: Task<Void, Never>? = nil
     private let autoPlayTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
-    private let geocoder = CLGeocoder()
     private var currentAssetIsVideo: Bool {
         visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .video
     }
@@ -219,7 +220,7 @@ struct FullScreenPhotoView: View {
                     .presentationDragIndicator(.visible)
             }
         }
-        .onChange(of: currentIndex) { _ in
+        .onChange(of: currentIndex) { _, _ in
             isCurrentAssetZoomed = false
             isVideoScrubbing = false
             autoPlayProgress = 0
@@ -227,7 +228,7 @@ struct FullScreenPhotoView: View {
             preloadAdjacentMedia()
             resolveLocation()
         }
-        .onChange(of: isCurrentAssetZoomed) { zoomed in
+        .onChange(of: isCurrentAssetZoomed) { _, zoomed in
             if zoomed {
                 stopAutoPlay()
             }
@@ -240,6 +241,7 @@ struct FullScreenPhotoView: View {
             resolveLocation()
         }
         .onDisappear {
+            reverseGeocodeTask?.cancel()
             preheater.stopCaching()
             UIApplication.shared.isIdleTimerDisabled = false
         }
@@ -409,17 +411,31 @@ struct FullScreenPhotoView: View {
 
     private func resolveLocation() {
         locationName = nil
+        reverseGeocodeTask?.cancel()
         guard visibleAssets.indices.contains(currentIndex) else { return }
         let current = visibleAssets[currentIndex]
-        guard current.mediaType == .image, let coordinate = current.location else { return }
+        guard current.mediaType == .image, let location = current.location else { return }
 
-        geocoder.cancelGeocode()
-        geocoder.reverseGeocodeLocation(coordinate) { placemarks, _ in
-            guard let place = placemarks?.first else { return }
-            let parts = [place.locality, place.administrativeArea].compactMap { $0 }
-            let resolved = parts.isEmpty ? place.name : parts.joined(separator: ", ")
-            DispatchQueue.main.async {
+        reverseGeocodeTask = Task {
+            let resolved = await reverseGeocodeName(for: location)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
                 locationName = resolved
+            }
+        }
+    }
+
+    private func reverseGeocodeName(for location: CLLocation) async -> String? {
+        guard let request = MKReverseGeocodingRequest(location: location) else {
+            return nil
+        }
+
+        return await withCheckedContinuation { continuation in
+            request.getMapItems { items, _ in
+                let bestMatch = items?.first
+                let resolved = bestMatch?.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true)
+                    ?? bestMatch?.name
+                continuation.resume(returning: resolved)
             }
         }
     }
@@ -481,21 +497,17 @@ struct StoryProgressBar: View {
 struct MemoryInfoSheet: View {
     let asset: PHAsset
     let locationName: String?
-    @State private var region: MKCoordinateRegion
+    @State private var mapPosition: MapCameraPosition
 
     init(asset: PHAsset, locationName: String?) {
         self.asset = asset
         self.locationName = locationName
         let center = asset.location?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
-        _region = State(initialValue: MKCoordinateRegion(
+        let region = MKCoordinateRegion(
             center: center,
             span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
-        ))
-    }
-
-    private struct MapPin: Identifiable {
-        let id = "memory-pin"
-        let coordinate: CLLocationCoordinate2D
+        )
+        _mapPosition = State(initialValue: .region(region))
     }
 
     private var yearsAgoLabel: String? {
@@ -548,12 +560,9 @@ struct MemoryInfoSheet: View {
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                 if let coordinate = asset.location?.coordinate {
-                    Map(
-                        coordinateRegion: $region,
-                        interactionModes: [.zoom, .pan],
-                        annotationItems: [MapPin(coordinate: coordinate)]
-                    ) { pin in
-                        MapMarker(coordinate: pin.coordinate, tint: .red)
+                    Map(position: $mapPosition, interactionModes: [.zoom, .pan]) {
+                        Marker("Memory Location", coordinate: coordinate)
+                            .tint(.red)
                     }
                     .frame(height: 220)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -721,7 +730,7 @@ struct FullResAssetView: View {
                 )
             }
         }
-        .onChange(of: isActive) { active in
+        .onChange(of: isActive) { _, active in
             if active {
                 player?.play()
             } else {
@@ -971,9 +980,11 @@ final class PlayerProgressObserver {
 
         let interval = CMTime(seconds: 0.2, preferredTimescale: 600)
         timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak player] time in
-            guard let self, let player else { return }
             let seconds = time.seconds.isFinite ? time.seconds : nil
-            self.publishSnapshot(for: player, currentTimeOverride: seconds)
+            Task { @MainActor [weak self, weak player] in
+                guard let self, let player else { return }
+                self.publishSnapshot(for: player, currentTimeOverride: seconds)
+            }
         }
 
         if let currentItem = player.currentItem {
@@ -982,8 +993,10 @@ final class PlayerProgressObserver {
                 object: currentItem,
                 queue: .main
             ) { [weak self, weak player] _ in
-                guard let self, let player else { return }
-                self.publishSnapshot(for: player)
+                Task { @MainActor [weak self, weak player] in
+                    guard let self, let player else { return }
+                    self.publishSnapshot(for: player)
+                }
             }
         }
     }
@@ -1023,8 +1036,10 @@ final class PlayerProgressObserver {
             toleranceBefore: .zero,
             toleranceAfter: .zero
         ) { [weak self, weak player] _ in
-            guard let self, let player else { return }
-            self.publishSnapshot(for: player, currentTimeOverride: bounded)
+            Task { @MainActor [weak self, weak player] in
+                guard let self, let player else { return }
+                self.publishSnapshot(for: player, currentTimeOverride: bounded)
+            }
         }
     }
 
