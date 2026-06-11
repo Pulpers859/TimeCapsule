@@ -89,6 +89,7 @@ After making changes, the agent should do another harsh pass focused on:
 - The agent audits adjacent risks.
 - The agent runs local checks where possible.
 - The agent handles Git steps when appropriate.
+- After making code changes, the agent should commit and push them by default unless the user explicitly says not to.
 - The user should not need to babysit PowerShell, Git, or GitHub for normal work.
 
 ## Before Starting Any New Task
@@ -140,6 +141,7 @@ Important:
 - Do not work in stale copies unless explicitly asked.
 - If Git is not already set up, bootstrap it using the repo standard in this file before major feature work.
 - Use the standard workflow: investigate directly, fix root causes, audit adjacent risks, run checks, and handle Git when appropriate.
+- After code changes, commit and push by default unless the user explicitly asks to hold changes locally.
 - This repo is single-branch now: use `main` for normal work and do not assume `dev` exists.
 - If multiple surfaces exist, prioritize the stated primary target before exploring side surfaces.
 - If the GitHub remote is unknown, finish local repo setup first and ask for the remote only when needed for push/setup.
