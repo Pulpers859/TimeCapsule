@@ -47,11 +47,11 @@ Each project should have:
 - If the GitHub remote is unknown, finish local bootstrap first and ask for the remote only when push/setup is actually needed.
 
 ### 4. Branching Standard
-- `main` = stable branch
-- `dev` = default working branch
-- normal day-to-day work happens on `dev`
-- direct commits to `main` should be blocked locally with a pre-commit hook
-- if server-side protection is added later, protect `main` on GitHub too
+- `main` = default long-term branch
+- for smaller or solo projects, `main` can also be the only normal working branch
+- create extra branches only when they reduce risk or confusion
+- if a project intentionally uses a separate working branch like `dev`, document that in the project handoff instead of assuming it everywhere
+- if server-side protection is added later, protect the project's default branch on GitHub too
 
 ### 5. PowerShell / Terminal Standard
 - Do not globally force every PowerShell session into one repo using the profile.
@@ -130,13 +130,12 @@ git branch --show-current
 git lg
 ```
 
-### Promote Finished Work From `dev` To `main`
+### Single-Branch Sync
 ```powershell
-git checkout main
 git pull --ff-only
-git merge --ff-only dev
+git add .
+git commit -m "Describe the change"
 git push
-git checkout dev
 ```
 
 ---
@@ -154,7 +153,7 @@ Primary target this session: <Main app / subproject / surface / both / unknown>
 GitHub intent: <none / remote already exists / create a new remote with me>
 GitHub remote: <RemoteURLOrUnknown>
 Stable branch: main
-Working branch: dev
+Working branch: <main / dev / other / unknown>
 
 Important:
 - Treat the active repo path above as the source of truth.
@@ -162,8 +161,8 @@ Important:
 - Inspect the current repo state before making assumptions.
 - Use direct code edits and root-cause fixes.
 - Handle Git operations for me when appropriate.
-- Keep normal work on `dev`, not `main`.
-- Do not commit directly to `main` unless explicitly instructed.
+- Use the repo's documented working branch; do not assume `dev` exists.
+- If the repo is single-branch, working on `main` is expected.
 - Preserve repo-local Git config, line-ending rules, hooks, and shortcuts.
 - If duplicate or nested repos exist, resolve that carefully before continuing.
 - Prefer dedicated PowerShell shortcuts per project instead of globally pinning PowerShell to one repo.
@@ -179,7 +178,8 @@ Default behavior:
 
 ## Transform Example
 
-Use this as the filled reference example for the `Transform` app.
+Use this as a filled reference example for the `Transform` app.
+It is just one example, not a universal rule for every repo's branch model.
 
 ### Transform Current State
 - Project: `Transform`
@@ -228,7 +228,7 @@ Default behavior:
 - Audit adjacent risks
 - Run local checks where possible
 - Handle Git operations when appropriate
-- Keep work on `dev` by default
+- Keep work on the repo's documented working branch
 ```
 
 ---
@@ -239,10 +239,10 @@ When onboarding a new app, follow this sequence:
 2. move it to `C:\Dev\<ProjectName>` if needed
 3. initialize/verify Git locally
 4. connect GitHub remote
-5. create `dev`
-6. add main-blocking local hook
+5. decide whether the repo should stay `main`-only or use an additional working branch
+6. add any repo-local hooks that match that choice
 7. create dedicated PowerShell shortcut
-8. confirm the active working branch is `dev`
+8. confirm the active working branch
 9. document the app-specific handoff state
 
 This should be the default pattern for all future local app projects unless there is a strong reason to deviate.

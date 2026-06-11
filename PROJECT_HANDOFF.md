@@ -13,8 +13,8 @@ This file is the `TimeCapsule`-specific companion to [AI_PROJECT_HANDOFF_TEMPLAT
 
 ## Repo State
 - Stable branch: `main`
-- Working branch: `dev`
-- Expected default branch for normal work: `dev`
+- Working branch: `main`
+- Expected default branch for normal work: `main`
 - If Git is not set up yet for this project, the agent should bootstrap it before doing major feature work.
 
 ## If No Git Exists Yet
@@ -35,9 +35,7 @@ If `git rev-parse --is-inside-work-tree` fails in the real project root, the age
 8. create the initial commit
 9. connect the GitHub remote if I want one
 10. push `main`
-11. create and push `dev`
-12. add a local hook blocking direct commits to `main`
-13. create a dedicated PowerShell shortcut for this project
+11. create a dedicated PowerShell shortcut for this project
 
 If the GitHub remote is unknown, the agent should finish local bootstrap first and only ask for the remote when push/setup is actually needed.
 
@@ -61,7 +59,7 @@ If the GitHub remote is unknown, the agent should finish local bootstrap first a
 - If validation, linting, or review logic is too rigid and rejects good output, improve the rule when appropriate instead of dumbing down the product.
 - Do not silently tolerate poor architecture if it is now a maintenance risk.
 - Handle Git operations when appropriate.
-- Keep normal work on `dev`, not `main`.
+- Keep normal work on `main` unless I explicitly ask for a temporary branch.
 - Audit adjacent risks after making fixes.
 - Run the checks that are realistically available in the current environment.
 - Clearly distinguish evidence-backed logic from heuristics.
@@ -119,16 +117,15 @@ The agent should confirm:
 ## Git / Release Notes
 - Preferred everyday flow:
   - `git st`
+  - `git pull --ff-only`
   - `git diff`
   - `git add .`
   - `git commit -m "..."`
   - `git push`
-- Preferred promotion flow from `dev` to `main`:
-  - `git checkout main`
-  - `git pull --ff-only`
-  - `git merge --ff-only dev`
-  - `git push`
-  - `git checkout dev`
+- Branch model:
+  - `main` is the only normal branch for this repo
+  - create short-lived branches only when there is a specific reason
+  - do not recreate `dev` unless I explicitly ask for it
 
 ## Project-Specific Instructions For The Next Agent
 ```text
@@ -136,13 +133,14 @@ Project: TimeCapsule
 Active repo path: C:\Dev\TimeCapsule
 GitHub remote: https://github.com/Pulpers859/TimeCapsule.git
 Stable branch: main
-Working branch: dev
+Working branch: main
 
 Important:
 - Treat C:\Dev\TimeCapsule as the source of truth.
 - Do not work in stale copies unless explicitly asked.
 - If Git is not already set up, bootstrap it using the repo standard in this file before major feature work.
 - Use the standard workflow: investigate directly, fix root causes, audit adjacent risks, run checks, and handle Git when appropriate.
+- This repo is single-branch now: use `main` for normal work and do not assume `dev` exists.
 - If multiple surfaces exist, prioritize the stated primary target before exploring side surfaces.
 - If the GitHub remote is unknown, finish local repo setup first and ask for the remote only when needed for push/setup.
 ```
