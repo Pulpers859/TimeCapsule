@@ -52,6 +52,7 @@ Each project should have:
 - create extra branches only when they reduce risk or confusion
 - if a project intentionally uses a separate working branch like `dev`, document that in the project handoff instead of assuming it everywhere
 - if server-side protection is added later, protect the project's default branch on GitHub too
+- if a project owner says "main only," treat that as a hard rule: no side branches, no PR workflow, and no alternate push target unless explicitly requested
 
 ### 5. PowerShell / Terminal Standard
 - Do not globally force every PowerShell session into one repo using the profile.

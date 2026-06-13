@@ -1,3 +1,23 @@
 #!/bin/sh
-# This repo now uses main as the single normal branch.
-exit 0
+
+branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+
+if [ -z "$branch" ] || [ "$branch" = "main" ]; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+Push blocked: this repo is hard-coded to use GitHub main only.
+
+Do not push side branches or use a PR workflow unless the user explicitly asks.
+Current branch: $branch
+
+Expected flow:
+  git checkout main
+  git pull --ff-only
+  git add .
+  git commit -m "..."
+  git push origin main
+EOF
+
+exit 1

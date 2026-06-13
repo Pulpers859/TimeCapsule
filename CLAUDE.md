@@ -23,6 +23,7 @@
 - Prefer root-cause fixes over cosmetic duplication.
 - Run `swift-sanity-check` after Swift edits and separate Windows validation from iPhone-only behavior.
 - For this repo, commit and push code changes by default unless the user explicitly asks not to.
+- For this repo, GitHub workflow is `main` only: no side branches and no PR flow unless the user explicitly asks for them.
 
 ## Useful Commands
 - `/preflight`

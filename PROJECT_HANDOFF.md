@@ -59,7 +59,8 @@ If the GitHub remote is unknown, the agent should finish local bootstrap first a
 - If validation, linting, or review logic is too rigid and rejects good output, improve the rule when appropriate instead of dumbing down the product.
 - Do not silently tolerate poor architecture if it is now a maintenance risk.
 - Handle Git operations when appropriate.
-- Keep normal work on `main` unless I explicitly ask for a temporary branch.
+- Keep normal work on `main`.
+- Do not create, use, push, or propose side branches or pull requests unless I explicitly ask for that exact workflow.
 - Audit adjacent risks after making fixes.
 - Run the checks that are realistically available in the current environment.
 - Clearly distinguish evidence-backed logic from heuristics.
@@ -90,6 +91,7 @@ After making changes, the agent should do another harsh pass focused on:
 - The agent runs local checks where possible.
 - The agent handles Git steps when appropriate.
 - After making code changes, the agent should commit and push them by default unless the user explicitly says not to.
+- GitHub should use `main` only by default: no side branches, no PR workflow, and no alternate push targets unless the user explicitly requests them.
 - The user should not need to babysit PowerShell, Git, or GitHub for normal work.
 
 ## Before Starting Any New Task
@@ -125,7 +127,8 @@ The agent should confirm:
   - `git push`
 - Branch model:
   - `main` is the only normal branch for this repo
-  - create short-lived branches only when there is a specific reason
+  - do not create or use side branches unless I explicitly ask for them
+  - do not use pull requests as the default workflow for this repo
   - do not recreate `dev` unless I explicitly ask for it
 
 ## Project-Specific Instructions For The Next Agent
@@ -142,7 +145,7 @@ Important:
 - If Git is not already set up, bootstrap it using the repo standard in this file before major feature work.
 - Use the standard workflow: investigate directly, fix root causes, audit adjacent risks, run checks, and handle Git when appropriate.
 - After code changes, commit and push by default unless the user explicitly asks to hold changes locally.
-- This repo is single-branch now: use `main` for normal work and do not assume `dev` exists.
+- This repo is main-only: use `main` for normal work, do not assume `dev` exists, and do not create side branches or PRs unless the user explicitly asks.
 - If multiple surfaces exist, prioritize the stated primary target before exploring side surfaces.
 - If the GitHub remote is unknown, finish local repo setup first and ask for the remote only when needed for push/setup.
 ```
