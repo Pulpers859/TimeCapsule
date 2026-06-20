@@ -6,7 +6,7 @@ enum NotificationPreferences {
     static let notificationMinuteKey = "TimeCapsule.notificationMinute"
     static let lastNotificationRefreshKey = "TimeCapsule.lastNotificationRefresh"
 
-    static let defaultNotificationsEnabled = true
+    static let defaultNotificationsEnabled = false
     static let defaultNotificationHour = 9
     static let defaultNotificationMinute = 0
 

@@ -627,6 +627,11 @@ struct FullResAssetView: View {
     @State private var isPlaying = false
     @State private var scrubPosition: Double = 0
     @State private var isScrubbing = false
+    @State private var loadGeneration = 0
+
+    private var mediaTaskID: String {
+        "\(asset.localIdentifier)|render:\(shouldRender)|generation:\(loadGeneration)"
+    }
 
     var body: some View {
         Group {
@@ -697,21 +702,21 @@ struct FullResAssetView: View {
                 Color.black
             }
         }
-        .task(id: shouldRender) {
+        .task(id: mediaTaskID) {
             guard shouldRender else {
-                player?.pause()
-                player = nil
-                image = nil
-                progressObserver.detach()
-                currentTime = 0
-                duration = 0
-                isPlaying = false
+                releasePlayer()
+                resetPlaybackState()
                 return
             }
 
             if asset.mediaType == .video {
                 image = nil
                 let loadedPlayer = await loadPlayer(from: asset)
+                guard !Task.isCancelled else {
+                    discard(loadedPlayer)
+                    return
+                }
+                releasePlayer()
                 player = loadedPlayer
                 progressObserver.attach(
                     to: loadedPlayer,
@@ -721,33 +726,64 @@ struct FullResAssetView: View {
                 )
                 if isActive {
                     loadedPlayer?.play()
+                } else {
+                    loadedPlayer?.pause()
+                    loadedPlayer?.seek(to: .zero)
                 }
             } else {
-                image = await loadImage(
+                let loadedImage = await loadImage(
                     from: asset,
                     targetSize: CGSize(width: 1290, height: 2796),
                     contentMode: .aspectFit
                 )
+                guard !Task.isCancelled else { return }
+                releasePlayer()
+                image = loadedImage
             }
         }
         .onChange(of: isActive) { _, active in
             if active {
-                player?.play()
+                if let player {
+                    player.play()
+                } else if shouldRender && asset.mediaType == .video {
+                    loadGeneration += 1
+                }
             } else {
                 player?.pause()
                 player?.seek(to: .zero)
-                scrubPosition = 0
-                currentTime = 0
-                isPlaying = false
-                isScrubbing = false
+                resetPlaybackState()
                 onScrubbingChanged(false)
                 onZoomStateChange(false)
+                if player == nil && shouldRender && asset.mediaType == .video {
+                    loadGeneration += 1
+                }
             }
         }
         .onDisappear {
             onScrubbingChanged(false)
-            progressObserver.detach()
+            releasePlayer()
+            resetPlaybackState()
         }
+    }
+
+    private func releasePlayer() {
+        progressObserver.detach()
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        player = nil
+    }
+
+    private func discard(_ player: AVPlayer?) {
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+    }
+
+    private func resetPlaybackState() {
+        scrubPosition = 0
+        currentTime = 0
+        duration = 0
+        isPlaying = false
+        isScrubbing = false
     }
 }
 
@@ -787,11 +823,9 @@ final class AdjacentMediaPreheater {
             cachedAssetIDs = nextIDs
         }
 
-        for asset in assetsToCache where asset.mediaType == .video {
-            Task {
-                _ = await loadPlayer(from: asset)
-            }
-        }
+        // Video AVPlayers are intentionally not preheated here. Creating
+        // throwaway players can trigger expensive iCloud/video work without
+        // giving the active page a reusable player.
     }
 
     func stopCaching() {

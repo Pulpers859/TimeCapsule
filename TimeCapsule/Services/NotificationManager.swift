@@ -50,7 +50,7 @@ class NotificationManager: NSObject {
         }
     }
 
-    // Call once on launch to request permission and schedule
+    // Called on launch for existing opt-in users and from Settings when enabled.
     func requestAndSchedule() {
         guard notificationsEnabled else {
             removeScheduledNotifications()
@@ -60,6 +60,9 @@ class NotificationManager: NSObject {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             if granted {
                 self.scheduleDailyNotification()
+            } else {
+                self.notificationsEnabled = false
+                self.removeScheduledNotifications()
             }
         }
     }
