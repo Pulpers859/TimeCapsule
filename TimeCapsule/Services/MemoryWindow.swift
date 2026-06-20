@@ -24,7 +24,9 @@ enum MemoryWindow {
     ) -> (start: Date, end: Date)? {
         let month = calendar.component(.month, from: referenceDate)
         let day = calendar.component(.day, from: referenceDate)
-        guard let anniversary = calendar.date(from: DateComponents(year: anniversaryYear, month: month, day: day)) else {
+        guard let anniversary = calendar.date(from: DateComponents(year: anniversaryYear, month: month, day: day)),
+              calendar.component(.month, from: anniversary) == month,
+              calendar.component(.day, from: anniversary) == day else {
             return nil
         }
         let window = dayWindow

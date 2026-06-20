@@ -12,6 +12,7 @@ struct TimeCapsuleView: View {
     @State private var recapProgress: Double? = nil
     @State private var recapShareItem: ShareItem? = nil
     @State private var recapError: String? = nil
+    @State private var recapTask: Task<Void, Never>? = nil
     @SceneStorage("TimeCapsule.selectedFilter") private var selectedFilterRawValue = MemoryFilter.all.rawValue
 
     private var dateString: String {
@@ -135,7 +136,7 @@ struct TimeCapsuleView: View {
                 SettingsView()
             }
             .sheet(item: $recapShareItem) { item in
-                ShareSheet(items: item.items)
+                ShareSheet(items: item.items, cleanupURLs: item.cleanupURLs)
             }
             .alert("Couldn't Delete", isPresented: deleteErrorBinding) {
                 Button("OK", role: .cancel) {}
@@ -152,6 +153,11 @@ struct TimeCapsuleView: View {
                     RecapExportOverlay(progress: progress)
                 }
             }
+            .onDisappear {
+                recapTask?.cancel()
+                recapTask = nil
+                recapProgress = nil
+            }
         }
     }
 
@@ -163,8 +169,9 @@ struct TimeCapsuleView: View {
             return
         }
         recapProgress = 0
+        recapTask?.cancel()
         let title = dateString
-        Task {
+        recapTask = Task {
             let url = await MemoryRecapExporter.export(assets: photos, title: title) { value in
                 DispatchQueue.main.async {
                     if recapProgress != nil {
@@ -173,9 +180,16 @@ struct TimeCapsuleView: View {
                 }
             }
             await MainActor.run {
+                guard !Task.isCancelled else {
+                    if let url {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                    return
+                }
                 recapProgress = nil
+                recapTask = nil
                 if let url {
-                    recapShareItem = ShareItem(items: [url])
+                    recapShareItem = ShareItem(items: [url], cleanupURLs: [url])
                 } else {
                     recapError = "Couldn't create the recap video. Please try again."
                 }
@@ -459,8 +473,8 @@ struct MemoryControlsBar: View {
                     .foregroundStyle(.primary)
 
                 HStack(spacing: 12) {
-                    HeaderIconButton(systemImage: "gearshape", action: onOpenSettings)
-                    HeaderIconButton(systemImage: "sparkles", action: onCreateRecap)
+                    HeaderIconButton(systemImage: "gearshape", accessibilityLabel: "Settings", action: onOpenSettings)
+                    HeaderIconButton(systemImage: "sparkles", accessibilityLabel: "Create recap", action: onCreateRecap)
                     Spacer()
                     Button(isSelecting ? "Done" : "Select", action: onToggleSelecting)
                         .font(.subheadline.weight(.semibold))
@@ -549,6 +563,7 @@ struct SecondaryControlLabel: View {
 
 struct HeaderIconButton: View {
     let systemImage: String
+    let accessibilityLabel: String
     let action: () -> Void
 
     var body: some View {
@@ -560,6 +575,7 @@ struct HeaderIconButton: View {
                 .background(Color(.secondarySystemGroupedBackground), in: Circle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 

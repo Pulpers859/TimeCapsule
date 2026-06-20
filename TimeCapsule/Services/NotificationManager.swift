@@ -74,7 +74,7 @@ class NotificationManager: NSObject {
         }
 
         let lastRefresh = preferences.object(forKey: NotificationPreferences.lastNotificationRefreshKey) as? Date
-        let shouldRefresh = force || lastRefresh == nil || Calendar.current.isDateInToday(lastRefresh!) == false
+        let shouldRefresh = force || lastRefresh.map { !Calendar.current.isDateInToday($0) } ?? true
 
         if shouldRefresh {
             scheduleDailyNotification()
@@ -107,12 +107,29 @@ class NotificationManager: NSObject {
             }
 
             let calendar = Calendar.current
+            let now = Date()
             let startOfToday = calendar.startOfDay(for: Date())
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd"
 
             // iOS allows up to 64 pending local notifications.
             // Keep a rolling 60-day window and refresh whenever the app becomes active.
-            for dayOffset in 0..<self.daysToSchedule {
-                guard let targetDate = calendar.date(byAdding: .day, value: dayOffset, to: startOfToday) else { continue }
+            var scheduledDays = 0
+            var dayOffset = 0
+            let maxSearchDays = self.daysToSchedule + 2
+            while scheduledDays < self.daysToSchedule && dayOffset < maxSearchDays {
+                let offset = dayOffset
+                dayOffset += 1
+                guard let targetDate = calendar.date(byAdding: .day, value: offset, to: startOfToday) else { continue }
+                guard let fireDate = calendar.date(
+                    bySettingHour: self.notificationHour,
+                    minute: self.notificationMinute,
+                    second: 0,
+                    of: targetDate
+                ), fireDate > now else {
+                    continue
+                }
+
                 let count = self.canAccessPhotoLibrary ? MemoryLibrary.count(on: targetDate) : 0
 
                 let content = UNMutableNotificationContent()
@@ -127,21 +144,14 @@ class NotificationManager: NSObject {
                 }
                 content.sound = .default
 
-                let fireDate = calendar.date(
-                    bySettingHour: self.notificationHour,
-                    minute: self.notificationMinute,
-                    second: 0,
-                    of: targetDate
-                ) ?? targetDate
                 let triggerComponents = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
                 let trigger = UNCalendarNotificationTrigger(dateMatching: triggerComponents, repeats: false)
 
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyyMMdd"
                 let identifier = "\(self.dailyPrefix)\(formatter.string(from: targetDate))"
                 let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
 
                 center.add(request)
+                scheduledDays += 1
             }
 
             self.preferences.set(Date(), forKey: NotificationPreferences.lastNotificationRefreshKey)

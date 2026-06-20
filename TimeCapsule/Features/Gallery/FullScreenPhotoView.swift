@@ -128,6 +128,7 @@ struct FullScreenPhotoView: View {
                                 .padding(12)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
+                        .accessibilityLabel("Close")
                         Spacer()
                         VStack(spacing: 4) {
                             if let date = visibleAssets[currentIndex].creationDate {
@@ -156,6 +157,7 @@ struct FullScreenPhotoView: View {
                                 .padding(12)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
+                        .accessibilityLabel("Share memory")
                         Button(action: { showDeleteConfirm = true }) {
                             Image(systemName: "trash")
                                 .font(.title3.weight(.semibold))
@@ -163,6 +165,7 @@ struct FullScreenPhotoView: View {
                                 .padding(12)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
+                        .accessibilityLabel("Delete memory")
                     }
                     .padding()
                     Spacer()
@@ -174,6 +177,7 @@ struct FullScreenPhotoView: View {
                                 .padding(12)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
+                        .accessibilityLabel("Memory info")
                         Spacer()
                         Text("\(currentIndex + 1) of \(visibleAssets.count)")
                             .font(.caption)
@@ -189,6 +193,7 @@ struct FullScreenPhotoView: View {
                                 .padding(12)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
+                        .accessibilityLabel(isAutoPlaying ? "Pause story" : "Play story")
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, currentAssetIsVideo ? 92 : 8)
@@ -206,7 +211,7 @@ struct FullScreenPhotoView: View {
             Text("This moves the item to Recently Deleted in Photos, where it can still be recovered for a limited time.")
         }
         .sheet(item: $shareItem) { item in
-            ShareSheet(items: item.items)
+            ShareSheet(items: item.items, cleanupURLs: item.cleanupURLs)
         }
         .alert("Couldn't Delete", isPresented: deleteErrorBinding) {
             Button("OK", role: .cancel) {}
@@ -357,8 +362,11 @@ struct FullScreenPhotoView: View {
                     await MainActor.run {
                         guard !Task.isCancelled,
                               visibleAssets.indices.contains(currentIndex),
-                              visibleAssets[currentIndex].localIdentifier == asset.localIdentifier else { return }
-                        shareItem = ShareItem(items: [videoURL, caption])
+                              visibleAssets[currentIndex].localIdentifier == asset.localIdentifier else {
+                            try? FileManager.default.removeItem(at: videoURL)
+                            return
+                        }
+                        shareItem = ShareItem(items: [videoURL, caption], cleanupURLs: [videoURL])
                     }
                 }
             }
@@ -385,6 +393,9 @@ struct FullScreenPhotoView: View {
         guard currentIndex < visibleAssets.count else { return }
         let idx = currentIndex
         let assetToDelete = visibleAssets[idx]
+        shareTask?.cancel()
+        reverseGeocodeTask?.cancel()
+        stopAutoPlay()
 
         PHPhotoLibrary.shared().performChanges({
             PHAssetChangeRequest.deleteAssets([assetToDelete] as NSArray)
@@ -611,12 +622,27 @@ struct MemoryInfoSheet: View {
 struct ShareItem: Identifiable {
     let id = UUID()
     let items: [Any]
+    let cleanupURLs: [URL]
+
+    init(items: [Any], cleanupURLs: [URL] = []) {
+        self.items = items
+        self.cleanupURLs = cleanupURLs
+    }
 }
 
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
+    let cleanupURLs: [URL]
+
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            for url in cleanupURLs {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        return controller
     }
+
     func updateUIViewController(_ uvc: UIActivityViewController, context: Context) {}
 }

@@ -3,6 +3,7 @@ import Photos
 import UIKit
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = PhotoLibraryModel()
     @State private var isRequestingPhotoAccess = false
 
@@ -19,15 +20,21 @@ struct ContentView: View {
                 PermissionDeniedView()
 
             case .authorized, .limited:
-                ZStack {
-                    if model.yearGroups.isEmpty {
-                        if model.isLoading {
-                            LoadingView()
+                VStack(spacing: 0) {
+                    if model.authorizationStatus == .limited {
+                        LimitedLibraryBanner(onManageAccess: openLimitedLibraryPicker)
+                    }
+
+                    ZStack {
+                        if model.yearGroups.isEmpty {
+                            if model.isLoading {
+                                LoadingView()
+                            } else {
+                                EmptyStateView()
+                            }
                         } else {
-                            EmptyStateView()
+                            TimeCapsuleView(yearGroups: model.yearGroups)
                         }
-                    } else {
-                        TimeCapsuleView(yearGroups: model.yearGroups)
                     }
                 }
 
@@ -39,12 +46,13 @@ struct ContentView: View {
             }
         }
         .task {
-            let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-            if current == .authorized || current == .limited {
-                model.authorizationStatus = current
-                await model.fetchOnThisDay()
-            } else {
-                model.authorizationStatus = current
+            await model.refreshAuthorizationAndMemories()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                Task {
+                    await model.refreshAuthorizationAndMemories()
+                }
             }
         }
     }
@@ -58,6 +66,36 @@ struct ContentView: View {
                 isRequestingPhotoAccess = false
             }
         }
+    }
+
+    private func openLimitedLibraryPicker() {
+        guard let rootViewController = foregroundRootViewController(),
+              let presentingViewController = topViewController(from: rootViewController) else {
+            return
+        }
+
+        PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: presentingViewController)
+        Task {
+            try? await Task.sleep(nanoseconds: 750_000_000)
+            await model.refreshAuthorizationAndMemories()
+        }
+    }
+
+    private func foregroundRootViewController() -> UIViewController? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }?
+            .windows
+            .first { $0.isKeyWindow }?
+            .rootViewController
+    }
+
+    private func topViewController(from root: UIViewController?) -> UIViewController? {
+        var top = root
+        while let presented = top?.presentedViewController {
+            top = presented
+        }
+        return top
     }
 }
 
@@ -126,6 +164,36 @@ struct LoadingView: View {
     }
 }
 
+struct LimitedLibraryBanner: View {
+    let onManageAccess: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "photo.badge.plus")
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Limited Photos Access")
+                    .font(.subheadline.weight(.semibold))
+                Text("Add more photos to Time Capsule without leaving the app.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Manage", action: onManageAccess)
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color(.secondarySystemGroupedBackground))
+    }
+}
+
 struct EmptyStateView: View {
     var body: some View {
         VStack(spacing: 20) {
@@ -134,7 +202,7 @@ struct EmptyStateView: View {
                 .foregroundStyle(.secondary)
             Text("No Memories Yet")
                 .font(.title2.bold())
-            Text("No photos were taken on this date in previous years.")
+            Text("No photos or videos were taken on this date in previous years.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)

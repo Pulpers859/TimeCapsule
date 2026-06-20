@@ -16,7 +16,7 @@ enum MemoryRecapExporter {
         onProgress: @escaping @Sendable (Double) -> Void
     ) async -> URL? {
         let photos = sample(assets.filter { $0.mediaType == .image }, limit: maxPhotos)
-        guard !photos.isEmpty else { return nil }
+        guard !photos.isEmpty, !Task.isCancelled else { return nil }
 
         let frameDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TimeCapsuleRecapFrames-\(UUID().uuidString)", isDirectory: true)
@@ -34,6 +34,7 @@ enum MemoryRecapExporter {
             }
         }
         for (index, asset) in photos.enumerated() {
+            guard !Task.isCancelled else { return nil }
             if let image = await loadImage(from: asset, targetSize: renderSize, contentMode: .aspectFit),
                let frame = composeFrame(image),
                let url = writeSlideImage(frame, to: frameDirectory, index: slideURLs.count) {
@@ -41,7 +42,7 @@ enum MemoryRecapExporter {
             }
             onProgress(0.45 * Double(index + 1) / Double(photos.count))
         }
-        guard slideURLs.count > 1 else { return nil }
+        guard slideURLs.count > 1, !Task.isCancelled else { return nil }
 
         let finalSlideURLs = slideURLs
         return await Task.detached(priority: .userInitiated) {

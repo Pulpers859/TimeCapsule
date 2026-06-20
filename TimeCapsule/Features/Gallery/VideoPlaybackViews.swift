@@ -35,6 +35,7 @@ struct VideoPlaybackControls: View {
                         .background(.ultraThinMaterial, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isPlaying ? "Pause video" : "Play video")
 
                 Button(action: onSkipBack) {
                     Image(systemName: "gobackward.10")
@@ -43,6 +44,7 @@ struct VideoPlaybackControls: View {
                         .background(.ultraThinMaterial, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Skip back 10 seconds")
 
                 Text(formattedTime(currentTime))
                     .font(.caption.monospacedDigit())
@@ -131,6 +133,7 @@ final class PlayerProgressObserver {
     private var onCurrentTimeChange: ((Double) -> Void)?
     private var onDurationChange: ((Double) -> Void)?
     private var onPlayingChange: ((Bool) -> Void)?
+    private var latestCurrentTime: Double = 0
     private var latestDuration: Double = 0
 
     func attach(
@@ -145,6 +148,7 @@ final class PlayerProgressObserver {
         self.onPlayingChange = onPlayingChange
 
         self.player = player
+        latestCurrentTime = 0
         latestDuration = 0
 
         guard let player else {
@@ -189,6 +193,7 @@ final class PlayerProgressObserver {
         }
         playbackEndObserver = nil
         player = nil
+        latestCurrentTime = 0
         latestDuration = 0
         onCurrentTimeChange?(0)
         onDurationChange?(0)
@@ -200,6 +205,11 @@ final class PlayerProgressObserver {
         if player.timeControlStatus == .playing {
             player.pause()
         } else {
+            if latestDuration > 0, latestCurrentTime >= latestDuration - 0.2 {
+                player.seek(to: .zero)
+                latestCurrentTime = 0
+                onCurrentTimeChange?(0)
+            }
             player.play()
         }
         publishSnapshot(for: player)
@@ -228,6 +238,7 @@ final class PlayerProgressObserver {
         }()
         let rawDuration = player.currentItem?.duration.seconds ?? 0
         let normalizedDuration = rawDuration.isFinite && rawDuration > 0 ? rawDuration : 0
+        latestCurrentTime = seconds
         latestDuration = normalizedDuration
         onCurrentTimeChange?(seconds)
         onDurationChange?(normalizedDuration)
