@@ -18,22 +18,34 @@ enum MemoryRecapExporter {
         let photos = sample(assets.filter { $0.mediaType == .image }, limit: maxPhotos)
         guard !photos.isEmpty else { return nil }
 
-        var slides: [UIImage] = []
+        let frameDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TimeCapsuleRecapFrames-\(UUID().uuidString)", isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: frameDirectory, withIntermediateDirectories: true)) != nil else {
+            return nil
+        }
+        defer {
+            try? FileManager.default.removeItem(at: frameDirectory)
+        }
+
+        var slideURLs: [URL] = []
         if let card = renderTitleCard(title: title) {
-            slides.append(card)
+            if let url = writeSlideImage(card, to: frameDirectory, index: slideURLs.count) {
+                slideURLs.append(url)
+            }
         }
         for (index, asset) in photos.enumerated() {
             if let image = await loadImage(from: asset, targetSize: renderSize, contentMode: .aspectFit),
-               let frame = composeFrame(image) {
-                slides.append(frame)
+               let frame = composeFrame(image),
+               let url = writeSlideImage(frame, to: frameDirectory, index: slideURLs.count) {
+                slideURLs.append(url)
             }
             onProgress(0.45 * Double(index + 1) / Double(photos.count))
         }
-        guard slides.count > 1 else { return nil }
+        guard slideURLs.count > 1 else { return nil }
 
-        let finalSlides = slides
+        let finalSlideURLs = slideURLs
         return await Task.detached(priority: .userInitiated) {
-            writeVideo(slides: finalSlides) { frameProgress in
+            writeVideo(slideURLs: finalSlideURLs) { frameProgress in
                 onProgress(0.45 + 0.55 * frameProgress)
             }
         }.value
@@ -113,6 +125,17 @@ enum MemoryRecapExporter {
         }
     }
 
+    private static func writeSlideImage(_ image: UIImage, to directory: URL, index: Int) -> URL? {
+        let url = directory.appendingPathComponent(String(format: "slide-%03d.jpg", index))
+        guard let data = image.jpegData(compressionQuality: 0.92) else { return nil }
+        do {
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
     private static func aspectFitRect(for imageSize: CGSize, in container: CGSize) -> CGRect {
         guard imageSize.width > 0, imageSize.height > 0 else {
             return CGRect(origin: .zero, size: container)
@@ -129,7 +152,7 @@ enum MemoryRecapExporter {
 
     // MARK: - Video writing
 
-    private static func writeVideo(slides: [UIImage], onProgress: (Double) -> Void) -> URL? {
+    private static func writeVideo(slideURLs: [URL], onProgress: (Double) -> Void) -> URL? {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("TimeCapsuleRecap-\(UUID().uuidString).mp4")
         try? FileManager.default.removeItem(at: url)
@@ -162,7 +185,7 @@ enum MemoryRecapExporter {
 
         var time = CMTime.zero
         var appended = 0
-        let totalAppends = slides.count + max(slides.count - 1, 0) * fadeFrames
+        let totalAppends = slideURLs.count + max(slideURLs.count - 1, 0) * fadeFrames
 
         func append(_ image: UIImage, at presentationTime: CMTime) -> Bool {
             guard let buffer = pixelBuffer(from: image, pool: adaptor.pixelBufferPool) else { return false }
@@ -175,23 +198,38 @@ enum MemoryRecapExporter {
             return ok
         }
 
-        for (index, slide) in slides.enumerated() {
-            guard append(slide, at: time) else {
+        guard var previousSlide = UIImage(contentsOfFile: slideURLs[0].path) else {
+            writer.cancelWriting()
+            return nil
+        }
+
+        guard append(previousSlide, at: time) else {
+            writer.cancelWriting()
+            return nil
+        }
+        time = time + hold
+
+        for nextURL in slideURLs.dropFirst() {
+            guard let nextSlide = UIImage(contentsOfFile: nextURL.path) else {
+                writer.cancelWriting()
+                return nil
+            }
+
+            for step in 1...fadeFrames {
+                let alpha = CGFloat(step) / CGFloat(fadeFrames + 1)
+                guard append(blend(previousSlide, with: nextSlide, alpha: alpha), at: time) else {
+                    writer.cancelWriting()
+                    return nil
+                }
+                time = time + fadeStep
+            }
+
+            guard append(nextSlide, at: time) else {
                 writer.cancelWriting()
                 return nil
             }
             time = time + hold
-            if index < slides.count - 1 {
-                let next = slides[index + 1]
-                for step in 1...fadeFrames {
-                    let alpha = CGFloat(step) / CGFloat(fadeFrames + 1)
-                    guard append(blend(slide, with: next, alpha: alpha), at: time) else {
-                        writer.cancelWriting()
-                        return nil
-                    }
-                    time = time + fadeStep
-                }
-            }
+            previousSlide = nextSlide
         }
 
         input.markAsFinished()

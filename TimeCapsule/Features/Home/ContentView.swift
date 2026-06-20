@@ -4,13 +4,16 @@ import UIKit
 
 struct ContentView: View {
     @StateObject private var model = PhotoLibraryModel()
+    @State private var isRequestingPhotoAccess = false
 
     var body: some View {
         Group {
             switch model.authorizationStatus {
             case .notDetermined:
-                PermissionRequestView()
-                    .task { await model.requestAccess() }
+                PermissionRequestView(
+                    isRequesting: isRequestingPhotoAccess,
+                    onRequestAccess: requestPhotoAccess
+                )
 
             case .denied, .restricted:
                 PermissionDeniedView()
@@ -29,7 +32,10 @@ struct ContentView: View {
                 }
 
             @unknown default:
-                PermissionRequestView()
+                PermissionRequestView(
+                    isRequesting: isRequestingPhotoAccess,
+                    onRequestAccess: requestPhotoAccess
+                )
             }
         }
         .task {
@@ -42,21 +48,46 @@ struct ContentView: View {
             }
         }
     }
+
+    private func requestPhotoAccess() {
+        guard !isRequestingPhotoAccess else { return }
+        isRequestingPhotoAccess = true
+        Task {
+            await model.requestAccess()
+            await MainActor.run {
+                isRequestingPhotoAccess = false
+            }
+        }
+    }
 }
 
 struct PermissionRequestView: View {
+    let isRequesting: Bool
+    let onRequestAccess: () -> Void
+
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 18) {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 64))
                 .foregroundStyle(.secondary)
             Text("Time Capsule")
                 .font(.largeTitle.bold())
-            Text("Needs access to your Photos to show memories from this day in past years.")
+            Text("Time Capsule finds photos and videos from this date in past years. Your library stays on device.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
-            ProgressView()
+            Button {
+                onRequestAccess()
+            } label: {
+                if isRequesting {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Text("Allow Photo Access")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isRequesting)
         }
         .padding()
     }
