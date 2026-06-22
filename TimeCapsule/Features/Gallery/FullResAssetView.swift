@@ -120,7 +120,7 @@ struct FullResAssetView: View {
                     loadedPlayer?.play()
                 } else {
                     loadedPlayer?.pause()
-                    loadedPlayer?.seek(to: .zero)
+                    await loadedPlayer?.seek(to: .zero)
                 }
             } else {
                 let loadedImage = await loadImage(
