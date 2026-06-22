@@ -2,7 +2,7 @@ import AVFoundation
 import Photos
 import UIKit
 
-private final class PhotoImageRequestState<Value>: @unchecked Sendable {
+private nonisolated final class PhotoImageRequestState<Value>: @unchecked Sendable {
     private let cancellationValue: Value
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Value, Never>?
@@ -69,7 +69,7 @@ private final class PhotoImageRequestState<Value>: @unchecked Sendable {
     }
 }
 
-private final class PhotoResourceRequestState<Value>: @unchecked Sendable {
+private nonisolated final class PhotoResourceRequestState<Value>: @unchecked Sendable {
     private let cancellationValue: Value
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Value, Never>?
@@ -189,30 +189,51 @@ func loadPlayer(from asset: PHAsset) async -> AVPlayer? {
 
 func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
     let state = PhotoResourceRequestState<URL?>(cancellationValue: nil)
-    return await withTaskCancellationHandler {
-        await withCheckedContinuation { continuation in
-            guard state.setContinuation(continuation) else { return }
-
-            let resources = PHAssetResource.assetResources(for: asset)
-            guard let resource = resources.first(where: { $0.type == .video || $0.type == .fullSizeVideo }) else {
-                state.resume(returning: nil)
-                return
-            }
-
-            let ext = (resource.originalFilename as NSString).pathExtension
-            let filename = ext.isEmpty ? "\(UUID().uuidString).mov" : "\(UUID().uuidString).\(ext)"
-            let destinationURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-            try? FileManager.default.removeItem(at: destinationURL)
-
-            let options = PHAssetResourceRequestOptions()
-            options.isNetworkAccessAllowed = true
-
-            let requestID = PHAssetResourceManager.default().writeData(for: resource, toFile: destinationURL, options: options) { error in
-                state.resume(returning: error == nil ? destinationURL : nil)
-            }
-            state.setRequestID(requestID)
-        }
-    } onCancel: {
+    return await withTaskCancellationHandler(operation: {
+        await exportVideoToTemporaryFile(from: asset, state: state)
+    }, onCancel: {
         state.cancel()
+    })
+}
+
+private nonisolated func exportVideoToTemporaryFile(
+    from asset: PHAsset,
+    state: PhotoResourceRequestState<URL?>
+) async -> URL? {
+    await withCheckedContinuation { continuation in
+        guard state.setContinuation(continuation) else { return }
+
+        guard let resource = preferredVideoResource(for: asset) else {
+            state.resume(returning: nil)
+            return
+        }
+
+        let destinationURL = temporaryVideoURL(for: resource)
+        try? FileManager.default.removeItem(at: destinationURL)
+
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+
+        let requestID = PHAssetResourceManager.default().writeData(
+            for: resource,
+            toFile: destinationURL,
+            options: options
+        ) { error in
+            state.resume(returning: error == nil ? destinationURL : nil)
+        }
+        state.setRequestID(requestID)
     }
+}
+
+private nonisolated func preferredVideoResource(for asset: PHAsset) -> PHAssetResource? {
+    let resources = PHAssetResource.assetResources(for: asset)
+    return resources.first { resource in
+        resource.type == .video || resource.type == .fullSizeVideo
+    }
+}
+
+private nonisolated func temporaryVideoURL(for resource: PHAssetResource) -> URL {
+    let ext = (resource.originalFilename as NSString).pathExtension
+    let filename = ext.isEmpty ? "\(UUID().uuidString).mov" : "\(UUID().uuidString).\(ext)"
+    return FileManager.default.temporaryDirectory.appendingPathComponent(filename)
 }
