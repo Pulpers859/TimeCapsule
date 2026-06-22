@@ -4,7 +4,7 @@ import UIKit
 
 /// Renders a shareable "recap" slideshow video (title card, crossfading
 /// photos) from this day's memories. Photos only — videos are skipped.
-enum MemoryRecapExporter {
+nonisolated enum MemoryRecapExporter {
     static let renderSize = CGSize(width: 1080, height: 1920)
     static let maxPhotos = 30
 
