@@ -130,6 +130,8 @@ private nonisolated final class VideoExportRequestState: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<URL?, Never>?
     private var requestID: PHAssetResourceDataRequestID?
+    private var destinationURL: URL?
+    private var fileHandle: FileHandle?
     private var didFinish = false
 
     func setContinuation(_ continuation: CheckedContinuation<URL?, Never>) -> Bool {
@@ -155,18 +157,49 @@ private nonisolated final class VideoExportRequestState: @unchecked Sendable {
         lock.unlock()
     }
 
-    func resume(returning value: URL?) {
+    func openFile(at destinationURL: URL) -> Bool {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return false
+        }
+
+        try? FileManager.default.removeItem(at: destinationURL)
+        guard FileManager.default.createFile(atPath: destinationURL.path, contents: nil),
+              let fileHandle = try? FileHandle(forWritingTo: destinationURL) else {
+            finishLocked(returning: nil)
+            return false
+        }
+
+        self.destinationURL = destinationURL
+        self.fileHandle = fileHandle
+        lock.unlock()
+        return true
+    }
+
+    func append(_ data: Data) {
+        lock.lock()
+        guard !didFinish, let fileHandle else {
+            lock.unlock()
+            return
+        }
+
+        do {
+            try fileHandle.write(contentsOf: data)
+            lock.unlock()
+        } catch {
+            finishLocked(returning: nil)
+        }
+    }
+
+    func finish(error: Error?) {
         lock.lock()
         guard !didFinish else {
             lock.unlock()
             return
         }
-        didFinish = true
-        let continuation = continuation
-        self.continuation = nil
-        lock.unlock()
 
-        continuation?.resume(returning: value)
+        finishLocked(returning: error == nil ? destinationURL : nil)
     }
 
     func cancel() {
@@ -178,13 +211,38 @@ private nonisolated final class VideoExportRequestState: @unchecked Sendable {
         didFinish = true
         let requestID = requestID
         let continuation = continuation
+        let destinationURL = destinationURL
+        let fileHandle = fileHandle
         self.continuation = nil
+        self.fileHandle = nil
+        self.destinationURL = nil
         lock.unlock()
 
         if let requestID {
             PHAssetResourceManager.default().cancelDataRequest(requestID)
         }
+        try? fileHandle?.close()
+        if let destinationURL {
+            try? FileManager.default.removeItem(at: destinationURL)
+        }
         continuation?.resume(returning: nil)
+    }
+
+    private func finishLocked(returning value: URL?) {
+        didFinish = true
+        let continuation = continuation
+        let fileHandle = fileHandle
+        let destinationURL = destinationURL
+        self.continuation = nil
+        self.fileHandle = nil
+        self.destinationURL = nil
+        lock.unlock()
+
+        try? fileHandle?.close()
+        if value == nil, let destinationURL {
+            try? FileManager.default.removeItem(at: destinationURL)
+        }
+        continuation?.resume(returning: value)
     }
 }
 
@@ -261,18 +319,21 @@ private nonisolated func exportVideoToTemporaryFile(
         }
 
         let destinationURL = temporaryVideoURL(for: resource)
-        try? FileManager.default.removeItem(at: destinationURL)
+        guard state.openFile(at: destinationURL) else { return }
 
         let options = PHAssetResourceRequestOptions()
         options.isNetworkAccessAllowed = true
 
-        let requestID = PHAssetResourceManager.default().writeData(
+        let requestID = PHAssetResourceManager.default().requestData(
             for: resource,
-            toFile: destinationURL,
-            options: options
-        ) { error in
-            state.resume(returning: error == nil ? destinationURL : nil)
-        }
+            options: options,
+            dataReceivedHandler: { data in
+                state.append(data)
+            },
+            completionHandler: { error in
+                state.finish(error: error)
+            }
+        )
         state.setRequestID(requestID)
     }
 }
