@@ -69,22 +69,17 @@ private nonisolated final class PhotoImageRequestState<Value>: @unchecked Sendab
     }
 }
 
-private nonisolated final class PhotoResourceRequestState<Value>: @unchecked Sendable {
-    private let cancellationValue: Value
+private nonisolated final class PhotoResourceRequestState: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, Never>?
+    private var continuation: CheckedContinuation<URL?, Never>?
     private var requestID: PHAssetResourceDataRequestID?
     private var didFinish = false
 
-    init(cancellationValue: Value) {
-        self.cancellationValue = cancellationValue
-    }
-
-    func setContinuation(_ continuation: CheckedContinuation<Value, Never>) -> Bool {
+    func setContinuation(_ continuation: CheckedContinuation<URL?, Never>) -> Bool {
         lock.lock()
         if didFinish {
             lock.unlock()
-            continuation.resume(returning: cancellationValue)
+            continuation.resume(returning: nil)
             return false
         }
         self.continuation = continuation
@@ -103,7 +98,7 @@ private nonisolated final class PhotoResourceRequestState<Value>: @unchecked Sen
         lock.unlock()
     }
 
-    func resume(returning value: Value) {
+    func resume(returning value: URL?) {
         lock.lock()
         guard !didFinish else {
             lock.unlock()
@@ -132,7 +127,7 @@ private nonisolated final class PhotoResourceRequestState<Value>: @unchecked Sen
         if let requestID {
             PHAssetResourceManager.default().cancelDataRequest(requestID)
         }
-        continuation?.resume(returning: cancellationValue)
+        continuation?.resume(returning: nil)
     }
 }
 
@@ -188,7 +183,7 @@ func loadPlayer(from asset: PHAsset) async -> AVPlayer? {
 }
 
 func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
-    let state = PhotoResourceRequestState<URL?>(cancellationValue: nil)
+    let state = PhotoResourceRequestState()
     return await withTaskCancellationHandler(operation: {
         await exportVideoToTemporaryFile(from: asset, state: state)
     }, onCancel: {
@@ -198,7 +193,7 @@ func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
 
 private nonisolated func exportVideoToTemporaryFile(
     from asset: PHAsset,
-    state: PhotoResourceRequestState<URL?>
+    state: PhotoResourceRequestState
 ) async -> URL? {
     await withCheckedContinuation { continuation in
         guard state.setContinuation(continuation) else { return }
