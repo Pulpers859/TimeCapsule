@@ -2,22 +2,17 @@ import AVFoundation
 import Photos
 import UIKit
 
-private nonisolated final class PhotoImageRequestState<Value>: @unchecked Sendable {
-    private let cancellationValue: Value
+private nonisolated final class ImageRequestState: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, Never>?
+    private var continuation: CheckedContinuation<UIImage?, Never>?
     private var requestID = PHInvalidImageRequestID
     private var didFinish = false
 
-    init(cancellationValue: Value) {
-        self.cancellationValue = cancellationValue
-    }
-
-    func setContinuation(_ continuation: CheckedContinuation<Value, Never>) -> Bool {
+    func setContinuation(_ continuation: CheckedContinuation<UIImage?, Never>) -> Bool {
         lock.lock()
         if didFinish {
             lock.unlock()
-            continuation.resume(returning: cancellationValue)
+            continuation.resume(returning: nil)
             return false
         }
         self.continuation = continuation
@@ -36,7 +31,7 @@ private nonisolated final class PhotoImageRequestState<Value>: @unchecked Sendab
         lock.unlock()
     }
 
-    func resume(returning value: Value) {
+    func resume(returning value: UIImage?) {
         lock.lock()
         guard !didFinish else {
             lock.unlock()
@@ -65,11 +60,73 @@ private nonisolated final class PhotoImageRequestState<Value>: @unchecked Sendab
         if requestID != PHInvalidImageRequestID {
             PHImageManager.default().cancelImageRequest(requestID)
         }
-        continuation?.resume(returning: cancellationValue)
+        continuation?.resume(returning: nil)
     }
 }
 
-private nonisolated final class PhotoResourceRequestState: @unchecked Sendable {
+private nonisolated final class PlayerRequestState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<AVPlayer?, Never>?
+    private var requestID = PHInvalidImageRequestID
+    private var didFinish = false
+
+    func setContinuation(_ continuation: CheckedContinuation<AVPlayer?, Never>) -> Bool {
+        lock.lock()
+        if didFinish {
+            lock.unlock()
+            continuation.resume(returning: nil)
+            return false
+        }
+        self.continuation = continuation
+        lock.unlock()
+        return true
+    }
+
+    func setRequestID(_ requestID: PHImageRequestID) {
+        lock.lock()
+        if didFinish {
+            lock.unlock()
+            PHImageManager.default().cancelImageRequest(requestID)
+            return
+        }
+        self.requestID = requestID
+        lock.unlock()
+    }
+
+    func resume(returning value: AVPlayer?) {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return
+        }
+        didFinish = true
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+
+        continuation?.resume(returning: value)
+    }
+
+    func cancel() {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return
+        }
+        didFinish = true
+        let requestID = requestID
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+
+        if requestID != PHInvalidImageRequestID {
+            PHImageManager.default().cancelImageRequest(requestID)
+        }
+        continuation?.resume(returning: nil)
+    }
+}
+
+private nonisolated final class VideoExportRequestState: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<URL?, Never>?
     private var requestID: PHAssetResourceDataRequestID?
@@ -136,9 +193,9 @@ func loadImage(
     targetSize: CGSize = CGSize(width: 800, height: 800),
     contentMode: PHImageContentMode = .aspectFill
 ) async -> UIImage? {
-    let state = PhotoImageRequestState<UIImage?>(cancellationValue: nil)
-    return await withTaskCancellationHandler {
-        await withCheckedContinuation { continuation in
+    let state = ImageRequestState()
+    return await withTaskCancellationHandler(operation: {
+        await withCheckedContinuation { (continuation: CheckedContinuation<UIImage?, Never>) in
             guard state.setContinuation(continuation) else { return }
 
             let manager = PHImageManager.default()
@@ -154,15 +211,15 @@ func loadImage(
             }
             state.setRequestID(requestID)
         }
-    } onCancel: {
+    }, onCancel: {
         state.cancel()
-    }
+    })
 }
 
 func loadPlayer(from asset: PHAsset) async -> AVPlayer? {
-    let state = PhotoImageRequestState<AVPlayer?>(cancellationValue: nil)
-    return await withTaskCancellationHandler {
-        await withCheckedContinuation { continuation in
+    let state = PlayerRequestState()
+    return await withTaskCancellationHandler(operation: {
+        await withCheckedContinuation { (continuation: CheckedContinuation<AVPlayer?, Never>) in
             guard state.setContinuation(continuation) else { return }
 
             let options = PHVideoRequestOptions()
@@ -177,13 +234,13 @@ func loadPlayer(from asset: PHAsset) async -> AVPlayer? {
             }
             state.setRequestID(requestID)
         }
-    } onCancel: {
+    }, onCancel: {
         state.cancel()
-    }
+    })
 }
 
 func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
-    let state = PhotoResourceRequestState()
+    let state = VideoExportRequestState()
     return await withTaskCancellationHandler(operation: {
         await exportVideoToTemporaryFile(from: asset, state: state)
     }, onCancel: {
@@ -193,9 +250,9 @@ func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
 
 private nonisolated func exportVideoToTemporaryFile(
     from asset: PHAsset,
-    state: PhotoResourceRequestState
+    state: VideoExportRequestState
 ) async -> URL? {
-    await withCheckedContinuation { continuation in
+    await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
         guard state.setContinuation(continuation) else { return }
 
         guard let resource = preferredVideoResource(for: asset) else {
