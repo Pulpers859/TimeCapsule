@@ -202,6 +202,16 @@ private nonisolated final class VideoExportRequestState: @unchecked Sendable {
         finishLocked(returning: error == nil ? destinationURL : nil)
     }
 
+    func finishWithoutResult() {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return
+        }
+
+        finishLocked(returning: nil)
+    }
+
     func cancel() {
         lock.lock()
         guard !didFinish else {
@@ -314,7 +324,7 @@ private nonisolated func exportVideoToTemporaryFile(
         guard state.setContinuation(continuation) else { return }
 
         guard let resource = preferredVideoResource(for: asset) else {
-            state.resume(returning: nil)
+            state.finishWithoutResult()
             return
         }
 
