@@ -28,7 +28,7 @@ struct PhotoZoomScrollView: UIViewRepresentable {
 final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
     private let imageView = UIImageView()
     private var currentImageIdentifier: ObjectIdentifier?
-    private var hasConfiguredImage = false
+    private var configuredBoundsSize: CGSize = .zero
     private var onZoomStateChange: ((Bool) -> Void)?
     private var onSingleTap: (() -> Void)?
 
@@ -48,9 +48,11 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
             return
         }
 
-        if !hasConfiguredImage {
+        // Re-fit whenever the bounds size itself changes (e.g. rotation), not just
+        // on first layout — otherwise a stale fit from the old bounds persists.
+        if configuredBoundsSize != bounds.size {
             configureForCurrentBounds(using: image)
-            hasConfiguredImage = true
+            configuredBoundsSize = bounds.size
         } else {
             centerImage()
         }
@@ -70,7 +72,7 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
 
         currentImageIdentifier = identifier
         imageView.image = image
-        hasConfiguredImage = false
+        configuredBoundsSize = .zero
         setNeedsLayout()
         layoutIfNeeded()
     }
@@ -145,16 +147,30 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         }
     }
 
+    // Anchors the image view's frame within the scroll view's bounds directly
+    // instead of relying on `contentInset`. `contentInset` only changes the
+    // scrollable range — it does not move `contentOffset` — so an image whose
+    // fitted size is smaller than the bounds in one dimension (any photo whose
+    // aspect ratio doesn't match the screen, which is common for older photos
+    // resurfaced by this "on this day" app) was rendering pinned to the
+    // top-left with blank space left uncovered below/right of it.
     private func centerImage() {
-        let horizontalInset = max((bounds.width - imageView.frame.width) / 2, 0)
-        let verticalInset = max((bounds.height - imageView.frame.height) / 2, 0)
+        let boundsSize = bounds.size
+        var frameToCenter = imageView.frame
 
-        contentInset = UIEdgeInsets(
-            top: verticalInset,
-            left: horizontalInset,
-            bottom: verticalInset,
-            right: horizontalInset
-        )
+        if frameToCenter.width < boundsSize.width {
+            frameToCenter.origin.x = (boundsSize.width - frameToCenter.width) / 2
+        } else {
+            frameToCenter.origin.x = 0
+        }
+
+        if frameToCenter.height < boundsSize.height {
+            frameToCenter.origin.y = (boundsSize.height - frameToCenter.height) / 2
+        } else {
+            frameToCenter.origin.y = 0
+        }
+
+        imageView.frame = frameToCenter
     }
 
     @objc private func handleSingleTap() {
