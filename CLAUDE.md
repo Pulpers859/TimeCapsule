@@ -32,3 +32,6 @@
 - `/review-delete-flow`
 - `/review-fullscreen`
 - `/session-brief`
+
+## Human Launchers
+- `_RUN FROM HERE/`: numbered double-click shortcuts for opening the repo shell, Xcode project, Git status/pull, hooks, source, and docs.
