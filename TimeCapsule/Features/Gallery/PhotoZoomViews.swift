@@ -97,6 +97,7 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         canCancelContentTouches = true
         maximumZoomScale = 4
         minimumZoomScale = 1
+        contentInsetAdjustmentBehavior = .never
 
         imageView.contentMode = .scaleAspectFit
         imageView.isUserInteractionEnabled = true
@@ -114,12 +115,14 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
     }
 
     private func configureForCurrentBounds(using image: UIImage) {
-        let fittedSize = aspectFitSize(for: image.size, in: bounds.size)
-        imageView.frame = CGRect(origin: .zero, size: fittedSize)
-        contentSize = fittedSize
+        // Reset zoom before assigning frame: Apple states frame is undefined when
+        // the view's transform is not identity (i.e. when zoomScale != 1).
         zoomScale = 1
         minimumZoomScale = 1
         maximumZoomScale = 4
+        let fittedSize = aspectFitSize(for: image.size, in: bounds.size)
+        imageView.frame = CGRect(origin: .zero, size: fittedSize)
+        contentSize = fittedSize
         contentOffset = .zero
         centerImage()
         onZoomStateChange?(false)
