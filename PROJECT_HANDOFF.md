@@ -61,6 +61,7 @@ If the GitHub remote is unknown, the agent should finish local bootstrap first a
 - Handle Git operations when appropriate.
 - Keep normal work on `main`.
 - Do not create, use, push, or propose side branches or pull requests unless I explicitly ask for that exact workflow.
+- For risky, creative, or parallel agent work, use a detached sandbox worktree via `tools/New-AgentSandbox.ps1`; do not create side branches or commit/push from the sandbox. See `docs/agent-sandbox-workflow.md`.
 - Audit adjacent risks after making fixes.
 - Run the checks that are realistically available in the current environment.
 - Clearly distinguish evidence-backed logic from heuristics.

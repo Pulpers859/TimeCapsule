@@ -24,6 +24,7 @@
 - Run `swift-sanity-check` after Swift edits and separate Windows validation from iPhone-only behavior.
 - For this repo, commit and push code changes by default unless the user explicitly asks not to.
 - For this repo, GitHub workflow is `main` only: no side branches and no PR flow unless the user explicitly asks for them.
+- For risky exploration, use a detached sandbox worktree via `tools/New-AgentSandbox.ps1`; do not commit or push from the sandbox.
 - If outside-agent work is mentioned, do an external-agent reconciliation pass before new edits or sync claims: compare the claim against local files, local Git history, and GitHub `main`, then report whether each claimed change is present, missing, partially landed, or overwritten.
 
 ## Useful Commands
