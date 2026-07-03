@@ -15,7 +15,7 @@ For risky experiments, create a detached worktree:
 Review the sandbox diff, then integrate only selected changes back into the main checkout:
 
 ```powershell
-git -C C:\Dev\TimeCapsule-agent-sandboxes\delete-refresh-audit diff
+git -C C:\Dev\.agent-sandboxes\TimeCapsule\delete-refresh-audit diff
 ```
 
 Remove the sandbox when finished:
