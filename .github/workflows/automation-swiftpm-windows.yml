@@ -1,4 +1,4 @@
-name: Swift Package Tests
+name: Swift Package Tests (Windows)
 
 on:
   push:
@@ -12,13 +12,18 @@ permissions:
 
 jobs:
   test:
-    runs-on: macos-latest
+    runs-on: windows-2022
     timeout-minutes: 30
     defaults:
       run:
         working-directory: '.'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Swift
+        uses: compnerd/gha-setup-swift@eeda069c5bc95ac8a9ac5cea7d4f588ae5420ca5
+        with:
+          swift-version: swift-6.2-release
+          swift-build: 6.2-RELEASE
       - name: Run Swift tests
         shell: pwsh
         run: |
@@ -31,12 +36,12 @@ jobs:
           foreach ($match in $matches) { $total += [int]$match.Groups[1].Value }
           $parallelCases = [regex]::Matches($log, '(?m)^\[[0-9]+/[0-9]+\]\s+Testing\s+').Count
           if ($total -lt 1 -and $parallelCases -lt 1) { throw 'The test command completed without evidence that any tests ran.' }
-          if (-not (Select-String -LiteralPath swift-test.log -SimpleMatch 'TimeCapsuleCoreTests.MemoryWindowTests' -Quiet)) { throw 'Required test evidence missing: ' + 'TimeCapsuleCoreTests.MemoryWindowTests' }
+          if (-not (Select-String -LiteralPath swift-test.log -SimpleMatch 'TimeCapsuleCoreTests.MemoryWindowTests' -Quiet)) { throw 'Required test evidence missing: TimeCapsuleCoreTests.MemoryWindowTests' }
       - name: Upload failure log
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: swift-package-test-log
+          name: swift-package-test-log-windows
           path: './swift-test.log'
           if-no-files-found: ignore
           retention-days: 7
