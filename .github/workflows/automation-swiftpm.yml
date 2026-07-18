@@ -1,0 +1,53 @@
+name: Swift Package Tests
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-2022]
+    defaults:
+      run:
+        working-directory: '.'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Swift on Windows
+        if: runner.os == 'Windows'
+        uses: compnerd/gha-setup-swift@eeda069c5bc95ac8a9ac5cea7d4f588ae5420ca5
+        with:
+          swift-version: swift-6.2-release
+          swift-build: 6.2-RELEASE
+      - name: Run Swift tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          swift test --enable-xctest --parallel 2>&1 | Tee-Object -FilePath swift-test.log
+          if ($LASTEXITCODE -ne 0) { throw "Swift tests failed with exit code $LASTEXITCODE." }
+          $log = Get-Content -LiteralPath swift-test.log -Raw
+          $matches = [regex]::Matches($log, '(?:Executed|Test run with)\s+(\d+)\s+tests?')
+          $total = 0
+          foreach ($match in $matches) { $total += [int]$match.Groups[1].Value }
+          $parallelCases = [regex]::Matches($log, '(?m)^\[[0-9]+/[0-9]+\]\s+Testing\s+').Count
+          if ($total -lt 1 -and $parallelCases -lt 1) { throw 'The test command completed without evidence that any tests ran.' }
+          if (-not (Select-String -LiteralPath swift-test.log -SimpleMatch 'TimeCapsuleCoreTests.MemoryWindowTests' -Quiet)) { throw 'Required test evidence missing: ' + 'TimeCapsuleCoreTests.MemoryWindowTests' }
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: swift-package-test-log-${{ runner.os }}
+          path: './swift-test.log'
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "appName": "TimeCapsule",
+  "projectType": "hybrid",
+  "platform": "ios",
+  "defaultBranch": "main",
+  "workflowMode": "generate",
+  "physicalDeviceRequired": true,
+  "existingWorkflowPaths": [],
+  "swiftPackage": {
+    "enabled": true,
+    "workingDirectory": ".",
+    "testCommand": "swift test --enable-xctest --parallel",
+    "requireExecutedTests": true,
+    "requiredLogPatterns": [
+      "TimeCapsuleCoreTests.MemoryWindowTests"
+    ],
+    "timeoutMinutes": 30
+  },
+  "xcode": {
+    "enabled": true,
+    "workingDirectory": ".",
+    "containerType": "project",
+    "containerPath": "TimeCapsule.xcodeproj",
+    "selectorType": "scheme",
+    "selector": "TimeCapsule",
+    "configuration": "Debug",
+    "sdk": "iphonesimulator",
+    "destination": "generic/platform=iOS Simulator",
+    "action": "build",
+    "timeoutMinutes": 20
+  },
+  "liveAI": {
+    "enabled": false,
+    "providerSecretName": "AI_PROVIDER_API_KEY",
+    "secretEnvironmentName": "HEADLESS_AI_API_KEY",
+    "confirmationPhrase": "RUN_LIVE_AI",
+    "workingDirectory": ".",
+    "deterministicCommand": "swift test --enable-xctest --parallel",
+    "surfaces": []
+  }
+}
