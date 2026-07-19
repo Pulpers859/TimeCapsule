@@ -5,21 +5,21 @@
 - App: `TimeCapsule`
 - Classification: `hybrid`
 - Shipping project: `TimeCapsule.xcodeproj`, shared `TimeCapsule` scheme, iOS
-- Deterministic harness: root `Package.swift`, compiling the shipping `TimeCapsule/Services/MemoryWindow.swift` file in place
-- Default branch: `main`
+- Deterministic harness: root `Package.swift`
+- Default and delivery branch: `main`; do not create a PR branch for normal agent work
 - Final release validation still requires a physical iPhone
-- Profile: `.swift-automation.json`, schema version 1, `workflowMode: generate`
-- Automation kit source: `Pulpers859/swift-agent-automation-kit` commit `b85a6b34ae9ec30663aea9b7e9a996cc318e6574`
+- Profile: `.swift-automation.json`, schema version 1, `workflowMode: existing`
+- Latest automation kit used: `Pulpers859/swift-agent-automation-kit` commit `4416998dd029d3f87269e04b39e06da28a56c1ac`
 
-The repository began as Xcode-only. It is classified as hybrid after adding the narrow Foundation-safe SwiftPM harness; the app itself remains an Xcode project.
+The app remains an Xcode project. The root Swift package compiles selected Foundation-safe shipping files in place so macOS and Windows can prove deterministic behavior without creating a second implementation.
 
 ## Workflows
 
-- `.github/workflows/automation-swiftpm.yml`: kit-managed deterministic tests on `macos-latest`
-- `.github/workflows/automation-xcode.yml`: kit-managed unsigned simulator build on `macos-latest`
-- `.github/workflows/automation-swiftpm-windows.yml`: supplemental deterministic tests on `windows-2022`
+- `.github/workflows/automation-swiftpm.yml`: deterministic XCTest on `macos-latest`
+- `.github/workflows/automation-swiftpm-windows.yml`: deterministic XCTest on `windows-2022` with Swift 6.2
+- `.github/workflows/automation-xcode.yml`: unsigned generic iOS Simulator build, privacy-manifest bundle check, failure log, and failure `.xcresult`
 
-The Windows workflow is separate so a future kit regeneration cannot silently remove Windows coverage. All direct action references are pinned to full commit SHAs and all jobs have `contents: read` only.
+All direct actions are pinned to full commit SHAs, permissions are `contents: read`, and obsolete runs for the same workflow/ref are cancelled. The workflows intentionally preserve custom stronger test-evidence and Windows behavior, so a kit preview may label generated workflow names as stale. Do not use `-Force` to overwrite them without reconciling those protections.
 
 ## Deterministic Tests
 
@@ -29,51 +29,67 @@ Run from the repository root:
 swift test --enable-xctest --parallel
 ```
 
-`TimeCapsuleCoreTests.MemoryWindowTests` executes nine network-free tests covering preference clamping, exact-day half-open ranges, widened ranges, leap-day acceptance and rejection, negative and oversized input, year boundaries, and DST-local calendar behavior.
+The `TimeCapsuleCore` harness compiles these shipping files:
 
-Both package workflows fail when the command fails, when no executed-test evidence appears, or when the `TimeCapsuleCoreTests.MemoryWindowTests` marker is absent. Swift 6.2 currently prints a trailing Swift Testing summary that says `0 tests` for this XCTest suite; the same log contains nine `[n/9] Testing ...` execution records. The guard intentionally accepts those XCTest parallel-execution records and does not treat the unrelated Swift Testing summary as the test count.
+- `MemoryWindow.swift`
+- `NotificationPlan.swift`
+- `GalleryStateLogic.swift`
+- `RecapPlan.swift`
+
+There are 19 network-free XCTest cases across five suites. They cover date-window clamping, half-open ranges, leap day, DST, year boundaries, notification slots and copy, selection pruning, post-delete index repair, recap sampling, and a sequential empty-state to widened-range to schedule to delete journey.
+
+Both package workflows run `scripts/Assert-SwiftTestEvidence.ps1`. CI fails unless all 19 named cases appear in the log and the execution count is at least 19. This deliberately ignores Swift 6.2's unrelated trailing Swift Testing summary that reports zero tests after the XCTest cases have run.
 
 ## GitHub Evidence
 
-Evidence commit: `a864144b9fd69caba64e0505e3faa2927ebba135`.
+Code evidence commit: `3e46f82ce0357dc1b43ff951d4be5b673174fcae`.
 
-- [macOS deterministic run 29628733434](https://github.com/Pulpers859/TimeCapsule/actions/runs/29628733434), job `88038240778`: success; all nine test records executed.
-- [Windows deterministic run 29628733427](https://github.com/Pulpers859/TimeCapsule/actions/runs/29628733427), job `88038240811`: success with Swift 6.2; all nine test records executed.
-- [Xcode build run 29628733456](https://github.com/Pulpers859/TimeCapsule/actions/runs/29628733456), job `88038240938`: success on `macos-26-arm64`, Xcode 26.5, iPhone Simulator SDK 26.5; log ended with `BUILD SUCCEEDED`.
+- [macOS deterministic run 29706565406](https://github.com/Pulpers859/TimeCapsule/actions/runs/29706565406), job `88244474437`: success; `Verified all 19 required XCTest cases.`
+- [Windows deterministic run 29706565390](https://github.com/Pulpers859/TimeCapsule/actions/runs/29706565390), job `88244474456`: success; `Verified all 19 required XCTest cases.`
+- [Xcode build run 29706565380](https://github.com/Pulpers859/TimeCapsule/actions/runs/29706565380), job `88244474392`: success; `BUILD SUCCEEDED` and `PrivacyInfo.xcprivacy` was copied into `TimeCapsule.app`.
 
-The Xcode log contained one non-fatal tool warning: App Intents metadata extraction was skipped because the app does not depend on `AppIntents.framework`. The app does not use App Intents, so adding that framework only to suppress the warning would be incorrect.
+The Xcode log has one non-fatal tool warning: App Intents metadata extraction is skipped because the app does not depend on `AppIntents.framework`. The app does not use App Intents, so adding that framework only to suppress the warning would be incorrect.
 
 ## Local Evidence
 
-- Latest-kit repository inspection detected the Xcode project, shared scheme, and initially zero tests/workflows.
-- Latest-kit profile validation: passed as `TimeCapsule [hybrid, generate]`.
-- Latest-kit installer preview was reviewed before apply and listed only the two kit workflows, this handoff, and the Claude bridge.
-- Windows Swift 6.3.1 local package run: nine tests executed successfully.
-- The local Windows run reports a non-fatal inability to create the `.build/debug` convenience symlink after a successful build; CI does not show this warning.
-- `swift-sanity-check`: Swift Foundation smoke test passed.
-- Every app and test Swift file passed `swiftc -parse` on Windows.
-- `git diff --check`: passed.
-- Credential-pattern scan: no credential-like material detected.
+- Latest-kit repository inspection classified the repository as hybrid and found the real project, shared scheme, package, and three workflows.
+- Latest-kit profile validation passed as `TimeCapsule [hybrid, existing]`.
+- Latest-kit installer preview was reviewed without `-Apply` or `-Force`.
+- `swift-sanity-check` passed for all four framework-free shipping files.
+- All 25 Swift files passed `swiftc -parse` on Windows.
+- `git diff --check`, privacy-manifest XML parsing, and credential-pattern scanning passed.
+- The local Windows `swift test` command could not load the installed Swift 6.3.1 standard library. This is a local toolchain failure; the pinned Windows GitHub runner executed all 19 cases successfully.
 
 ## Security And Cost
 
-- Live AI automation is disabled; this app has no paid AI surface or live-AI fixture.
-- No provider secret is configured and no paid job exists.
-- No API keys, prompts, raw model responses, personal data, medical data, or user photos are present in tests, workflows, logs, or artifacts.
-- The existing local `GH_TOKEN` was used only to inspect GitHub Actions through the API. Its value is not stored in this repository.
-- Do not add a paid live workflow without an independent default-off input, exact confirmation phrase, deterministic prerequisite, synthetic privacy-safe fixture, redacted output, enforced HTTP-call budget, and explicit owner approval.
+- Live AI automation is disabled. No paid job, provider secret, fixture, prompt, or response artifact exists.
+- No API keys, prompts, raw AI responses, personal data, medical data, or user photos are committed or uploaded.
+- The existing `GH_TOKEN` was used only to inspect Actions through GitHub's API; its value is not stored.
+- `PrivacyInfo.xcprivacy` declares Apple reason `CA92.1` for app-only `UserDefaults` access and declares no tracking or collected data.
+- Photo coordinates are sent to Apple Maps only after the user presses `Load Map and Location Name` following an explicit disclosure.
+- Shared videos are exported through an AVFoundation sharing filter with metadata cleared instead of sharing the original Photos resource.
+- Recap frames and completed videos use complete file protection; cancellation and failure remove owned temporary output.
+
+Do not add a paid live workflow without an independent default-off input, exact confirmation phrase, deterministic prerequisite, synthetic privacy-safe fixture, redacted output, enforced HTTP-call budget, and explicit owner approval.
 
 ## Adversarial Audit
 
-The second pass assumed the initial setup was incomplete. It found that Windows had first been added by modifying the kit-managed macOS workflow, which meant a forced kit regeneration could remove Windows coverage. That was corrected by restoring the generated macOS workflow and moving Windows to its own supplemental workflow. No remaining zero-test bypass, unpinned direct action, secret exposure, or shipping/test implementation copy was found.
+Five initial expert audits covered architecture/concurrency, privacy/security, UI/accessibility, full-screen media, and testing/product direction. Three separate adversarial agents then assumed the repair was incomplete.
+
+The second audit found and corrected issues that the first pass missed: a tuple type error hidden by syntax-only parsing, default-main-actor isolation gaps, destructive reminder replacement, uncancelled count work, stale permission fetch publication, modal video playback, pre-disclosure location transmission, metadata-bearing video shares, incomplete case guards, missing `.xcresult` retention, and an ineffective duplicate PhotoKit cache.
+
+The result is not “hundreds of bugs.” The council found a concentrated set of roughly ten high-impact root causes plus medium/low polish and coverage gaps. The high-impact issues found in code were corrected and the final code commit passed all three GitHub lanes.
 
 ## Remaining Limits
 
-- Xcode CI proves unsigned compilation for a generic simulator destination; it does not launch the app or validate runtime UI behavior.
-- The deterministic harness covers the shared memory date-window logic only. Photos, SwiftUI, AVKit, permissions, deletion, sharing, and local-notification behavior require Apple-platform tests and device review.
-- No Xcode unit-test target currently exists; package tests are the deterministic test authority.
-- Physical-device behavior and final product quality remain manual release gates.
+- Xcode CI proves compilation and resource bundling, not launch-time behavior or rendering.
+- There is no Xcode UI-test target. VoiceOver focus order, accessibility announcements, largest Dynamic Type sizes, iPad layouts, gestures, and visual polish still require device review.
+- Photos permission prompts, limited-library picker callbacks, deletion confirmation, iCloud downloads, notification delivery, reverse geocoding, AVPlayer behavior, and metadata-filtered video export require real Apple runtime validation.
+- Deterministic tests cover the pure notification plan, but the `UNUserNotificationCenter` orchestration is Apple-framework code and is currently compile-validated rather than mock-driven.
+- The project still uses Swift 5 language mode with approachable concurrency settings. Moving to Swift 6 language mode should be a dedicated migration, not a blind build-setting flip.
+- The full-screen toolbar and video-control row should be visually checked at accessibility text sizes. Their touch targets and scrolling/accessibility semantics are improved, but Windows cannot prove that no clipping remains.
+- App termination can still leave an already completed share file until the operating system purges the temporary directory; normal completion, cancellation, and detected failure clean up owned files.
 
 ## Maintenance
 
-Before changing automation, read `.swift-automation.json` and this file. Fetch the latest automation kit, run its repository inspection and profile validator, preview installer destinations, and review changes before any `-Apply` or `-Force`. Kit regeneration owns the macOS package workflow, Xcode workflow, handoff, and Claude bridge; it must leave `automation-swiftpm-windows.yml` intact.
+Before changing CI, tests, workflows, or automation, read `AGENTS.md`, `.swift-automation.json`, and this file. Fetch the latest kit, run repository inspection and profile validation, preview installer destinations, and reconcile changes before any apply. Preserve the macOS, Windows, Xcode, exact-case guard, privacy bundle check, cancellation groups, pinned actions, and physical-device boundary.
