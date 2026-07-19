@@ -8,8 +8,6 @@ import MapKit
 struct FullScreenPhotoView: View {
     let asset: PHAsset
     let allAssets: [PHAsset]
-    private let preheater = AdjacentMediaPreheater.shared
-
     @Environment(\.dismiss) private var dismiss
     @State private var currentIndex: Int
     @State private var showChrome = true
@@ -263,7 +261,6 @@ struct FullScreenPhotoView: View {
             shareTask?.cancel()
             isPreparingShare = false
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            preloadAdjacentMedia()
             locationName = nil
             reverseGeocodeTask?.cancel()
         }
@@ -275,13 +272,9 @@ struct FullScreenPhotoView: View {
         .onReceive(autoPlayTimer) { _ in
             autoPlayTick()
         }
-        .onAppear {
-            preloadAdjacentMedia()
-        }
         .onDisappear {
             shareTask?.cancel()
             reverseGeocodeTask?.cancel()
-            preheater.stopCaching()
             UIApplication.shared.isIdleTimerDisabled = false
         }
         .preferredColorScheme(.dark)
@@ -475,7 +468,6 @@ struct FullScreenPhotoView: View {
                             currentIndex = nextIndex
                         }
                     }
-                    preloadAdjacentMedia()
                     locationName = nil
 
                     NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
@@ -490,10 +482,6 @@ struct FullScreenPhotoView: View {
                 }
             }
         }
-    }
-
-    private func preloadAdjacentMedia() {
-        preheater.updateCaching(for: visibleAssets, currentIndex: currentIndex)
     }
 
     private func resolveLocation() {

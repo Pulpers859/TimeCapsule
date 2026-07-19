@@ -136,7 +136,7 @@ struct FullResAssetView: View {
                     releasePlayer()
                     let preview = await loadImage(
                         from: asset,
-                        targetSize: CGSize(width: 1290, height: 2796),
+                        targetSize: CGSize(width: 2732, height: 2732),
                         contentMode: .aspectFit
                     )
                     guard !Task.isCancelled else { return }
@@ -147,7 +147,7 @@ struct FullResAssetView: View {
                 didFail = false
                 let loadedImage = await loadImage(
                     from: asset,
-                    targetSize: CGSize(width: 1290, height: 2796),
+                    targetSize: CGSize(width: 2732, height: 2732),
                     contentMode: .aspectFit
                 )
                 guard !Task.isCancelled else { return }
@@ -203,52 +203,5 @@ struct FullResAssetView: View {
         let type = asset.mediaType == .video ? "Video" : "Photo"
         guard let date = asset.creationDate else { return type }
         return "\(type), \(date.formatted(date: .long, time: .shortened))"
-    }
-}
-
-@MainActor
-final class AdjacentMediaPreheater {
-    static let shared = AdjacentMediaPreheater()
-
-    private let cachingManager = PHCachingImageManager()
-    private var cachedAssetIDs: Set<String> = []
-
-    private init() {}
-
-    func updateCaching(for assets: [PHAsset], currentIndex: Int) {
-        guard !assets.isEmpty, assets.indices.contains(currentIndex) else {
-            stopCaching()
-            return
-        }
-
-        let radius = 2
-        let lowerBound = max(currentIndex - radius, 0)
-        let upperBound = min(currentIndex + radius, assets.count - 1)
-        let assetsToCache = Array(assets[lowerBound...upperBound])
-        let nextIDs = Set(assetsToCache.map(\.localIdentifier))
-
-        if cachedAssetIDs != nextIDs {
-            cachingManager.stopCachingImagesForAllAssets()
-            let imageAssets = assetsToCache.filter { $0.mediaType == .image }
-            if !imageAssets.isEmpty {
-                cachingManager.startCachingImages(
-                    for: imageAssets,
-                    targetSize: CGSize(width: 1290, height: 2796),
-                    contentMode: .aspectFit,
-                    options: nil
-                )
-            }
-
-            cachedAssetIDs = nextIDs
-        }
-
-        // Video AVPlayers are intentionally not preheated here. Creating
-        // throwaway players can trigger expensive iCloud/video work without
-        // giving the active page a reusable player.
-    }
-
-    func stopCaching() {
-        cachingManager.stopCachingImagesForAllAssets()
-        cachedAssetIDs.removeAll()
     }
 }
