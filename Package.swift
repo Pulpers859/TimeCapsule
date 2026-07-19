@@ -20,7 +20,10 @@ let package = Package(
                 "NotificationManager.swift"
             ],
             sources: [
-                "MemoryWindow.swift"
+                "GalleryStateLogic.swift",
+                "MemoryWindow.swift",
+                "NotificationPlan.swift",
+                "RecapPlan.swift"
             ]
         ),
         .testTarget(

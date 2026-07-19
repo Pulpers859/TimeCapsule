@@ -31,7 +31,7 @@ struct VideoPlaybackControls: View {
                 Button(action: onTogglePlayPause) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 14, weight: .bold))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 44, height: 44)
                         .background(.ultraThinMaterial, in: Circle())
                 }
                 .buttonStyle(.plain)
@@ -40,7 +40,7 @@ struct VideoPlaybackControls: View {
                 Button(action: onSkipBack) {
                     Image(systemName: "gobackward.10")
                         .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 44, height: 44)
                         .background(.ultraThinMaterial, in: Circle())
                 }
                 .buttonStyle(.plain)
@@ -57,6 +57,8 @@ struct VideoPlaybackControls: View {
                     onEditingChanged: onEditingChanged
                 )
                 .tint(.white)
+                .accessibilityLabel("Video position")
+                .accessibilityValue("\(formattedTime(currentTime)) of \(formattedTime(duration))")
 
                 Text(formattedTime(duration))
                     .font(.caption.monospacedDigit())
@@ -164,7 +166,7 @@ final class PlayerProgressObserver {
         timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak player] time in
             let seconds = time.seconds.isFinite ? time.seconds : nil
             Task { @MainActor [weak self, weak player] in
-                guard let self, let player else { return }
+                guard let self, let player, self.player === player else { return }
                 self.publishSnapshot(for: player, currentTimeOverride: seconds)
             }
         }
@@ -176,7 +178,7 @@ final class PlayerProgressObserver {
                 queue: .main
             ) { [weak self, weak player] _ in
                 Task { @MainActor [weak self, weak player] in
-                    guard let self, let player else { return }
+                    guard let self, let player, self.player === player else { return }
                     self.publishSnapshot(for: player)
                 }
             }
@@ -225,7 +227,7 @@ final class PlayerProgressObserver {
             toleranceAfter: .zero
         ) { [weak self, weak player] _ in
             Task { @MainActor [weak self, weak player] in
-                guard let self, let player else { return }
+                guard let self, let player, self.player === player else { return }
                 self.publishSnapshot(for: player, currentTimeOverride: bounded)
             }
         }

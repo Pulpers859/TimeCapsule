@@ -4,12 +4,16 @@ import Combine
 @MainActor
 class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserver {
     @Published var yearGroups: [YearGroup] = []
-    @Published var authorizationStatus: PHAuthorizationStatus = .notDetermined
-    @Published var isLoading = false
+    @Published var authorizationStatus: PHAuthorizationStatus
+    @Published var isLoading: Bool
 
     private var cancellable: AnyCancellable?
+    private var fetchGeneration = 0
 
     override init() {
+        let initialStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        authorizationStatus = initialStatus
+        isLoading = initialStatus == .authorized || initialStatus == .limited
         super.init()
         PHPhotoLibrary.shared().register(self)
         // Listen for delete events from multi-select or full-screen delete
@@ -33,7 +37,7 @@ class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
 
     func requestAccess() async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-        authorizationStatus = status
+        updateAuthorizationStatus(status)
         if status == .authorized || status == .limited {
             await fetchOnThisDay()
         }
@@ -41,8 +45,9 @@ class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
 
     func refreshAuthorizationAndMemories() async {
         let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        authorizationStatus = current
+        updateAuthorizationStatus(current)
         guard current == .authorized || current == .limited else {
+            fetchGeneration += 1
             yearGroups = []
             isLoading = false
             return
@@ -51,11 +56,27 @@ class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     }
 
     func fetchOnThisDay() async {
+        fetchGeneration += 1
+        let requestedGeneration = fetchGeneration
         let shouldShowLoading = yearGroups.isEmpty
         if shouldShowLoading {
             isLoading = true
         }
-        yearGroups = MemoryLibrary.yearGroups(on: Date())
+        await Task.yield()
+        let queryDate = Date()
+        let groups = await Task.detached(priority: .userInitiated) {
+            MemoryLibrary.yearGroups(on: queryDate)
+        }.value
+        let currentAuthorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard requestedGeneration == fetchGeneration,
+              currentAuthorization == .authorized || currentAuthorization == .limited else { return }
+        yearGroups = groups
         isLoading = false
+    }
+
+    private func updateAuthorizationStatus(_ status: PHAuthorizationStatus) {
+        guard authorizationStatus != status else { return }
+        authorizationStatus = status
+        NotificationCenter.default.post(name: .timeCapsulePhotoAuthorizationDidChange, object: nil)
     }
 }

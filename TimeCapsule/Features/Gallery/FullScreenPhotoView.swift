@@ -26,12 +26,18 @@ struct FullScreenPhotoView: View {
     @State private var showInfo = false
     @State private var reverseGeocodeTask: Task<Void, Never>? = nil
     @State private var shareTask: Task<Void, Never>? = nil
+    @State private var isDeleting = false
+    @State private var isPreparingShare = false
+    @State private var shareError: String? = nil
     private let autoPlayTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     private var currentAssetIsVideo: Bool {
         visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .video
     }
     private var currentAssetIsImage: Bool {
         visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .image
+    }
+    private var isPlaybackBlocked: Bool {
+        showDeleteConfirm || showInfo || shareItem != nil || isPreparingShare || isDeleting
     }
 
     init(asset: PHAsset, allAssets: [PHAsset]) {
@@ -60,7 +66,7 @@ struct FullScreenPhotoView: View {
                         ForEach(Array(visibleAssets.enumerated()), id: \.element.localIdentifier) { index, a in
                             FullResAssetView(
                                 asset: a,
-                                isActive: index == currentIndex,
+                                isActive: index == currentIndex && !isPlaybackBlocked,
                                 shouldRender: abs(index - currentIndex) <= 1,
                                 showControls: showChrome,
                                 onToggleChrome: {
@@ -85,7 +91,7 @@ struct FullScreenPhotoView: View {
                         }
                     }
                     .offset(x: -CGFloat(currentIndex) * pageWidth + dragOffset)
-                    .gesture(pageDragGesture(pageWidth: pageWidth, isEnabled: !isCurrentAssetZoomed && !isVideoScrubbing))
+                    .gesture(pageDragGesture(pageWidth: pageWidth, isEnabled: !isCurrentAssetZoomed && !isVideoScrubbing && !isDeleting))
                     .animation(.easeOut(duration: 0.25), value: currentIndex)
                 }
             }
@@ -150,22 +156,36 @@ struct FullScreenPhotoView: View {
                         .padding(.vertical, 5)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         Spacer()
-                        Button(action: { shareCurrentPhoto() }) {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.title3.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .padding(12)
-                                .background(.ultraThinMaterial, in: Circle())
+                        Button(action: shareCurrentPhoto) {
+                            Group {
+                                if isPreparingShare {
+                                    ProgressView().tint(.white)
+                                } else {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .font(.title3.weight(.semibold))
+                                }
+                            }
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
                         }
                         .accessibilityLabel("Share memory")
+                        .disabled(isPreparingShare || isDeleting)
                         Button(action: { showDeleteConfirm = true }) {
-                            Image(systemName: "trash")
-                                .font(.title3.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .padding(12)
-                                .background(.ultraThinMaterial, in: Circle())
+                            Group {
+                                if isDeleting {
+                                    ProgressView().tint(.white)
+                                } else {
+                                    Image(systemName: "trash")
+                                        .font(.title3.weight(.semibold))
+                                }
+                            }
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
                         }
                         .accessibilityLabel("Delete memory")
+                        .disabled(isDeleting || isPreparingShare)
                     }
                     .padding()
                     Spacer()
@@ -178,6 +198,7 @@ struct FullScreenPhotoView: View {
                                 .background(.ultraThinMaterial, in: Circle())
                         }
                         .accessibilityLabel("Memory info")
+                        .disabled(isDeleting || isPreparingShare)
                         Spacer()
                         Text("\(currentIndex + 1) of \(visibleAssets.count)")
                             .font(.caption)
@@ -194,6 +215,7 @@ struct FullScreenPhotoView: View {
                                 .background(.ultraThinMaterial, in: Circle())
                         }
                         .accessibilityLabel(isAutoPlaying ? "Pause story" : "Play story")
+                        .disabled(isDeleting || isPreparingShare)
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, currentAssetIsVideo ? 92 : 8)
@@ -218,9 +240,18 @@ struct FullScreenPhotoView: View {
         } message: {
             Text(deleteError ?? "Something went wrong while moving the item to Recently Deleted.")
         }
+        .alert("Couldn't Share", isPresented: shareErrorBinding) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(shareError ?? "The memory could not be prepared for sharing.")
+        }
         .sheet(isPresented: $showInfo) {
             if visibleAssets.indices.contains(currentIndex) {
-                MemoryInfoSheet(asset: visibleAssets[currentIndex], locationName: locationName)
+                MemoryInfoSheet(
+                    asset: visibleAssets[currentIndex],
+                    locationName: locationName,
+                    onLoadLocation: resolveLocation
+                )
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
@@ -230,9 +261,11 @@ struct FullScreenPhotoView: View {
             isVideoScrubbing = false
             autoPlayProgress = 0
             shareTask?.cancel()
+            isPreparingShare = false
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             preloadAdjacentMedia()
-            resolveLocation()
+            locationName = nil
+            reverseGeocodeTask?.cancel()
         }
         .onChange(of: isCurrentAssetZoomed) { _, zoomed in
             if zoomed {
@@ -244,7 +277,6 @@ struct FullScreenPhotoView: View {
         }
         .onAppear {
             preloadAdjacentMedia()
-            resolveLocation()
         }
         .onDisappear {
             shareTask?.cancel()
@@ -253,6 +285,12 @@ struct FullScreenPhotoView: View {
             UIApplication.shared.isIdleTimerDisabled = false
         }
         .preferredColorScheme(.dark)
+        .accessibilityAction(named: "Previous memory") {
+            moveToPreviousMemory()
+        }
+        .accessibilityAction(named: "Next memory") {
+            moveToNextMemory()
+        }
     }
 
     private var currentAutoPlayDuration: Double {
@@ -294,7 +332,7 @@ struct FullScreenPhotoView: View {
     private func autoPlayTick() {
         guard isAutoPlaying, !visibleAssets.isEmpty else { return }
         // Hold while the user is mid-interaction or a sheet/dialog is up.
-        guard shareItem == nil, !showDeleteConfirm, !showInfo,
+        guard shareItem == nil, !showDeleteConfirm, !showInfo, !isPreparingShare, !isDeleting,
               !isCurrentAssetZoomed, !isVideoScrubbing, dragOffset == 0 else { return }
 
         autoPlayProgress += 0.05 / max(currentAutoPlayDuration, 0.5)
@@ -317,6 +355,10 @@ struct FullScreenPhotoView: View {
         DragGesture(minimumDistance: isEnabled ? 15 : .greatestFiniteMagnitude)
             .onChanged { value in
                 guard isEnabled else { return }
+                guard abs(value.translation.width) > abs(value.translation.height) else {
+                    dragOffset = 0
+                    return
+                }
                 let proposed = value.translation.width
                 if (currentIndex == 0 && proposed > 0) ||
                    (currentIndex == visibleAssets.count - 1 && proposed < 0) {
@@ -327,6 +369,10 @@ struct FullScreenPhotoView: View {
             }
             .onEnded { value in
                 guard isEnabled else {
+                    dragOffset = 0
+                    return
+                }
+                guard abs(value.translation.width) > abs(value.translation.height) else {
                     dragOffset = 0
                     return
                 }
@@ -348,12 +394,11 @@ struct FullScreenPhotoView: View {
     }
 
     private func shareCurrentPhoto() {
-        guard currentIndex < visibleAssets.count else { return }
+        guard currentIndex < visibleAssets.count, !isPreparingShare, !isDeleting else { return }
         let asset = visibleAssets[currentIndex]
-        let currentYear = Calendar.current.component(.year, from: Date())
-        let photoYear = Calendar.current.component(.year, from: asset.creationDate ?? Date())
-        let yearsAgo = currentYear - photoYear
-        let caption = "\(yearsAgo) year\(yearsAgo == 1 ? "" : "s") ago today 📸"
+        let caption = shareCaption(for: asset)
+        isPreparingShare = true
+        shareError = nil
 
         if asset.mediaType == .video {
             shareTask?.cancel()
@@ -367,6 +412,12 @@ struct FullScreenPhotoView: View {
                             return
                         }
                         shareItem = ShareItem(items: [videoURL, caption], cleanupURLs: [videoURL])
+                        isPreparingShare = false
+                    }
+                } else if !Task.isCancelled {
+                    await MainActor.run {
+                        isPreparingShare = false
+                        shareError = "The video could not be downloaded or exported. Check its iCloud availability and try again."
                     }
                 }
             }
@@ -383,6 +434,12 @@ struct FullScreenPhotoView: View {
                               visibleAssets.indices.contains(currentIndex),
                               visibleAssets[currentIndex].localIdentifier == asset.localIdentifier else { return }
                         shareItem = ShareItem(items: [image, caption])
+                        isPreparingShare = false
+                    }
+                } else if !Task.isCancelled {
+                    await MainActor.run {
+                        isPreparingShare = false
+                        shareError = "The photo could not be downloaded. Check its iCloud availability and try again."
                     }
                 }
             }
@@ -390,10 +447,18 @@ struct FullScreenPhotoView: View {
     }
 
     private func deleteCurrentPhoto() {
-        guard currentIndex < visibleAssets.count else { return }
-        let idx = currentIndex
-        let assetToDelete = visibleAssets[idx]
+        guard currentIndex < visibleAssets.count, !isDeleting else { return }
+        let assetToDelete = visibleAssets[currentIndex]
+        let identifier = assetToDelete.localIdentifier
+        let identifiers = visibleAssets.map(\.localIdentifier)
+        let nextIndex = GalleryStateLogic.indexAfterDeleting(
+            identifier: identifier,
+            from: identifiers,
+            currentIndex: currentIndex
+        )
+        isDeleting = true
         shareTask?.cancel()
+        isPreparingShare = false
         reverseGeocodeTask?.cancel()
         stopAutoPlay()
 
@@ -401,16 +466,17 @@ struct FullScreenPhotoView: View {
             PHAssetChangeRequest.deleteAssets([assetToDelete] as NSArray)
         }) { success, error in
             DispatchQueue.main.async {
+                isDeleting = false
                 if success {
                     withAnimation {
-                        visibleAssets.remove(at: idx)
+                        visibleAssets.removeAll { $0.localIdentifier == identifier }
                         isCurrentAssetZoomed = false
-                        if currentIndex >= visibleAssets.count && currentIndex > 0 {
-                            currentIndex = visibleAssets.count - 1
+                        if let nextIndex {
+                            currentIndex = nextIndex
                         }
                     }
                     preloadAdjacentMedia()
-                    resolveLocation()
+                    locationName = nil
 
                     NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
 
@@ -446,6 +512,24 @@ struct FullScreenPhotoView: View {
         }
     }
 
+    private func moveToPreviousMemory() {
+        guard !isDeleting, currentIndex > 0 else { return }
+        currentIndex -= 1
+    }
+
+    private func moveToNextMemory() {
+        guard !isDeleting, currentIndex < visibleAssets.count - 1 else { return }
+        currentIndex += 1
+    }
+
+    private func shareCaption(for asset: PHAsset) -> String {
+        guard let creationDate = asset.creationDate else { return "A Time Capsule memory" }
+        let years = max(Calendar.current.dateComponents([.year], from: creationDate, to: Date()).year ?? 0, 0)
+        guard years > 0 else { return "A Time Capsule memory" }
+        let timing = MemoryWindow.dayWindow > 0 ? "around this day" : "today"
+        return "\(years) year\(years == 1 ? "" : "s") ago \(timing)"
+    }
+
     private func reverseGeocodeName(for location: CLLocation) async -> String? {
         guard let request = MKReverseGeocodingRequest(location: location) else {
             return nil
@@ -465,6 +549,13 @@ struct FullScreenPhotoView: View {
         Binding(
             get: { deleteError != nil },
             set: { if !$0 { deleteError = nil } }
+        )
+    }
+
+    private var shareErrorBinding: Binding<Bool> {
+        Binding(
+            get: { shareError != nil },
+            set: { if !$0 { shareError = nil } }
         )
     }
 }
@@ -518,11 +609,13 @@ struct StoryProgressBar: View {
 struct MemoryInfoSheet: View {
     let asset: PHAsset
     let locationName: String?
+    let onLoadLocation: () -> Void
     @State private var mapPosition: MapCameraPosition
 
-    init(asset: PHAsset, locationName: String?) {
+    init(asset: PHAsset, locationName: String?, onLoadLocation: @escaping () -> Void) {
         self.asset = asset
         self.locationName = locationName
+        self.onLoadLocation = onLoadLocation
         let center = asset.location?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
         let region = MKCoordinateRegion(
             center: center,
@@ -581,13 +674,27 @@ struct MemoryInfoSheet: View {
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                 if let coordinate = asset.location?.coordinate {
-                    Map(position: $mapPosition, interactionModes: [.zoom, .pan]) {
-                        Marker("Memory Location", coordinate: coordinate)
-                            .tint(.red)
+                    if locationName != nil {
+                        Map(position: $mapPosition, interactionModes: [.zoom, .pan]) {
+                            Marker("Memory Location", coordinate: coordinate)
+                                .tint(.red)
+                        }
+                        .frame(height: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .allowsHitTesting(false)
+
+                        Text("The location name and map were requested from Apple using this photo's coordinates.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Loading a location name and map sends this photo's coordinates to Apple's Maps service.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Button("Load Map and Location Name", action: onLoadLocation)
+                                .buttonStyle(.borderedProminent)
+                        }
                     }
-                    .frame(height: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .allowsHitTesting(false)
                 }
             }
             .padding(20)

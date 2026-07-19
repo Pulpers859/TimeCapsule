@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: swift-package-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: macos-latest
@@ -25,13 +29,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           swift test --enable-xctest --parallel 2>&1 | Tee-Object -FilePath swift-test.log
           if ($LASTEXITCODE -ne 0) { throw "Swift tests failed with exit code $LASTEXITCODE." }
-          $log = Get-Content -LiteralPath swift-test.log -Raw
-          $matches = [regex]::Matches($log, '(?:Executed|Test run with)\s+(\d+)\s+tests?')
-          $total = 0
-          foreach ($match in $matches) { $total += [int]$match.Groups[1].Value }
-          $parallelCases = [regex]::Matches($log, '(?m)^\[[0-9]+/[0-9]+\]\s+Testing\s+').Count
-          if ($total -lt 1 -and $parallelCases -lt 1) { throw 'The test command completed without evidence that any tests ran.' }
-          if (-not (Select-String -LiteralPath swift-test.log -SimpleMatch 'TimeCapsuleCoreTests.MemoryWindowTests' -Quiet)) { throw 'Required test evidence missing: ' + 'TimeCapsuleCoreTests.MemoryWindowTests' }
+          ./scripts/Assert-SwiftTestEvidence.ps1 -LogPath swift-test.log
       - name: Upload failure log
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

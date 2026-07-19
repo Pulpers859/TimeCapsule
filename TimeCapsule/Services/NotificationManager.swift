@@ -1,9 +1,17 @@
 import Photos
 import UserNotifications
 
-class NotificationManager: NSObject {
-
+@MainActor
+final class NotificationManager: NSObject {
     static let shared = NotificationManager()
+
+    private let legacyDailyID = "timecapsule.daily"
+    private let dailyPrefix = "timecapsule.daily."
+    private let daysToSchedule = 60
+    private let preferences = UserDefaults.standard
+    private var schedulingTask: Task<Void, Never>?
+    private var generation = 0
+
     private override init() {
         UserDefaults.standard.register(defaults: NotificationPreferences.defaults)
         super.init()
@@ -13,77 +21,50 @@ class NotificationManager: NSObject {
             name: .timeCapsulePhotosDidChange,
             object: nil
         )
-    }
-    private let legacyDailyID = "timecapsule.daily"
-    private let dailyPrefix = "timecapsule.daily."
-    private let daysToSchedule = 60
-    private let preferences = UserDefaults.standard
-    private var canAccessPhotoLibrary: Bool {
-        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        return status == .authorized || status == .limited
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePhotoLibraryChange),
+            name: .timeCapsulePhotoAuthorizationDidChange,
+            object: nil
+        )
     }
 
     var notificationsEnabled: Bool {
-        get {
-            preferences.bool(forKey: NotificationPreferences.notificationsEnabledKey)
-        }
-        set {
-            preferences.set(newValue, forKey: NotificationPreferences.notificationsEnabledKey)
-        }
+        get { preferences.bool(forKey: NotificationPreferences.notificationsEnabledKey) }
+        set { preferences.set(newValue, forKey: NotificationPreferences.notificationsEnabledKey) }
     }
 
     var notificationHour: Int {
-        get {
-            preferences.integer(forKey: NotificationPreferences.notificationHourKey)
-        }
-        set {
-            preferences.set(newValue, forKey: NotificationPreferences.notificationHourKey)
-        }
+        get { preferences.integer(forKey: NotificationPreferences.notificationHourKey) }
+        set { preferences.set(newValue, forKey: NotificationPreferences.notificationHourKey) }
     }
 
     var notificationMinute: Int {
-        get {
-            preferences.integer(forKey: NotificationPreferences.notificationMinuteKey)
-        }
-        set {
-            preferences.set(newValue, forKey: NotificationPreferences.notificationMinuteKey)
-        }
+        get { preferences.integer(forKey: NotificationPreferences.notificationMinuteKey) }
+        set { preferences.set(newValue, forKey: NotificationPreferences.notificationMinuteKey) }
     }
 
-    // Called on launch for existing opt-in users and from Settings when enabled.
     func requestAndSchedule() {
         guard notificationsEnabled else {
-            removeScheduledNotifications()
+            cancelAndRemoveScheduledNotifications()
             return
         }
-
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            if granted {
-                self.scheduleDailyNotification()
-            } else {
-                self.notificationsEnabled = false
-                self.removeScheduledNotifications()
-            }
-        }
+        replaceSchedulingTask(requestAuthorization: true)
     }
 
     func refreshScheduleIfNeeded(force: Bool = false) {
         guard notificationsEnabled else {
-            removeScheduledNotifications()
+            cancelAndRemoveScheduledNotifications()
             return
         }
 
         let lastRefresh = preferences.object(forKey: NotificationPreferences.lastNotificationRefreshKey) as? Date
-        let shouldRefresh = force || lastRefresh.map { !Calendar.current.isDateInToday($0) } ?? true
-
-        if shouldRefresh {
-            scheduleDailyNotification()
-        }
+        guard force || lastRefresh.map({ !Calendar.current.isDateInToday($0) }) ?? true else { return }
+        replaceSchedulingTask(requestAuthorization: false)
     }
 
     func updatePreferences(enabled: Bool, notifyAt date: Date) {
         notificationsEnabled = enabled
-
         let components = Calendar.current.dateComponents([.hour, .minute], from: date)
         notificationHour = components.hour ?? NotificationPreferences.defaultNotificationHour
         notificationMinute = components.minute ?? NotificationPreferences.defaultNotificationMinute
@@ -91,83 +72,132 @@ class NotificationManager: NSObject {
         if enabled {
             requestAndSchedule()
         } else {
-            removeScheduledNotifications()
-        }
-    }
-
-    func scheduleDailyNotification() {
-        let center = UNUserNotificationCenter.current()
-
-        center.getPendingNotificationRequests { requests in
-            let idsToRemove = requests
-                .map(\.identifier)
-                .filter { $0 == self.legacyDailyID || $0.hasPrefix(self.dailyPrefix) }
-            if !idsToRemove.isEmpty {
-                center.removePendingNotificationRequests(withIdentifiers: idsToRemove)
-            }
-
-            let calendar = Calendar.current
-            let now = Date()
-            let startOfToday = calendar.startOfDay(for: Date())
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyyMMdd"
-
-            // iOS allows up to 64 pending local notifications.
-            // Keep a rolling 60-day window and refresh whenever the app becomes active.
-            var scheduledDays = 0
-            var dayOffset = 0
-            let maxSearchDays = self.daysToSchedule + 2
-            while scheduledDays < self.daysToSchedule && dayOffset < maxSearchDays {
-                let offset = dayOffset
-                dayOffset += 1
-                guard let targetDate = calendar.date(byAdding: .day, value: offset, to: startOfToday) else { continue }
-                guard let fireDate = calendar.date(
-                    bySettingHour: self.notificationHour,
-                    minute: self.notificationMinute,
-                    second: 0,
-                    of: targetDate
-                ), fireDate > now else {
-                    continue
-                }
-
-                let count = self.canAccessPhotoLibrary ? MemoryLibrary.count(on: targetDate) : 0
-
-                let content = UNMutableNotificationContent()
-                content.title = "Time Capsule 📸"
-                let dayPhrase = MemoryWindow.dayWindow > 0 ? "around this day" : "this day"
-                if count == 1 {
-                    content.body = "You have 1 memory from \(dayPhrase) in a past year."
-                } else if count > 1 {
-                    content.body = "You have \(count) memories from \(dayPhrase) in past years."
-                } else {
-                    content.body = "Check today's memories from \(dayPhrase) in past years."
-                }
-                content.sound = .default
-
-                let triggerComponents = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
-                let trigger = UNCalendarNotificationTrigger(dateMatching: triggerComponents, repeats: false)
-
-                let identifier = "\(self.dailyPrefix)\(formatter.string(from: targetDate))"
-                let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-
-                center.add(request)
-                scheduledDays += 1
-            }
-
-            self.preferences.set(Date(), forKey: NotificationPreferences.lastNotificationRefreshKey)
+            cancelAndRemoveScheduledNotifications()
         }
     }
 
     func removeScheduledNotifications() {
+        cancelAndRemoveScheduledNotifications()
+    }
+
+    private func replaceSchedulingTask(requestAuthorization: Bool) {
+        generation += 1
+        let requestedGeneration = generation
+        schedulingTask?.cancel()
+        schedulingTask = Task { [weak self] in
+            guard let self else { return }
+            await self.schedule(requestAuthorization: requestAuthorization, generation: requestedGeneration)
+        }
+    }
+
+    private func schedule(requestAuthorization: Bool, generation requestedGeneration: Int) async {
+        guard isCurrent(requestedGeneration) else { return }
         let center = UNUserNotificationCenter.current()
-        center.getPendingNotificationRequests { requests in
-            let idsToRemove = requests
-                .map(\.identifier)
-                .filter { $0 == self.legacyDailyID || $0.hasPrefix(self.dailyPrefix) }
-            if !idsToRemove.isEmpty {
-                center.removePendingNotificationRequests(withIdentifiers: idsToRemove)
+
+        if requestAuthorization {
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            guard isCurrent(requestedGeneration) else { return }
+            if !granted {
+                notificationsEnabled = false
+                cancelAndRemoveScheduledNotifications()
+                return
+            }
+        } else {
+            let settings = await center.notificationSettings()
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+                notificationsEnabled = false
+                cancelAndRemoveScheduledNotifications()
+                return
             }
         }
+
+        let calendar = Calendar.current
+        let slots = NotificationPlan.slots(
+            now: Date(),
+            calendar: calendar,
+            hour: notificationHour,
+            minute: notificationMinute,
+            count: daysToSchedule,
+            identifierPrefix: dailyPrefix
+        )
+        let canAccessPhotos = {
+            let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+            return status == .authorized || status == .limited
+        }()
+        let dayWindow = MemoryWindow.dayWindow
+        let countTask = Task.detached(priority: .utility) { () -> [(NotificationSlot, Int)]? in
+            var requests: [(NotificationSlot, Int)] = []
+            for slot in slots {
+                guard !Task.isCancelled else { return nil }
+                requests.append((
+                    slot,
+                    canAccessPhotos ? MemoryLibrary.count(on: slot.targetDate, calendar: calendar) : 0
+                ))
+            }
+            return requests
+        }
+        let plannedRequests = await withTaskCancellationHandler {
+            await countTask.value
+        } onCancel: {
+            countTask.cancel()
+        }
+
+        guard let plannedRequests, isCurrent(requestedGeneration) else { return }
+        let pending = await center.pendingNotificationRequests()
+        let oldIDs = ownedIdentifiers(in: pending.map(\.identifier))
+
+        do {
+            for (slot, count) in plannedRequests {
+                guard isCurrent(requestedGeneration) else { throw CancellationError() }
+                let content = UNMutableNotificationContent()
+                content.title = "Time Capsule"
+                content.body = NotificationPlan.body(memoryCount: count, dayWindow: dayWindow)
+                content.sound = .default
+                let components = calendar.dateComponents(
+                    [.year, .month, .day, .hour, .minute],
+                    from: slot.fireDate
+                )
+                let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+                try await center.add(UNNotificationRequest(identifier: slot.identifier, content: content, trigger: trigger))
+            }
+
+            guard isCurrent(requestedGeneration) else { throw CancellationError() }
+            let newIDs = Set(plannedRequests.map { $0.0.identifier })
+            let staleIDs = oldIDs.filter { !newIDs.contains($0) }
+            if !staleIDs.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: staleIDs)
+            }
+            preferences.set(Date(), forKey: NotificationPreferences.lastNotificationRefreshKey)
+            schedulingTask = nil
+        } catch {}
+    }
+
+    private func cancelAndRemoveScheduledNotifications() {
+        generation += 1
+        let removalGeneration = generation
+        schedulingTask?.cancel()
+        schedulingTask = nil
+        let legacyDailyID = legacyDailyID
+        let dailyPrefix = dailyPrefix
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let pending = await center.pendingNotificationRequests()
+            guard removalGeneration == generation, !notificationsEnabled else { return }
+            let ids = pending.map(\.identifier).filter {
+                $0 == legacyDailyID || $0.hasPrefix(dailyPrefix)
+            }
+            if !ids.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+            }
+        }
+    }
+
+    private func ownedIdentifiers(in identifiers: [String]) -> [String] {
+        identifiers.filter { $0 == legacyDailyID || $0.hasPrefix(dailyPrefix) }
+    }
+
+    private func isCurrent(_ requestedGeneration: Int) -> Bool {
+        !Task.isCancelled && requestedGeneration == generation && notificationsEnabled
     }
 
     @objc private func handlePhotoLibraryChange() {

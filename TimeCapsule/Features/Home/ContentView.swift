@@ -7,6 +7,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = PhotoLibraryModel()
     @State private var isRequestingPhotoAccess = false
+    @State private var showSettings = false
 
     var body: some View {
         Group {
@@ -31,10 +32,13 @@ struct ContentView: View {
                             if model.isLoading {
                                 LoadingView()
                             } else {
-                                EmptyStateView()
+                                EmptyStateView(onOpenSettings: { showSettings = true })
                             }
                         } else {
-                            TimeCapsuleView(yearGroups: model.yearGroups)
+                            TimeCapsuleView(
+                                yearGroups: model.yearGroups,
+                                onOpenSettings: { showSettings = true }
+                            )
                         }
                     }
                 }
@@ -48,6 +52,9 @@ struct ContentView: View {
         }
         .task {
             await model.refreshAuthorizationAndMemories()
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
@@ -76,10 +83,7 @@ struct ContentView: View {
         }
 
         PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: presentingViewController)
-        Task {
-            try? await Task.sleep(nanoseconds: 750_000_000)
-            await model.refreshAuthorizationAndMemories()
-        }
+        // PHPhotoLibraryChangeObserver refreshes when the limited selection changes.
     }
 
     private func foregroundRootViewController() -> UIViewController? {
@@ -111,7 +115,7 @@ struct PermissionRequestView: View {
                 .foregroundStyle(.secondary)
             Text("Time Capsule")
                 .font(.largeTitle.bold())
-            Text("Time Capsule finds photos and videos from this date in past years. Your library stays on device.")
+            Text("Time Capsule finds photos and videos from this date in past years. Photo matching stays on device; location names are requested only when you open details.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
@@ -196,6 +200,8 @@ struct LimitedLibraryBanner: View {
 }
 
 struct EmptyStateView: View {
+    let onOpenSettings: () -> Void
+
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "calendar.badge.clock")
@@ -203,10 +209,14 @@ struct EmptyStateView: View {
                 .foregroundStyle(.secondary)
             Text("No Memories Yet")
                 .font(.title2.bold())
-            Text("No photos or videos were taken on this date in previous years.")
+            Text(MemoryWindow.dayWindow == 0
+                ? "No photos or videos were taken on this date in previous years. Try a wider memory range."
+                : "No photos or videos were found in the current memory range.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
+            Button("Adjust Memory Range", action: onOpenSettings)
+                .buttonStyle(.borderedProminent)
         }
     }
 }

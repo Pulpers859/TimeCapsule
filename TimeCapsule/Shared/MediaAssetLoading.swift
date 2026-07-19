@@ -309,11 +309,39 @@ func loadPlayer(from asset: PHAsset) async -> AVPlayer? {
 
 func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
     let state = VideoExportRequestState()
-    return await withTaskCancellationHandler(operation: {
+    guard let sourceURL = await withTaskCancellationHandler(operation: {
         await exportVideoToTemporaryFile(from: asset, state: state)
     }, onCancel: {
         state.cancel()
-    })
+    }) else { return nil }
+    defer { try? FileManager.default.removeItem(at: sourceURL) }
+    guard !Task.isCancelled else { return nil }
+    return await metadataFilteredVideoCopy(from: sourceURL)
+}
+
+private nonisolated func metadataFilteredVideoCopy(from sourceURL: URL) async -> URL? {
+    let destinationURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("TimeCapsuleShare-\(UUID().uuidString).mov")
+    try? FileManager.default.removeItem(at: destinationURL)
+
+    let sourceAsset = AVURLAsset(url: sourceURL)
+    guard let exporter = AVAssetExportSession(asset: sourceAsset, presetName: AVAssetExportPresetHighestQuality) else {
+        return nil
+    }
+    exporter.metadata = []
+    exporter.metadataItemFilter = AVMetadataItemFilter.forSharing()
+
+    do {
+        try await exporter.export(to: destinationURL, as: .mov)
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.complete],
+            ofItemAtPath: destinationURL.path
+        )
+        return destinationURL
+    } catch {
+        try? FileManager.default.removeItem(at: destinationURL)
+        return nil
+    }
 }
 
 private nonisolated func exportVideoToTemporaryFile(

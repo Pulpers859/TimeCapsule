@@ -19,10 +19,10 @@ struct FullResAssetView: View {
     @State private var isPlaying = false
     @State private var scrubPosition: Double = 0
     @State private var isScrubbing = false
-    @State private var loadGeneration = 0
+    @State private var didFail = false
 
     private var mediaTaskID: String {
-        "\(asset.localIdentifier)|render:\(shouldRender)|generation:\(loadGeneration)"
+        "\(asset.localIdentifier)|render:\(shouldRender)|active:\(isActive)"
     }
 
     var body: some View {
@@ -70,6 +70,13 @@ struct FullResAssetView: View {
                                 .padding(.horizontal, 16)
                                 .padding(.bottom, 22)
                             }
+                        } else if let image {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                        } else if didFail {
+                            ContentUnavailableView("Couldn't Load Video", systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.white)
                         } else {
                             ProgressView()
                                 .tint(.white)
@@ -85,6 +92,9 @@ struct FullResAssetView: View {
                             onZoomStateChange: onZoomStateChange,
                             onSingleTap: onToggleChrome
                         )
+                    } else if didFail {
+                        ContentUnavailableView("Couldn't Load Photo", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.white)
                     } else {
                         ProgressView()
                             .tint(.white)
@@ -97,32 +107,44 @@ struct FullResAssetView: View {
         .task(id: mediaTaskID) {
             guard shouldRender else {
                 releasePlayer()
+                image = nil
+                didFail = false
                 resetPlaybackState()
                 return
             }
 
             if asset.mediaType == .video {
-                image = nil
-                let loadedPlayer = await loadPlayer(from: asset)
-                guard !Task.isCancelled else {
-                    discard(loadedPlayer)
-                    return
-                }
-                releasePlayer()
-                player = loadedPlayer
-                progressObserver.attach(
-                    to: loadedPlayer,
-                    onCurrentTimeChange: { currentTime = $0 },
-                    onDurationChange: { duration = $0 },
-                    onPlayingChange: { isPlaying = $0 }
-                )
+                didFail = false
                 if isActive {
+                    image = nil
+                    let loadedPlayer = await loadPlayer(from: asset)
+                    guard !Task.isCancelled else {
+                        discard(loadedPlayer)
+                        return
+                    }
+                    releasePlayer()
+                    player = loadedPlayer
+                    didFail = loadedPlayer == nil
+                    progressObserver.attach(
+                        to: loadedPlayer,
+                        onCurrentTimeChange: { currentTime = $0 },
+                        onDurationChange: { duration = $0 },
+                        onPlayingChange: { isPlaying = $0 }
+                    )
                     loadedPlayer?.play()
                 } else {
-                    loadedPlayer?.pause()
-                    await loadedPlayer?.seek(to: .zero)
+                    releasePlayer()
+                    let preview = await loadImage(
+                        from: asset,
+                        targetSize: CGSize(width: 1290, height: 2796),
+                        contentMode: .aspectFit
+                    )
+                    guard !Task.isCancelled else { return }
+                    image = preview
+                    didFail = preview == nil
                 }
             } else {
+                didFail = false
                 let loadedImage = await loadImage(
                     from: asset,
                     targetSize: CGSize(width: 1290, height: 2796),
@@ -131,31 +153,30 @@ struct FullResAssetView: View {
                 guard !Task.isCancelled else { return }
                 releasePlayer()
                 image = loadedImage
+                didFail = loadedImage == nil
             }
         }
         .onChange(of: isActive) { _, active in
             if active {
                 if let player {
                     player.play()
-                } else if shouldRender && asset.mediaType == .video {
-                    loadGeneration += 1
                 }
             } else {
-                player?.pause()
-                player?.seek(to: .zero)
+                releasePlayer()
                 resetPlaybackState()
                 onScrubbingChanged(false)
                 onZoomStateChange(false)
-                if player == nil && shouldRender && asset.mediaType == .video {
-                    loadGeneration += 1
-                }
             }
         }
         .onDisappear {
             onScrubbingChanged(false)
             releasePlayer()
+            image = nil
+            didFail = false
             resetPlaybackState()
         }
+        .accessibilityLabel(mediaAccessibilityLabel)
+        .accessibilityValue(isActive ? "Current memory" : "")
     }
 
     private func releasePlayer() {
@@ -176,6 +197,12 @@ struct FullResAssetView: View {
         duration = 0
         isPlaying = false
         isScrubbing = false
+    }
+
+    private var mediaAccessibilityLabel: String {
+        let type = asset.mediaType == .video ? "Video" : "Photo"
+        guard let date = asset.creationDate else { return type }
+        return "\(type), \(date.formatted(date: .long, time: .shortened))"
     }
 }
 

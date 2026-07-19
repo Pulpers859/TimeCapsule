@@ -5,7 +5,7 @@ import Foundation
 /// (`PhotoLibraryModel.fetchOnThisDay()`) and the notification count
 /// (`MemoryLibrary.count(on:)`) must use this so the two
 /// surfaces never disagree.
-enum MemoryWindow {
+nonisolated enum MemoryWindow {
     static let storageKey = "TimeCapsule.memoryDayWindow"
     static let lookbackYears = 20
     static let defaultDayWindow = 0

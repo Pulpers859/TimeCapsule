@@ -45,18 +45,21 @@ nonisolated enum MemoryRecapExporter {
         guard slideURLs.count > 1, !Task.isCancelled else { return nil }
 
         let finalSlideURLs = slideURLs
-        return await Task.detached(priority: .userInitiated) {
+        let encodingTask = Task.detached(priority: .userInitiated) {
             writeVideo(slideURLs: finalSlideURLs) { frameProgress in
                 onProgress(0.45 + 0.55 * frameProgress)
             }
-        }.value
+        }
+        return await withTaskCancellationHandler {
+            await encodingTask.value
+        } onCancel: {
+            encodingTask.cancel()
+        }
     }
 
     /// Evenly samples across the full set so every year is represented.
     private static func sample(_ assets: [PHAsset], limit: Int) -> [PHAsset] {
-        guard assets.count > limit else { return assets }
-        let step = Double(assets.count) / Double(limit)
-        return (0..<limit).map { assets[min(Int(Double($0) * step), assets.count - 1)] }
+        RecapPlan.sampleIndices(itemCount: assets.count, maximum: limit).map { assets[$0] }
     }
 
     // MARK: - Frame composition
@@ -130,7 +133,7 @@ nonisolated enum MemoryRecapExporter {
         let url = directory.appendingPathComponent(String(format: "slide-%03d.jpg", index))
         guard let data = image.jpegData(compressionQuality: 0.92) else { return nil }
         do {
-            try data.write(to: url, options: .atomic)
+            try data.write(to: url, options: [.atomic, .completeFileProtection])
             return url
         } catch {
             return nil
@@ -157,6 +160,12 @@ nonisolated enum MemoryRecapExporter {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("TimeCapsuleRecap-\(UUID().uuidString).mp4")
         try? FileManager.default.removeItem(at: url)
+        var completed = false
+        defer {
+            if !completed {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
 
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { return nil }
         let settings: [String: Any] = [
@@ -190,9 +199,16 @@ nonisolated enum MemoryRecapExporter {
 
         func append(_ image: UIImage, at presentationTime: CMTime) -> Bool {
             guard let buffer = pixelBuffer(from: image, pool: adaptor.pixelBufferPool) else { return false }
+            let readinessDeadline = Date().addingTimeInterval(10)
             while !input.isReadyForMoreMediaData {
+                guard !Task.isCancelled,
+                      writer.status == .writing,
+                      Date() < readinessDeadline else {
+                    return false
+                }
                 Thread.sleep(forTimeInterval: 0.01)
             }
+            guard !Task.isCancelled else { return false }
             let ok = adaptor.append(buffer, withPresentationTime: presentationTime)
             appended += 1
             onProgress(Double(appended) / Double(totalAppends))
@@ -211,6 +227,10 @@ nonisolated enum MemoryRecapExporter {
         time = time + hold
 
         for nextURL in slideURLs.dropFirst() {
+            guard !Task.isCancelled else {
+                writer.cancelWriting()
+                return nil
+            }
             guard let nextSlide = UIImage(contentsOfFile: nextURL.path) else {
                 writer.cancelWriting()
                 return nil
@@ -237,8 +257,18 @@ nonisolated enum MemoryRecapExporter {
         writer.endSession(atSourceTime: time)
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
-        done.wait()
-        return writer.status == .completed ? url : nil
+        let finishDeadline = Date().addingTimeInterval(30)
+        while done.wait(timeout: .now() + 0.1) == .timedOut {
+            guard !Task.isCancelled, Date() < finishDeadline else {
+                writer.cancelWriting()
+                return nil
+            }
+        }
+        completed = writer.status == .completed
+        if completed {
+            try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
+        }
+        return completed ? url : nil
     }
 
     private static func pixelBuffer(from image: UIImage, pool: CVPixelBufferPool?) -> CVPixelBuffer? {

@@ -4,11 +4,12 @@ import UIKit
 
 struct TimeCapsuleView: View {
     let yearGroups: [YearGroup]
+    let onOpenSettings: () -> Void
     @State private var isSelecting = false
     @State private var selectedIDs: Set<String> = []
     @State private var showDeleteConfirm = false
-    @State private var showSettings = false
     @State private var deleteError: String? = nil
+    @State private var isDeleting = false
     @State private var recapProgress: Double? = nil
     @State private var recapShareItem: ShareItem? = nil
     @State private var recapError: String? = nil
@@ -38,6 +39,9 @@ struct TimeCapsuleView: View {
     }
     private var allFilteredAssets: [PHAsset] {
         filteredYearGroups.flatMap(\.assets)
+    }
+    private var visibleIdentifierSignature: [String] {
+        allFilteredAssets.map(\.localIdentifier)
     }
 
     var body: some View {
@@ -86,9 +90,7 @@ struct TimeCapsuleView: View {
                                 }
                             }
                         },
-                        onOpenSettings: {
-                            showSettings = true
-                        },
+                        onOpenSettings: onOpenSettings,
                         onCreateRecap: createRecap,
                         onJumpToYear: { group in
                             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
@@ -104,16 +106,24 @@ struct TimeCapsuleView: View {
                     Button(role: .destructive) {
                         showDeleteConfirm = true
                     } label: {
-                        Label("Delete \(selectedCount) Item\(selectedCount == 1 ? "" : "s")", systemImage: "trash")
-                            .font(.body.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
+                        if isDeleting {
+                            ProgressView()
+                                .tint(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                        } else {
+                            Label("Delete \(selectedCount) Item\(selectedCount == 1 ? "" : "s")", systemImage: "trash")
+                                .font(.body.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.red)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
                     .background(.ultraThinMaterial)
+                    .disabled(isDeleting)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -132,8 +142,8 @@ struct TimeCapsuleView: View {
             .onChange(of: selectedFilterRawValue) { _, _ in
                 pruneSelectionToVisibleItems()
             }
-            .sheet(isPresented: $showSettings) {
-                SettingsView()
+            .onChange(of: visibleIdentifierSignature) { _, _ in
+                pruneSelectionToVisibleItems()
             }
             .sheet(item: $recapShareItem) { item in
                 ShareSheet(items: item.items, cleanupURLs: item.cleanupURLs)
@@ -150,7 +160,7 @@ struct TimeCapsuleView: View {
             }
             .overlay {
                 if let progress = recapProgress {
-                    RecapExportOverlay(progress: progress)
+                    RecapExportOverlay(progress: progress, onCancel: cancelRecap)
                 }
             }
             .onDisappear {
@@ -197,6 +207,12 @@ struct TimeCapsuleView: View {
         }
     }
 
+    private func cancelRecap() {
+        recapTask?.cancel()
+        recapTask = nil
+        recapProgress = nil
+    }
+
     private var recapErrorBinding: Binding<Bool> {
         Binding(
             get: { recapError != nil },
@@ -205,6 +221,7 @@ struct TimeCapsuleView: View {
     }
 
     private func deleteSelectedPhotos() {
+        guard !isDeleting else { return }
         // Gather all PHAssets matching selectedIDs
         var assetsToDelete: [PHAsset] = []
         for group in filteredYearGroups {
@@ -215,12 +232,18 @@ struct TimeCapsuleView: View {
             }
         }
 
-        guard !assetsToDelete.isEmpty else { return }
+        guard !assetsToDelete.isEmpty else {
+            pruneSelectionToVisibleItems()
+            return
+        }
+
+        isDeleting = true
 
         PHPhotoLibrary.shared().performChanges({
             PHAssetChangeRequest.deleteAssets(assetsToDelete as NSArray)
         }) { success, error in
             DispatchQueue.main.async {
+                isDeleting = false
                 if success {
                     withAnimation {
                         selectedIDs.removeAll()
@@ -254,7 +277,7 @@ struct TimeCapsuleView: View {
         let visibleIDs = Set(filteredYearGroups.flatMap { group in
             group.assets.map(\.localIdentifier)
         })
-        selectedIDs = selectedIDs.intersection(visibleIDs)
+        selectedIDs = GalleryStateLogic.prunedSelection(selectedIDs, visibleIDs: visibleIDs)
         if selectedIDs.isEmpty {
             isSelecting = false
         }
@@ -279,11 +302,7 @@ struct YearSection: View {
     @Binding var selectedIDs: Set<String>
     @State private var selectedAsset: IdentifiableAsset? = nil
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 2),
-        GridItem(.flexible(), spacing: 2),
-        GridItem(.flexible(), spacing: 2)
-    ]
+    private let columns = [GridItem(.adaptive(minimum: 108, maximum: 180), spacing: 2)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -292,6 +311,7 @@ struct YearSection: View {
                 Text(String(group.year))
                     .font(.system(size: 36, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary)
+                    .accessibilityAddTraits(.isHeader)
                 Text(group.label)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -308,33 +328,39 @@ struct YearSection: View {
             // Photo grid
             LazyVGrid(columns: columns, spacing: 2) {
                 ForEach(group.assets, id: \.localIdentifier) { asset in
-                    ZStack(alignment: .topTrailing) {
-                        AssetThumbnailView(asset: asset)
-                            .overlay(alignment: .bottomLeading) {
-                                if asset.mediaType == .video {
-                                    VideoDurationBadge(duration: asset.duration)
-                                }
-                            }
-                            .id(asset.localIdentifier)
-
-                        if isSelecting {
-                            let isSelected = selectedIDs.contains(asset.localIdentifier)
-                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                .font(.title3)
-                                .foregroundStyle(isSelected ? .white : .white.opacity(0.7))
-                                .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                                .padding(6)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
+                    let isSelected = selectedIDs.contains(asset.localIdentifier)
+                    Button {
                         if isSelecting {
                             toggleSelection(asset)
                         } else {
                             selectedAsset = IdentifiableAsset(asset)
                         }
+                    } label: {
+                        ZStack(alignment: .topTrailing) {
+                            AssetThumbnailView(asset: asset)
+                                .overlay(alignment: .bottomLeading) {
+                                    if asset.mediaType == .video {
+                                        VideoDurationBadge(duration: asset.duration)
+                                    }
+                                }
+                                .id(asset.localIdentifier)
+
+                            if isSelecting {
+                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                    .font(.title3)
+                                    .foregroundStyle(.white)
+                                    .padding(5)
+                                    .background(.black.opacity(0.65), in: Circle())
+                                    .padding(5)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(accessibilityLabel(for: asset))
+                    .accessibilityValue(isSelecting ? (isSelected ? "Selected" : "Not selected") : "")
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
         }
@@ -352,11 +378,18 @@ struct YearSection: View {
         }
         UISelectionFeedbackGenerator().selectionChanged()
     }
+
+    private func accessibilityLabel(for asset: PHAsset) -> String {
+        let type = asset.mediaType == .video ? "Video" : "Photo"
+        guard let date = asset.creationDate else { return "\(type) from \(group.year)" }
+        return "\(type), \(date.formatted(date: .long, time: .omitted))"
+    }
 }
 
 struct AssetThumbnailView: View {
     let asset: PHAsset
     @State private var image: UIImage? = nil
+    @State private var didFail = false
 
     var body: some View {
         GeometryReader { geo in
@@ -366,6 +399,13 @@ struct AssetThumbnailView: View {
                         .resizable()
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.width)
+                } else if didFail {
+                    Rectangle()
+                        .fill(Color(.systemGray5))
+                        .overlay {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundStyle(.secondary)
+                        }
                 } else {
                     Rectangle()
                         .fill(Color(.systemGray5))
@@ -378,8 +418,10 @@ struct AssetThumbnailView: View {
         .aspectRatio(1, contentMode: .fit)
         .task(id: asset.localIdentifier) {
             image = nil
+            didFail = false
             let loadedImage = await loadImage(from: asset, targetSize: CGSize(width: 300, height: 300))
             guard !Task.isCancelled else { return }
+            didFail = loadedImage == nil
             withAnimation(.easeIn(duration: 0.18)) {
                 image = loadedImage
             }
@@ -399,7 +441,7 @@ struct OverviewHeader: View {
                     LinearGradient(colors: [.orange, .pink], startPoint: .topLeading, endPoint: .bottomTrailing)
                 )
 
-            Text(totalCount == 1 ? "1 memory today" : "\(totalCount) memories today")
+            Text(totalCount == 1 ? "1 memory \(dayPhrase)" : "\(totalCount) memories \(dayPhrase)")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
 
@@ -414,6 +456,10 @@ struct OverviewHeader: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var dayPhrase: String {
+        MemoryWindow.dayWindow > 0 ? "around this day" : "today"
     }
 }
 
@@ -467,50 +513,51 @@ struct MemoryControlsBar: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            ZStack {
+            HStack(spacing: 8) {
+                HeaderIconButton(systemImage: "gearshape", accessibilityLabel: "Settings", action: onOpenSettings)
+                HeaderIconButton(systemImage: "sparkles", accessibilityLabel: "Create recap", action: onCreateRecap)
+                Spacer(minLength: 8)
                 Text(dateString)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(.primary)
-
-                HStack(spacing: 12) {
-                    HeaderIconButton(systemImage: "gearshape", accessibilityLabel: "Settings", action: onOpenSettings)
-                    HeaderIconButton(systemImage: "sparkles", accessibilityLabel: "Create recap", action: onCreateRecap)
-                    Spacer()
-                    Button(isSelecting ? "Done" : "Select", action: onToggleSelecting)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .background(Color(.secondarySystemGroupedBackground), in: Capsule())
-                        .buttonStyle(.plain)
-                }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 8)
+                Button(isSelecting ? "Done" : "Select", action: onToggleSelecting)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 44)
+                    .background(Color(.secondarySystemGroupedBackground), in: Capsule())
+                    .buttonStyle(.plain)
             }
 
-            HStack(spacing: 8) {
-                ForEach(MemoryFilter.allCases) { filter in
-                    FilterChip(
-                        title: filter.title,
-                        isSelected: selectedFilter == filter,
-                        action: { onSelectFilter(filter) }
-                    )
-                }
-
-                Spacer(minLength: 0)
-
-                Menu {
-                    ForEach(yearGroups) { group in
-                        Button {
-                            onJumpToYear(group)
-                        } label: {
-                            Label("\(group.year) • \(group.assets.count)", systemImage: "calendar")
-                        }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(MemoryFilter.allCases) { filter in
+                        FilterChip(
+                            title: filter.title,
+                            isSelected: selectedFilter == filter,
+                            action: { onSelectFilter(filter) }
+                        )
                     }
-                } label: {
-                    SecondaryControlLabel(title: "Year")
+
+                    Menu {
+                        ForEach(yearGroups) { group in
+                            Button {
+                                onJumpToYear(group)
+                            } label: {
+                                Label("\(group.year) - \(group.assets.count)", systemImage: "calendar")
+                            }
+                        }
+                    } label: {
+                        SecondaryControlLabel(title: "Year")
+                    }
                 }
             }
             .opacity(isSelecting ? 0.55 : 1)
-            .allowsHitTesting(!isSelecting)
+            .disabled(isSelecting)
+            .accessibilityHidden(isSelecting)
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -534,11 +581,12 @@ struct FilterChip: View {
                 .lineLimit(1)
                 .foregroundStyle(isSelected ? .white : .primary)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .frame(minHeight: 44)
                 .background(isSelected ? Color.accentColor : Color(.secondarySystemGroupedBackground), in: Capsule())
         }
         .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: false)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -555,7 +603,7 @@ struct SecondaryControlLabel: View {
         .font(.footnote.weight(.semibold))
         .foregroundStyle(.primary)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .frame(minHeight: 44)
         .background(Color(.secondarySystemGroupedBackground), in: Capsule())
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -571,7 +619,7 @@ struct HeaderIconButton: View {
             Image(systemName: systemImage)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
-                .frame(width: 38, height: 38)
+                .frame(width: 44, height: 44)
                 .background(Color(.secondarySystemGroupedBackground), in: Circle())
         }
         .buttonStyle(.plain)
@@ -626,6 +674,7 @@ struct VideoDurationBadge: View {
 
 struct RecapExportOverlay: View {
     let progress: Double
+    let onCancel: () -> Void
 
     var body: some View {
         ZStack {
@@ -639,11 +688,16 @@ struct RecapExportOverlay: View {
                 Text("\(Int(progress * 100))%")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .buttonStyle(.bordered)
             }
             .padding(24)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .transition(.opacity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Creating recap")
+        .accessibilityValue("\(Int(progress * 100)) percent")
     }
 }
 

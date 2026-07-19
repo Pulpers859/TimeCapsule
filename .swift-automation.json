@@ -4,16 +4,24 @@
   "projectType": "hybrid",
   "platform": "ios",
   "defaultBranch": "main",
-  "workflowMode": "generate",
+  "workflowMode": "existing",
   "physicalDeviceRequired": true,
-  "existingWorkflowPaths": [],
+  "existingWorkflowPaths": [
+    ".github/workflows/automation-swiftpm.yml",
+    ".github/workflows/automation-swiftpm-windows.yml",
+    ".github/workflows/automation-xcode.yml"
+  ],
   "swiftPackage": {
     "enabled": true,
     "workingDirectory": ".",
     "testCommand": "swift test --enable-xctest --parallel",
     "requireExecutedTests": true,
     "requiredLogPatterns": [
-      "TimeCapsuleCoreTests.MemoryWindowTests"
+      "TimeCapsuleCoreTests.MemoryWindowTests",
+      "TimeCapsuleCoreTests.NotificationPlanTests",
+      "TimeCapsuleCoreTests.GalleryStateLogicTests",
+      "TimeCapsuleCoreTests.RecapPlanTests",
+      "TimeCapsuleCoreTests.MemoryJourneyScenarioTests"
     ],
     "timeoutMinutes": 30
   },

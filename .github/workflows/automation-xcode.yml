@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: xcode-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   xcode:
     runs-on: macos-latest
@@ -29,18 +33,23 @@ jobs:
             -configuration 'Debug'
             -sdk 'iphonesimulator'
             -destination 'generic/platform=iOS Simulator'
+            -derivedDataPath 'DerivedData'
+            -resultBundlePath 'xcode-result.xcresult'
             CODE_SIGNING_ALLOWED=NO
             build
           )
           xcodebuild "${args[@]}" 2>&1 | tee xcode.log
           xcode_status=${PIPESTATUS[0]}
           if [[ "$xcode_status" -ne 0 ]]; then exit "$xcode_status"; fi
+          find DerivedData/Build/Products -name PrivacyInfo.xcprivacy -print -quit | grep -q .
 
-      - name: Upload failure log
+      - name: Upload Xcode diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: xcode-log
-          path: './xcode.log'
-          if-no-files-found: ignore
-          retention-days: 7
+          name: xcode-diagnostics
+          path: |
+            './xcode.log'
+            './xcode-result.xcresult'
+          if-no-files-found: warn
+          retention-days: 14
