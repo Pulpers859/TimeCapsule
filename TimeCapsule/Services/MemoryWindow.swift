@@ -7,8 +7,10 @@ import Foundation
 /// surfaces never disagree.
 nonisolated enum MemoryWindow {
     static let storageKey = "TimeCapsule.memoryDayWindow"
+    static let dayStartHourKey = "TimeCapsule.dayStartHour"
     static let lookbackYears = 20
     static let defaultDayWindow = 0
+    static let defaultDayStartHour = 0
 
     static func clampedDayWindow(_ value: Int) -> Int {
         max(0, min(value, 7))
@@ -21,8 +23,31 @@ nonisolated enum MemoryWindow {
         )
     }
 
+    /// Hour (0–6) at which a new TimeCapsule "day" begins. Photos taken before
+    /// this hour are attributed to the previous calendar day, so an event that
+    /// runs past midnight stays grouped under the evening it started.
+    /// 0 = midnight (default, preserves prior behavior).
+    static var dayStartHour: Int {
+        max(0, min(UserDefaults.standard.object(forKey: dayStartHourKey) as? Int ?? defaultDayStartHour, 6))
+    }
+
+    /// Returns the "logical date" for a given wall-clock time.
+    /// When the clock reads before `dayStartHour`, the user is still in the
+    /// previous evening — shift the reference date back one day so the gallery
+    /// shows that evening's memories rather than the new calendar day's (which
+    /// hasn't really started yet). Returns `date` unchanged when `dayStartHour == 0`.
+    static func logicalDate(for date: Date, calendar: Calendar = .current) -> Date {
+        let startHour = dayStartHour
+        guard startHour > 0 else { return date }
+        let hour = calendar.component(.hour, from: date)
+        guard hour < startHour else { return date }
+        return calendar.date(byAdding: .day, value: -1, to: date) ?? date
+    }
+
     /// Date range for the anniversary of `referenceDate` in `anniversaryYear`,
     /// widened by the configured window on both sides. `end` is exclusive.
+    /// The range begins at `dayStartHour` (not midnight) so photos taken in the
+    /// early hours of the next calendar day are attributed to the previous evening.
     static func range(
         for referenceDate: Date,
         anniversaryYear: Int,
@@ -31,11 +56,20 @@ nonisolated enum MemoryWindow {
     ) -> (start: Date, end: Date)? {
         let month = calendar.component(.month, from: referenceDate)
         let day = calendar.component(.day, from: referenceDate)
-        guard let anniversary = calendar.date(from: DateComponents(year: anniversaryYear, month: month, day: day)),
+        let startHour = dayStartHour
+
+        // Include hour so the window begins at dayStartHour, not midnight.
+        // The month/day equality check still correctly rejects non-existent
+        // dates (e.g. Feb 29 in non-leap years).
+        guard let anniversary = calendar.date(from: DateComponents(
+            year: anniversaryYear, month: month, day: day,
+            hour: startHour, minute: 0, second: 0
+        )),
               calendar.component(.month, from: anniversary) == month,
               calendar.component(.day, from: anniversary) == day else {
             return nil
         }
+
         let window = clampedDayWindow(dayWindow)
         guard let start = calendar.date(byAdding: .day, value: -window, to: anniversary),
               let end = calendar.date(byAdding: .day, value: window + 1, to: anniversary) else {

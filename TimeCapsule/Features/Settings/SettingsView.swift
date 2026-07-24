@@ -12,6 +12,8 @@ struct SettingsView: View {
     private var notificationMinute = NotificationPreferences.defaultNotificationMinute
     @AppStorage(MemoryWindow.storageKey)
     private var memoryDayWindow = MemoryWindow.defaultDayWindow
+    @AppStorage(MemoryWindow.dayStartHourKey)
+    private var dayStartHour = MemoryWindow.defaultDayStartHour
 
     @State private var notificationTime = Date()
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
@@ -25,10 +27,18 @@ struct SettingsView: View {
                         Text("±1 day").tag(1)
                         Text("±3 days").tag(3)
                     }
+                    Picker("New day starts at", selection: $dayStartHour) {
+                        Text("Midnight").tag(0)
+                        Text("2 AM").tag(2)
+                        Text("3 AM").tag(3)
+                        Text("4 AM").tag(4)
+                        Text("5 AM").tag(5)
+                        Text("6 AM").tag(6)
+                    }
                 } header: {
                     Text("Memories")
                 } footer: {
-                    Text("Widen the range to include photos taken within a few days of today's date in past years. Helpful on days with no exact matches.")
+                    Text("Memory range widens the date window for years with few matches. New day start groups photos taken after midnight with the previous evening — useful when an event runs past midnight.")
                 }
 
                 Section("Daily Reminder") {
@@ -88,6 +98,9 @@ struct SettingsView: View {
         .onChange(of: memoryDayWindow) { _, _ in
             // One post refreshes both surfaces: the model refetches the gallery
             // and NotificationManager force-reschedules with the new counts.
+            NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
+        }
+        .onChange(of: dayStartHour) { _, _ in
             NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
         }
     }

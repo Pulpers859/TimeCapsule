@@ -63,7 +63,7 @@ class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
             isLoading = true
         }
         await Task.yield()
-        let queryDate = Date()
+        let queryDate = MemoryWindow.logicalDate(for: Date())
         let groups = await Task.detached(priority: .userInitiated) {
             MemoryLibrary.yearGroups(on: queryDate)
         }.value
