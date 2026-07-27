@@ -50,13 +50,16 @@ struct FullScreenPhotoView: View {
             Color.black.ignoresSafeArea()
 
             if visibleAssets.isEmpty {
-                VStack(spacing: 16) {
+                VStack(spacing: 14) {
                     Image(systemName: "checkmark.circle")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .font(.system(size: 44, weight: .light))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .symbolEffect(.bounce, options: .nonRepeating)
                     Text("All memories removed")
-                        .foregroundStyle(.white.opacity(0.6))
+                        .font(.system(.headline, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.65))
                 }
+                .transition(.opacity)
             } else {
                 GeometryReader { geo in
                     let pageWidth = geo.size.width
@@ -95,12 +98,15 @@ struct FullScreenPhotoView: View {
             }
 
             if showChrome && !visibleAssets.isEmpty {
+                // Lighter than before: the glass controls carry their own
+                // legibility now, so the scrim only has to lift them off very
+                // bright photos rather than dim the image.
                 VStack(spacing: 0) {
-                    LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 130)
+                    LinearGradient(colors: [.black.opacity(0.38), .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 140)
                     Spacer()
-                    LinearGradient(colors: [.clear, .black.opacity(0.45)], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 160)
+                    LinearGradient(colors: [.clear, .black.opacity(0.34)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 170)
                 }
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
@@ -123,100 +129,96 @@ struct FullScreenPhotoView: View {
             }
 
             if showChrome && !visibleAssets.isEmpty {
-                VStack {
-                    HStack {
-                        Button(action: { dismiss() }) {
-                            Image(systemName: "xmark")
-                                .font(.title3.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .padding(12)
-                                .background(.ultraThinMaterial, in: Circle())
-                        }
-                        .accessibilityLabel("Close")
-                        Spacer()
-                        VStack(spacing: 4) {
-                            if let date = visibleAssets[currentIndex].creationDate {
-                                Text(date.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption)
-                                    .foregroundStyle(.white)
-                            }
-                            if currentAssetIsImage, let location = locationName {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "location.fill")
-                                        .font(.system(size: 8))
-                                    Text(location)
-                                        .font(.caption2)
+                VStack(spacing: 0) {
+                    GlassEffectContainer(spacing: 14) {
+                        HStack(spacing: 10) {
+                            ChromeButton(
+                                systemImage: "xmark",
+                                accessibilityLabel: "Close",
+                                action: { dismiss() }
+                            )
+
+                            Spacer(minLength: 6)
+
+                            VStack(spacing: 1) {
+                                // Bounds-checked: a delete can retire the index
+                                // between the emptiness guard above and this read.
+                                if visibleAssets.indices.contains(currentIndex),
+                                   let date = visibleAssets[currentIndex].creationDate {
+                                    Text(date.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.footnote.weight(.semibold))
                                 }
-                                .foregroundStyle(.white.opacity(0.8))
-                            }
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        Spacer()
-                        Button(action: shareCurrentPhoto) {
-                            Group {
-                                if isPreparingShare {
-                                    ProgressView().tint(.white)
-                                } else {
-                                    Image(systemName: "square.and.arrow.up")
-                                        .font(.title3.weight(.semibold))
+                                if currentAssetIsImage, let location = locationName {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "location.fill")
+                                            .font(.system(size: 8))
+                                        Text(location)
+                                            .font(.caption2)
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                    }
+                                    .foregroundStyle(.secondary)
                                 }
                             }
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 44)
+                            .glassEffect(in: Capsule())
+
+                            Spacer(minLength: 6)
+
+                            ChromeButton(
+                                systemImage: "square.and.arrow.up",
+                                accessibilityLabel: "Share memory",
+                                isBusy: isPreparingShare,
+                                action: shareCurrentPhoto
+                            )
+                            .disabled(isPreparingShare || isDeleting)
+
+                            ChromeButton(
+                                systemImage: "trash",
+                                accessibilityLabel: "Delete memory",
+                                isBusy: isDeleting,
+                                action: { showDeleteConfirm = true }
+                            )
+                            .disabled(isDeleting || isPreparingShare)
                         }
-                        .accessibilityLabel("Share memory")
-                        .disabled(isPreparingShare || isDeleting)
-                        Button(action: { showDeleteConfirm = true }) {
-                            Group {
-                                if isDeleting {
-                                    ProgressView().tint(.white)
-                                } else {
-                                    Image(systemName: "trash")
-                                        .font(.title3.weight(.semibold))
-                                }
-                            }
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
-                        }
-                        .accessibilityLabel("Delete memory")
-                        .disabled(isDeleting || isPreparingShare)
                     }
-                    .padding()
+                    .padding(.horizontal, 14)
+                    .padding(.top, 6)
+
                     Spacer()
-                    HStack {
-                        Button(action: { showInfo = true }) {
-                            Image(systemName: "info.circle")
-                                .font(.title3.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .padding(12)
-                                .background(.ultraThinMaterial, in: Circle())
+
+                    GlassEffectContainer(spacing: 14) {
+                        HStack(spacing: 10) {
+                            ChromeButton(
+                                systemImage: "info.circle",
+                                accessibilityLabel: "Memory info",
+                                action: { showInfo = true }
+                            )
+                            .disabled(isDeleting || isPreparingShare)
+
+                            Spacer(minLength: 6)
+
+                            Text("\(currentIndex + 1) of \(visibleAssets.count)")
+                                .font(.footnote.weight(.medium))
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                                .padding(.horizontal, 16)
+                                .frame(height: 44)
+                                .glassEffect(in: Capsule())
+
+                            Spacer(minLength: 6)
+
+                            ChromeButton(
+                                systemImage: isAutoPlaying ? "pause.fill" : "play.fill",
+                                accessibilityLabel: isAutoPlaying ? "Pause story" : "Play story",
+                                action: toggleAutoPlay
+                            )
+                            .disabled(isDeleting || isPreparingShare)
                         }
-                        .accessibilityLabel("Memory info")
-                        .disabled(isDeleting || isPreparingShare)
-                        Spacer()
-                        Text("\(currentIndex + 1) of \(visibleAssets.count)")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.85))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(.ultraThinMaterial, in: Capsule())
-                        Spacer()
-                        Button(action: toggleAutoPlay) {
-                            Image(systemName: isAutoPlaying ? "pause.fill" : "play.fill")
-                                .font(.title3.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .padding(12)
-                                .background(.ultraThinMaterial, in: Circle())
-                        }
-                        .accessibilityLabel(isAutoPlaying ? "Pause story" : "Play story")
-                        .disabled(isDeleting || isPreparingShare)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, currentAssetIsVideo ? 92 : 8)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, currentAssetIsVideo ? 92 : 10)
                 }
                 .transition(.opacity)
             }
@@ -548,6 +550,35 @@ struct FullScreenPhotoView: View {
     }
 }
 
+/// Circular glass control for the viewer chrome. Glass is the right material
+/// here specifically because it floats over full-bleed media — the case Apple
+/// designed it for — and it keeps the photo readable underneath.
+private struct ChromeButton: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    var isBusy: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if isBusy {
+                    ProgressView()
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 16, weight: .semibold))
+                        .contentTransition(.symbolEffect(.replace))
+                }
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
 struct StoryProgressBar: View {
     let count: Int
     let currentIndex: Int
@@ -622,13 +653,18 @@ struct MemoryInfoSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 5) {
                     if let yearsAgoLabel {
-                        Text(yearsAgoLabel)
-                            .font(.title2.weight(.bold))
+                        Text(yearsAgoLabel.uppercased())
+                            .font(.system(size: 11, weight: .bold))
+                            .tracking(1.3)
+                            .foregroundStyle(Color.accentColor)
                     }
                     if let date = asset.creationDate {
-                        Text(date.formatted(date: .complete, time: .shortened))
+                        Text(date.formatted(date: .complete, time: .omitted))
+                            .font(.system(.title3, design: .rounded, weight: .bold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(date.formatted(date: .omitted, time: .shortened))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -693,19 +729,20 @@ struct MemoryInfoSheet: View {
     private func infoRow(label: String, value: String, icon: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .frame(width: 28)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 28, alignment: .center)
             Text(label)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Spacer()
+            Spacer(minLength: 12)
             Text(value)
-                .font(.subheadline.weight(.medium))
+                .font(.subheadline.weight(.semibold))
                 .multilineTextAlignment(.trailing)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
     }
 
     private func formattedDuration(_ seconds: TimeInterval) -> String {

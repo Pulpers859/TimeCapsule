@@ -10,45 +10,53 @@ struct ContentView: View {
     @State private var showSettings = false
 
     var body: some View {
-        Group {
-            switch model.authorizationStatus {
-            case .notDetermined:
-                PermissionRequestView(
-                    isRequesting: isRequestingPhotoAccess,
-                    onRequestAccess: requestPhotoAccess
-                )
+        ZStack {
+            AppBackground()
 
-            case .denied, .restricted:
-                PermissionDeniedView()
+            Group {
+                switch model.authorizationStatus {
+                case .notDetermined:
+                    PermissionRequestView(
+                        isRequesting: isRequestingPhotoAccess,
+                        onRequestAccess: requestPhotoAccess
+                    )
 
-            case .authorized, .limited:
-                VStack(spacing: 0) {
-                    if model.authorizationStatus == .limited {
-                        LimitedLibraryBanner(onManageAccess: openLimitedLibraryPicker)
-                    }
+                case .denied, .restricted:
+                    PermissionDeniedView()
 
-                    ZStack {
-                        if model.yearGroups.isEmpty {
-                            if model.isLoading {
-                                LoadingView()
+                case .authorized, .limited:
+                    VStack(spacing: 0) {
+                        if model.authorizationStatus == .limited {
+                            LimitedLibraryBanner(onManageAccess: openLimitedLibraryPicker)
+                        }
+
+                        ZStack {
+                            if model.yearGroups.isEmpty {
+                                if model.isLoading {
+                                    SkeletonGalleryView()
+                                } else {
+                                    EmptyStateView(onOpenSettings: { showSettings = true })
+                                }
                             } else {
-                                EmptyStateView(onOpenSettings: { showSettings = true })
+                                TimeCapsuleView(
+                                    yearGroups: model.yearGroups,
+                                    onOpenSettings: { showSettings = true }
+                                )
                             }
-                        } else {
-                            TimeCapsuleView(
-                                yearGroups: model.yearGroups,
-                                onOpenSettings: { showSettings = true }
-                            )
                         }
                     }
-                }
 
-            @unknown default:
-                PermissionRequestView(
-                    isRequesting: isRequestingPhotoAccess,
-                    onRequestAccess: requestPhotoAccess
-                )
+                @unknown default:
+                    PermissionRequestView(
+                        isRequesting: isRequestingPhotoAccess,
+                        onRequestAccess: requestPhotoAccess
+                    )
+                }
             }
+            // Swapping between skeleton, empty, and gallery is a full-screen
+            // change; a cross-fade keeps it from snapping.
+            .animation(.easeInOut(duration: 0.28), value: model.isLoading)
+            .animation(.easeInOut(duration: 0.28), value: model.yearGroups.isEmpty)
         }
         .task {
             await model.refreshAuthorizationAndMemories()
@@ -109,62 +117,120 @@ struct PermissionRequestView: View {
     let onRequestAccess: () -> Void
 
     var body: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 64))
-                .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            BrandGlyph(systemName: "clock.arrow.circlepath", size: 104)
+                .padding(.bottom, 28)
+
             Text("Time Capsule")
-                .font(.largeTitle.bold())
-            Text("Time Capsule finds photos and videos from this date in past years. Photo matching stays on device; location names are requested only when you open details.")
-                .multilineTextAlignment(.center)
+                .font(.system(size: 34, design: .rounded).weight(.bold))
+                .padding(.bottom, 8)
+
+            Text("Photos and videos from this day, every year you've had a camera.")
+                .font(.callout)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal)
-            Button {
-                onRequestAccess()
-            } label: {
-                if isRequesting {
-                    ProgressView()
-                        .tint(.white)
-                } else {
-                    Text("Allow Photo Access")
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
+                .frame(maxWidth: 300)
+                .padding(.bottom, 34)
+
+            VStack(alignment: .leading, spacing: 18) {
+                PermissionPoint(
+                    symbol: "iphone",
+                    title: "Stays on your iPhone",
+                    detail: "Matching happens on device. Nothing is uploaded."
+                )
+                PermissionPoint(
+                    symbol: "location",
+                    title: "Locations only on request",
+                    detail: "Place names are looked up when you open a memory's details."
+                )
+                PermissionPoint(
+                    symbol: "bell.badge",
+                    title: "A gentle daily nudge",
+                    detail: "One reminder a day, at a time you choose."
+                )
+            }
+            .frame(maxWidth: 340)
+            .padding(.bottom, 36)
+
+            Spacer(minLength: 0)
+
+            Button(action: onRequestAccess) {
+                Group {
+                    if isRequesting {
+                        ProgressView().tint(.white)
+                    } else {
+                        Text("Allow Photo Access")
+                            .font(.headline)
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
             .disabled(isRequesting)
+            .frame(maxWidth: 360)
+
+            Text("You can change this anytime in iPhone Settings.")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 14)
         }
-        .padding()
+        .padding(.horizontal, 28)
+        .padding(.vertical, 40)
+    }
+}
+
+private struct PermissionPoint: View {
+    let symbol: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 30, height: 30)
+                .background(Color.accentColor.opacity(0.13), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
 struct PermissionDeniedView: View {
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(.secondary)
-            Text("Photos Access Required")
-                .font(.title2.bold())
-            Text("Please enable Photos access in Settings → Privacy → Photos → Time Capsule.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal)
-            Button("Open Settings") {
+        EmptyStateScaffold(
+            symbol: "lock.fill",
+            title: "Photos Access Required",
+            message: "Time Capsule needs access to your library to find memories from this day. Enable it in Settings → Privacy → Photos → Time Capsule."
+        ) {
+            Button {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
+            } label: {
+                Text("Open Settings")
+                    .font(.headline)
+                    .frame(minWidth: 200)
+                    .frame(height: 50)
             }
             .buttonStyle(.borderedProminent)
-        }
-        .padding()
-    }
-}
-
-struct LoadingView: View {
-    var body: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-            Text("Finding your memories…")
-                .foregroundStyle(.secondary)
+            .buttonBorderShape(.capsule)
         }
     }
 }
@@ -175,13 +241,15 @@ struct LimitedLibraryBanner: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "photo.badge.plus")
-                .font(.title3)
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
+                .frame(width: 32, height: 32)
+                .background(Color.accentColor.opacity(0.13), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Limited Photos Access")
                     .font(.subheadline.weight(.semibold))
-                Text("Add more photos to Time Capsule without leaving the app.")
+                Text("Time Capsule can only see the photos you've picked.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -190,33 +258,45 @@ struct LimitedLibraryBanner: View {
             Spacer(minLength: 8)
 
             Button("Manage", action: onManageAccess)
-                .font(.caption.weight(.semibold))
+                .font(.footnote.weight(.semibold))
                 .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(Color(.secondarySystemGroupedBackground))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+        .padding(.horizontal, TCMetrics.screenPadding)
+        .padding(.bottom, 8)
     }
 }
 
 struct EmptyStateView: View {
     let onOpenSettings: () -> Void
 
+    private var message: String {
+        MemoryWindow.dayWindow == 0
+            ? "Nothing was captured on this date in previous years. Widening the memory range will look at nearby days too."
+            : "Nothing turned up in the current memory range. Try widening it, or check back tomorrow."
+    }
+
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 64))
-                .foregroundStyle(.secondary)
-            Text("No Memories Yet")
-                .font(.title2.bold())
-            Text(MemoryWindow.dayWindow == 0
-                ? "No photos or videos were taken on this date in previous years. Try a wider memory range."
-                : "No photos or videos were found in the current memory range.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal)
-            Button("Adjust Memory Range", action: onOpenSettings)
-                .buttonStyle(.borderedProminent)
+        EmptyStateScaffold(
+            symbol: "calendar.badge.clock",
+            title: "No Memories Today",
+            message: message
+        ) {
+            Button(action: onOpenSettings) {
+                Text("Adjust Memory Range")
+                    .font(.headline)
+                    .frame(minWidth: 220)
+                    .frame(height: 50)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
         }
     }
 }

@@ -26,49 +26,51 @@ struct VideoPlaybackControls: View {
     let onEditingChanged: (Bool) -> Void
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 14) {
-                Button(action: onTogglePlayPause) {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .frame(width: 44, height: 44)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isPlaying ? "Pause video" : "Play video")
-
-                Button(action: onSkipBack) {
-                    Image(systemName: "gobackward.10")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Skip back 10 seconds")
-
-                Text(formattedTime(currentTime))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(width: 44, alignment: .leading)
-
-                Slider(
-                    value: sliderBinding,
-                    in: 0...max(duration, 1),
-                    onEditingChanged: onEditingChanged
-                )
-                .tint(.white)
-                .accessibilityLabel("Video position")
-                .accessibilityValue("\(formattedTime(currentTime)) of \(formattedTime(duration))")
-
-                Text(formattedTime(duration))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 44, alignment: .trailing)
+        // A single glass surface with plain controls inside. Giving each button
+        // its own material would stack glass on glass, which Apple's guidance
+        // calls out as both visually muddy and expensive to render.
+        HStack(spacing: 8) {
+            Button(action: onTogglePlayPause) {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .frame(width: 42, height: 42)
+                    .contentShape(Circle())
+                    .contentTransition(.symbolEffect(.replace))
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isPlaying ? "Pause video" : "Play video")
+
+            Button(action: onSkipBack) {
+                Image(systemName: "gobackward.10")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 42, height: 42)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Skip back 10 seconds")
+
+            Text(formattedTime(currentTime))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.primary)
+                .frame(width: 40, alignment: .leading)
+
+            Slider(
+                value: sliderBinding,
+                in: 0...max(duration, 1),
+                onEditingChanged: onEditingChanged
+            )
+            .tint(.white)
+            .accessibilityLabel("Video position")
+            .accessibilityValue("\(formattedTime(currentTime)) of \(formattedTime(duration))")
+
+            Text(formattedTime(duration))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 40, alignment: .trailing)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.black.opacity(0.42), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
     }
 
     private func formattedTime(_ seconds: Double) -> String {
