@@ -27,10 +27,6 @@ struct TimeCapsuleView: View {
         referenceDate.formatted(.dateTime.month(.wide).day())
     }
 
-    private var fullDateString: String {
-        referenceDate.formatted(.dateTime.weekday(.wide).month(.wide).day())
-    }
-
     private var selectedCount: Int { selectedIDs.count }
     private var selectedFilter: MemoryFilter {
         get { MemoryFilter(rawValue: selectedFilterRawValue) ?? .all }
@@ -70,8 +66,7 @@ struct TimeCapsuleView: View {
                             .padding(.top, 24)
                             .padding(.bottom, 24)
                         } else {
-                            MemoryHeroCard(
-                                dateString: fullDateString,
+                            MemorySummaryBar(
                                 totalCount: totalFilteredCount,
                                 yearCount: filteredYearGroups.count,
                                 recapPhotoCount: recapEligiblePhotoCount,
@@ -79,7 +74,7 @@ struct TimeCapsuleView: View {
                                 onCreateRecap: createRecap
                             )
                             .padding(.horizontal, TCMetrics.screenPadding)
-                            .padding(.top, 6)
+                            .padding(.top, 8)
 
                             ForEach(filteredYearGroups) { group in
                                 YearSection(
@@ -317,13 +312,23 @@ struct TimeCapsuleView: View {
     }
 }
 
-// MARK: - Hero
+// MARK: - Summary
 
-/// Opens the gallery with the date it is actually showing, and surfaces the
-/// recap action. Recap used to live behind an unlabelled sparkles icon in the
-/// toolbar, which made the app's one generative feature effectively invisible.
-struct MemoryHeroCard: View {
-    let dateString: String
+/// One quiet line above the grid: what today holds, and the recap action.
+///
+/// This replaced a hero card — eyebrow, 30pt date, tinted background, amber
+/// border, full-width filled button — that ran to roughly a fifth of the screen
+/// and pushed the first photo well below the fold. Two things were wrong with
+/// it. The date it announced was already sitting in the controls bar directly
+/// above, so the screen opened by saying the same thing twice at two different
+/// sizes. And rendering recap as a full-width prominent button made the app's
+/// secondary action the loudest element in the view, competing with the
+/// memories the screen exists to show.
+///
+/// Recap stays visible and labelled here, which is what the card got right —
+/// it used to hide behind an unlabelled sparkles glyph in the toolbar. It just
+/// no longer outranks the photos.
+struct MemorySummaryBar: View {
     let totalCount: Int
     let yearCount: Int
     let recapPhotoCount: Int
@@ -337,57 +342,27 @@ struct MemoryHeroCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10, weight: .bold))
-                Text(MemoryWindow.dayWindow > 0 ? "AROUND THIS DAY" : "ON THIS DAY")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.3)
-            }
-            .foregroundStyle(Color.accentColor)
-            .padding(.bottom, 8)
-
-            Text(dateString)
-                .font(.system(size: 30, design: .rounded).weight(.bold))
-                .tracking(-0.4)
-                .lineLimit(2)
-                .minimumScaleFactor(0.75)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 4)
-
+        HStack(spacing: 12) {
             Text(summary)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+
+            Spacer(minLength: 8)
 
             if recapPhotoCount >= 2 {
                 Button(action: onCreateRecap) {
-                    Label("Create Recap Video", systemImage: "wand.and.sparkles")
+                    Label("Recap", systemImage: "wand.and.sparkles")
                         .font(.subheadline.weight(.semibold))
-                        .frame(height: 42)
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .buttonBorderShape(.capsule)
                 .disabled(isBusy)
-                .padding(.top, 18)
+                .accessibilityLabel("Create recap video")
             }
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: TCMetrics.cardRadius, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-                .overlay {
-                    RoundedRectangle(cornerRadius: TCMetrics.cardRadius, style: .continuous)
-                        .fill(TCGradient.brandSoft)
-                }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: TCMetrics.cardRadius, style: .continuous)
-                .strokeBorder(Color.tcAmber.opacity(0.22), lineWidth: 1)
-        }
-        .accessibilityElement(children: .contain)
+        .frame(minHeight: 34)
     }
 }
 
@@ -408,7 +383,7 @@ struct YearSection: View {
         VStack(alignment: .leading, spacing: 12) {
             YearSectionHeader(group: group)
                 .padding(.horizontal, TCMetrics.screenPadding)
-                .padding(.top, 30)
+                .padding(.top, 20)
 
             LazyVGrid(columns: columns, spacing: TCMetrics.gridSpacing) {
                 ForEach(group.assets, id: \.localIdentifier) { asset in
@@ -457,8 +432,9 @@ struct YearSection: View {
     }
 }
 
-/// Big numeral paired with small wide-tracked caps — the contrast is what makes
-/// the section read as editorial rather than as a table heading.
+/// Weighted numeral against lighter supporting text — enough contrast to read
+/// as editorial rather than as a table heading, without the numeral growing
+/// large enough to compete with the grid underneath it.
 struct YearSectionHeader: View {
     let group: YearGroup
 
@@ -467,19 +443,21 @@ struct YearSectionHeader: View {
     }
 
     var body: some View {
-        HStack(alignment: .lastTextBaseline, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(String(group.year))
-                    .font(.system(size: 38, design: .rounded).weight(.bold))
-                    .tracking(-0.8)
-                    .foregroundStyle(.primary)
-                    .accessibilityAddTraits(.isHeader)
+        // Year and elapsed label share one baseline rather than stacking. Two
+        // lines of chrome per section, at 38pt, cost more vertical space than
+        // the photos they introduce once a day spans several years.
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(String(group.year))
+                .font(.system(size: 26, design: .rounded).weight(.bold))
+                .tracking(-0.4)
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
 
-                Text(group.label.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.accentColor)
-            }
+            Text(group.label)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(Color.accentColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
 
             Spacer(minLength: 8)
 
