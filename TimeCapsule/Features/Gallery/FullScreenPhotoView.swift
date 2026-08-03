@@ -514,7 +514,7 @@ struct FullScreenPhotoView: View {
 
     private func shareCaption(for asset: PHAsset) -> String {
         guard let creationDate = asset.creationDate else { return "A Time Capsule memory" }
-        let years = max(Calendar.current.dateComponents([.year], from: creationDate, to: Date()).year ?? 0, 0)
+        let years = MemoryWindow.yearsAgo(for: creationDate)
         guard years > 0 else { return "A Time Capsule memory" }
         let timing = MemoryWindow.dayWindow > 0 ? "around this day" : "today"
         return "\(years) year\(years == 1 ? "" : "s") ago \(timing)"
@@ -645,7 +645,7 @@ struct MemoryInfoSheet: View {
 
     private var yearsAgoLabel: String? {
         guard let date = asset.creationDate else { return nil }
-        let yearsAgo = Calendar.current.component(.year, from: Date()) - Calendar.current.component(.year, from: date)
+        let yearsAgo = MemoryWindow.yearsAgo(for: date)
         guard yearsAgo > 0 else { return nil }
         return yearsAgo == 1 ? "1 year ago" : "\(yearsAgo) years ago"
     }

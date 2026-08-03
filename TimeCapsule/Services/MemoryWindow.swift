@@ -36,12 +36,49 @@ nonisolated enum MemoryWindow {
     /// previous evening — shift the reference date back one day so the gallery
     /// shows that evening's memories rather than the new calendar day's (which
     /// hasn't really started yet). Returns `date` unchanged when `dayStartHour == 0`.
-    static func logicalDate(for date: Date, calendar: Calendar = .current) -> Date {
-        let startHour = dayStartHour
+    static func logicalDate(
+        for date: Date,
+        dayStartHour: Int = MemoryWindow.dayStartHour,
+        calendar: Calendar = .current
+    ) -> Date {
+        let startHour = max(0, min(dayStartHour, 6))
         guard startHour > 0 else { return date }
         let hour = calendar.component(.hour, from: date)
         guard hour < startHour else { return date }
         return calendar.date(byAdding: .day, value: -1, to: date) ?? date
+    }
+
+    /// How many years back a memory is, measured the way an "on this day" app
+    /// means it: the difference between calendar years, not elapsed duration.
+    ///
+    /// This distinction is the whole point of the helper. `Calendar`'s
+    /// `dateComponents([.year], from:to:)` answers "how many whole years have
+    /// *passed*", so a photo taken at 4:59 PM on Aug 3 2024, viewed at 8:03 AM
+    /// on Aug 3 2026, comes back as 1 — the second anniversary is still nine
+    /// hours away. The gallery groups that same photo under 2024 and labels it
+    /// "2 Years Ago", so any surface using elapsed duration silently disagrees
+    /// with the grid it was opened from, and only when the current time of day
+    /// happens to fall earlier than the capture time.
+    ///
+    /// Both dates go through `logicalDate` so the answer matches how
+    /// `range(for:anniversaryYear:)` attributes assets to a year: a photo taken
+    /// just after midnight on Jan 1 belongs to the previous evening, and so to
+    /// the previous year, whenever `dayStartHour` is non-zero.
+    static func yearsAgo(
+        for date: Date,
+        relativeTo reference: Date = Date(),
+        dayStartHour: Int = MemoryWindow.dayStartHour,
+        calendar: Calendar = .current
+    ) -> Int {
+        let referenceYear = calendar.component(
+            .year,
+            from: logicalDate(for: reference, dayStartHour: dayStartHour, calendar: calendar)
+        )
+        let memoryYear = calendar.component(
+            .year,
+            from: logicalDate(for: date, dayStartHour: dayStartHour, calendar: calendar)
+        )
+        return referenceYear - memoryYear
     }
 
     /// Date range for the anniversary of `referenceDate` in `anniversaryYear`,
