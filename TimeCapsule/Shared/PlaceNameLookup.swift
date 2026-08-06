@@ -1,0 +1,56 @@
+import CoreLocation
+import Foundation
+import MapKit
+
+/// Turns a memory's coordinates into a short, human place name — "Cupertino, CA"
+/// at home, "Paris, France" abroad — rather than a street address. A line under
+/// a photo wants the place you were, not the postal route to it.
+///
+/// Results are cached by coordinate because reverse geocoding is a rate-limited
+/// network service and a day of memories keeps revisiting the same few places:
+/// an event's worth of photos resolves once, and paging back to an earlier one
+/// is instant instead of another request. Misses are cached too, so a
+/// coordinate the service has no answer for is not asked about again.
+actor PlaceNameLookup {
+    static let shared = PlaceNameLookup()
+
+    /// Keyed at ~11m of precision: fine enough that two genuinely different
+    /// places never share an entry, coarse enough that a burst shot from one
+    /// spot resolves once instead of once per frame.
+    private var resolved: [String: String?] = [:]
+
+    func placeName(for coordinate: CLLocationCoordinate2D) async -> String? {
+        let key = Self.cacheKey(for: coordinate)
+        if let cached = resolved[key] {
+            return cached
+        }
+
+        let name = await Self.reverseGeocodedPlaceName(for: coordinate)
+        resolved[key] = name
+        return name
+    }
+
+    private static func cacheKey(for coordinate: CLLocationCoordinate2D) -> String {
+        String(format: "%.4f,%.4f", coordinate.latitude, coordinate.longitude)
+    }
+
+    private static func reverseGeocodedPlaceName(
+        for coordinate: CLLocationCoordinate2D
+    ) async -> String? {
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
+
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            request.getMapItems { items, _ in
+                let bestMatch = items?.first
+                // `cityWithContext` lets MapKit decide how much context the
+                // reader needs, instead of us stitching city/state/country
+                // together and getting it wrong outside the US. The
+                // point-of-interest name is the fallback, which keeps somewhere
+                // like a national park readable when there is no city to name.
+                let name = bestMatch?.addressRepresentations?.cityWithContext ?? bestMatch?.name
+                continuation.resume(returning: name)
+            }
+        }
+    }
+}

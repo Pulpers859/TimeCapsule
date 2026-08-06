@@ -22,7 +22,6 @@ struct FullScreenPhotoView: View {
     @State private var isAutoPlaying = false
     @State private var autoPlayProgress: Double = 0
     @State private var showInfo = false
-    @State private var reverseGeocodeTask: Task<Void, Never>? = nil
     @State private var shareTask: Task<Void, Never>? = nil
     @State private var isDeleting = false
     @State private var isPreparingShare = false
@@ -31,8 +30,11 @@ struct FullScreenPhotoView: View {
     private var currentAssetIsVideo: Bool {
         visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .video
     }
-    private var currentAssetIsImage: Bool {
-        visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .image
+    /// Drives the location lookup. Keying on the identifier rather than the
+    /// index means a delete, which shifts every index after it, re-resolves
+    /// only when the memory on screen actually changed.
+    private var currentAssetIdentifier: String? {
+        visibleAssets.indices.contains(currentIndex) ? visibleAssets[currentIndex].localIdentifier : nil
     }
     private var isPlaybackBlocked: Bool {
         showDeleteConfirm || showInfo || shareItem != nil || isPreparingShare || isDeleting
@@ -148,7 +150,7 @@ struct FullScreenPhotoView: View {
                                     Text(date.formatted(date: .abbreviated, time: .shortened))
                                         .font(.footnote.weight(.semibold))
                                 }
-                                if currentAssetIsImage, let location = locationName {
+                                if let location = locationName {
                                     HStack(spacing: 3) {
                                         Image(systemName: "location.fill")
                                             .font(.system(size: 8))
@@ -249,12 +251,28 @@ struct FullScreenPhotoView: View {
             if visibleAssets.indices.contains(currentIndex) {
                 MemoryInfoSheet(
                     asset: visibleAssets[currentIndex],
-                    locationName: locationName,
-                    onLoadLocation: resolveLocation
+                    locationName: locationName
                 )
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
+        }
+        // Where a memory happened is part of remembering it, so the place name
+        // resolves as each one comes into view rather than waiting to be asked
+        // for. The pause coalesces a fast swipe through a day into one lookup
+        // instead of one per photo, which matters because reverse geocoding is
+        // rate limited; anywhere already seen comes back from the cache.
+        .task(id: currentAssetIdentifier) {
+            locationName = nil
+            guard visibleAssets.indices.contains(currentIndex),
+                  let coordinate = visibleAssets[currentIndex].location?.coordinate else { return }
+
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+
+            let resolved = await PlaceNameLookup.shared.placeName(for: coordinate)
+            guard !Task.isCancelled else { return }
+            locationName = resolved
         }
         .onChange(of: currentIndex) { _, _ in
             isCurrentAssetZoomed = false
@@ -264,7 +282,6 @@ struct FullScreenPhotoView: View {
             isPreparingShare = false
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             locationName = nil
-            reverseGeocodeTask?.cancel()
         }
         .onChange(of: isCurrentAssetZoomed) { _, zoomed in
             if zoomed {
@@ -276,7 +293,6 @@ struct FullScreenPhotoView: View {
         }
         .onDisappear {
             shareTask?.cancel()
-            reverseGeocodeTask?.cancel()
             UIApplication.shared.isIdleTimerDisabled = false
         }
         .preferredColorScheme(.dark)
@@ -454,7 +470,6 @@ struct FullScreenPhotoView: View {
         isDeleting = true
         shareTask?.cancel()
         isPreparingShare = false
-        reverseGeocodeTask?.cancel()
         stopAutoPlay()
 
         PHPhotoLibrary.shared().performChanges({
@@ -486,22 +501,6 @@ struct FullScreenPhotoView: View {
         }
     }
 
-    private func resolveLocation() {
-        locationName = nil
-        reverseGeocodeTask?.cancel()
-        guard visibleAssets.indices.contains(currentIndex) else { return }
-        let current = visibleAssets[currentIndex]
-        guard current.mediaType == .image, let location = current.location else { return }
-
-        reverseGeocodeTask = Task {
-            let resolved = await reverseGeocodeName(for: location)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                locationName = resolved
-            }
-        }
-    }
-
     private func moveToPreviousMemory() {
         guard !isDeleting, currentIndex > 0 else { return }
         currentIndex -= 1
@@ -518,21 +517,6 @@ struct FullScreenPhotoView: View {
         guard years > 0 else { return "A Time Capsule memory" }
         let timing = MemoryWindow.dayWindow > 0 ? "around this day" : "today"
         return "\(years) year\(years == 1 ? "" : "s") ago \(timing)"
-    }
-
-    private func reverseGeocodeName(for location: CLLocation) async -> String? {
-        guard let request = MKReverseGeocodingRequest(location: location) else {
-            return nil
-        }
-
-        return await withCheckedContinuation { continuation in
-            request.getMapItems { items, _ in
-                let bestMatch = items?.first
-                let resolved = bestMatch?.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true)
-                    ?? bestMatch?.name
-                continuation.resume(returning: resolved)
-            }
-        }
     }
 
     private var deleteErrorBinding: Binding<Bool> {
@@ -628,13 +612,11 @@ struct StoryProgressBar: View {
 struct MemoryInfoSheet: View {
     let asset: PHAsset
     let locationName: String?
-    let onLoadLocation: () -> Void
     @State private var mapPosition: MapCameraPosition
 
-    init(asset: PHAsset, locationName: String?, onLoadLocation: @escaping () -> Void) {
+    init(asset: PHAsset, locationName: String?) {
         self.asset = asset
         self.locationName = locationName
-        self.onLoadLocation = onLoadLocation
         let center = asset.location?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
         let region = MKCoordinateRegion(
             center: center,
@@ -698,27 +680,17 @@ struct MemoryInfoSheet: View {
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                 if let coordinate = asset.location?.coordinate {
-                    if locationName != nil {
-                        Map(position: $mapPosition, interactionModes: [.zoom, .pan]) {
-                            Marker("Memory Location", coordinate: coordinate)
-                                .tint(.red)
-                        }
-                        .frame(height: 220)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .allowsHitTesting(false)
-
-                        Text("The location name and map were requested from Apple using this photo's coordinates.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Loading a location name and map sends this photo's coordinates to Apple's Maps service.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                            Button("Load Map and Location Name", action: onLoadLocation)
-                                .buttonStyle(.borderedProminent)
-                        }
+                    Map(position: $mapPosition, interactionModes: [.zoom, .pan]) {
+                        Marker("Memory Location", coordinate: coordinate)
+                            .tint(.red)
                     }
+                    .frame(height: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .allowsHitTesting(false)
+
+                    Text("The location name is requested from Apple's Maps service using this photo's coordinates. The coordinates come from the photo itself — Time Capsule never asks for your current location.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(20)

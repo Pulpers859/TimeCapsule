@@ -516,6 +516,11 @@ struct MemoryTile: View {
             .scaleEffect(isSelected ? 0.94 : 1)
             .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isSelected)
             .animation(.easeInOut(duration: 0.2), value: isSelecting)
+            // Pins the tap target to the tile's own square. Without this the
+            // overlays and the filled thumbnail underneath decide the hit
+            // region between them, and any of them reaching past the 3pt
+            // gutter steals taps from the neighbouring tile.
+            .contentShape(Rectangle())
             .id(asset.localIdentifier)
     }
 }
@@ -526,40 +531,43 @@ struct AssetThumbnailView: View {
     @State private var didFail = false
 
     var body: some View {
-        GeometryReader { geo in
-            Group {
+        // A calm placeholder rather than a spinner: at gallery scale, a dozen
+        // spinners is visual noise. It doubles as the square the thumbnail is
+        // measured against, so the cell has a definite size before the image
+        // arrives and nothing reflows when it does.
+        Rectangle()
+            .fill(Color.tcPlaceholder)
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
                 if let image {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.width)
                 } else if didFail {
-                    Color.tcPlaceholder
-                        .overlay {
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                } else {
-                    // A calm placeholder rather than a spinner: at gallery
-                    // scale, a dozen spinners is visual noise.
-                    Color.tcPlaceholder
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: geo.size.width, height: geo.size.width)
             .clipped()
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .task(id: asset.localIdentifier) {
-            image = nil
-            didFail = false
-            let loadedImage = await loadImage(from: asset, targetSize: CGSize(width: 300, height: 300))
-            guard !Task.isCancelled else { return }
-            didFail = loadedImage == nil
-            withAnimation(.easeOut(duration: 0.28)) {
-                image = loadedImage
+            // `clipped()` trims what gets drawn, not what can be touched. A
+            // `scaledToFill` image is laid out *larger* than the square it
+            // fills — a portrait photo overhangs top and bottom — and SwiftUI
+            // hit tests the laid-out size, so that overhang reaches into the
+            // rows above and below across a 3pt gutter. Overlapping hits go to
+            // whichever view comes later in the grid, which is exactly why a
+            // tap landed on the tile below, or on the next one across.
+            .contentShape(Rectangle())
+            .task(id: asset.localIdentifier) {
+                image = nil
+                didFail = false
+                let loadedImage = await loadImage(from: asset, targetSize: CGSize(width: 300, height: 300))
+                guard !Task.isCancelled else { return }
+                didFail = loadedImage == nil
+                withAnimation(.easeOut(duration: 0.28)) {
+                    image = loadedImage
+                }
             }
-        }
     }
 }
 
