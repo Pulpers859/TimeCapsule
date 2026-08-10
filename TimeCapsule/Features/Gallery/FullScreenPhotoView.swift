@@ -36,6 +36,14 @@ struct FullScreenPhotoView: View {
     private var currentAssetIdentifier: String? {
         visibleAssets.indices.contains(currentIndex) ? visibleAssets[currentIndex].localIdentifier : nil
     }
+    /// A video already carries its own play/pause in the scrubber a few points
+    /// below this button, and two play glyphs that close together read as one
+    /// broken control. The slideshow button stands down while a video is on
+    /// screen — unless a slideshow is actually running, in which case the way to
+    /// stop it has to stay reachable.
+    private var showsSlideshowButton: Bool {
+        !currentAssetIsVideo || isAutoPlaying
+    }
     private var isPlaybackBlocked: Bool {
         showDeleteConfirm || showInfo || shareItem != nil || isPreparingShare || isDeleting
     }
@@ -132,58 +140,36 @@ struct FullScreenPhotoView: View {
 
             if showChrome && !visibleAssets.isEmpty {
                 VStack(spacing: 0) {
-                    GlassEffectContainer(spacing: 14) {
-                        HStack(spacing: 10) {
-                            ChromeButton(
-                                systemImage: "xmark",
-                                accessibilityLabel: "Close",
-                                action: { dismiss() }
-                            )
+                    VStack(spacing: 8) {
+                        GlassEffectContainer(spacing: 14) {
+                            HStack(spacing: 10) {
+                                ChromeButton(
+                                    systemImage: "xmark",
+                                    accessibilityLabel: "Close",
+                                    action: { dismiss() }
+                                )
 
-                            Spacer(minLength: 6)
+                                Spacer(minLength: 6)
 
-                            VStack(spacing: 1) {
-                                // Bounds-checked: a delete can retire the index
-                                // between the emptiness guard above and this read.
-                                if visibleAssets.indices.contains(currentIndex),
-                                   let date = visibleAssets[currentIndex].creationDate {
-                                    Text(date.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.footnote.weight(.semibold))
-                                }
-                                if let location = locationName {
-                                    HStack(spacing: 3) {
-                                        Image(systemName: "location.fill")
-                                            .font(.system(size: 8))
-                                        Text(location)
-                                            .font(.caption2)
-                                            .lineLimit(1)
-                                            .truncationMode(.tail)
-                                    }
-                                    .foregroundStyle(.secondary)
-                                }
+                                ChromeButton(
+                                    systemImage: "square.and.arrow.up",
+                                    accessibilityLabel: "Share memory",
+                                    isBusy: isPreparingShare,
+                                    action: shareCurrentPhoto
+                                )
+                                .disabled(isPreparingShare || isDeleting)
+
+                                ChromeButton(
+                                    systemImage: "trash",
+                                    accessibilityLabel: "Delete memory",
+                                    isBusy: isDeleting,
+                                    action: { showDeleteConfirm = true }
+                                )
+                                .disabled(isDeleting || isPreparingShare)
                             }
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 44)
-                            .glassEffect(in: Capsule())
-
-                            Spacer(minLength: 6)
-
-                            ChromeButton(
-                                systemImage: "square.and.arrow.up",
-                                accessibilityLabel: "Share memory",
-                                isBusy: isPreparingShare,
-                                action: shareCurrentPhoto
-                            )
-                            .disabled(isPreparingShare || isDeleting)
-
-                            ChromeButton(
-                                systemImage: "trash",
-                                accessibilityLabel: "Delete memory",
-                                isBusy: isDeleting,
-                                action: { showDeleteConfirm = true }
-                            )
-                            .disabled(isDeleting || isPreparingShare)
                         }
+
+                        memoryCaption
                     }
                     .padding(.horizontal, 14)
                     .padding(.top, 6)
@@ -211,12 +197,21 @@ struct FullScreenPhotoView: View {
 
                             Spacer(minLength: 6)
 
+                            // Faded out rather than removed from the layout: the
+                            // counter is centred by the two spacers, so taking
+                            // the button out of the hierarchy would slide the
+                            // counter sideways every time a swipe crossed
+                            // between a photo and a video.
                             ChromeButton(
-                                systemImage: isAutoPlaying ? "pause.fill" : "play.fill",
-                                accessibilityLabel: isAutoPlaying ? "Pause story" : "Play story",
+                                systemImage: isAutoPlaying ? "stop.fill" : "play.rectangle.on.rectangle",
+                                accessibilityLabel: isAutoPlaying ? "Stop slideshow" : "Play slideshow",
                                 action: toggleAutoPlay
                             )
                             .disabled(isDeleting || isPreparingShare)
+                            .opacity(showsSlideshowButton ? 1 : 0)
+                            .allowsHitTesting(showsSlideshowButton)
+                            .accessibilityHidden(!showsSlideshowButton)
+                            .animation(.easeInOut(duration: 0.2), value: showsSlideshowButton)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -302,6 +297,66 @@ struct FullScreenPhotoView: View {
         .accessibilityAction(named: "Next memory") {
             moveToNextMemory()
         }
+    }
+
+    /// Date and place, on their own full-width row rather than wedged between
+    /// the buttons. In the shared row the capsule got roughly 143pt of text on a
+    /// 393pt phone against a date that wants 140 — so the date wrapped, the
+    /// wrapped text then reported only its longest line as its width, and the
+    /// place name (which has no minimum width of its own, being single-line and
+    /// truncating) collapsed into whatever was left: "South Cha…". On its own
+    /// row the same text has ~337pt, which is headroom rather than a margin.
+    ///
+    /// No glass here on purpose. This is a label, not a control, and glass is
+    /// the material of the control layer; it also used to change height every
+    /// time a place name resolved, which made the capsule visibly wobble.
+    @ViewBuilder
+    private var memoryCaption: some View {
+        // Bounds-checked: a delete can retire the index between the emptiness
+        // guard above and this read.
+        if visibleAssets.indices.contains(currentIndex),
+           let date = visibleAssets[currentIndex].creationDate {
+            VStack(spacing: 2) {
+                Text(date.formatted(.dateTime.month(.abbreviated).day().year()))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+
+                Text(captionDetail(for: date))
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.75))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+            }
+            // The scrim alone is thin this far down the screen, so the text
+            // carries its own contrast for bright photos.
+            .shadow(color: .black.opacity(0.55), radius: 3, y: 1)
+            .frame(maxWidth: .infinity)
+            .animation(.spring(response: 0.3, dampingFraction: 0.85), value: locationName)
+            // Nothing here is tappable, and it sits directly over the pager. Left
+            // hit-testable it would swallow both the swipe to the next memory and
+            // the tap that dismisses the chrome, in a band the old glass capsule
+            // only occupied a fraction of. VoiceOver is unaffected by this.
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// The secondary caption line. It always says something, which is the point:
+    /// a memory with no GPS leaves no hole, and a place name arriving after its
+    /// network round trip appends to a line that already exists instead of
+    /// inserting a new one — the caption widens rather than shifting the layout.
+    private func captionDetail(for date: Date) -> String {
+        let years = MemoryWindow.yearsAgo(for: date)
+        // A memory from this same year has no anniversary to report, so the
+        // clock time is the only thing left worth saying about when it happened.
+        let lead = years > 0
+            ? "\(years) year\(years == 1 ? "" : "s") ago"
+            : date.formatted(date: .omitted, time: .shortened)
+
+        guard let locationName else { return lead }
+        return "\(lead) · \(locationName)"
     }
 
     private var currentAutoPlayDuration: Double {
