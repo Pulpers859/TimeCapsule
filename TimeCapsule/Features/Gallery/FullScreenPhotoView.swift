@@ -9,6 +9,7 @@ struct FullScreenPhotoView: View {
     let asset: PHAsset
     let allAssets: [PHAsset]
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var currentIndex: Int
     @State private var showChrome = true
     @State private var visibleAssets: [PHAsset]
@@ -168,10 +169,13 @@ struct FullScreenPhotoView: View {
                                 .disabled(isDeleting || isPreparingShare)
                             }
                         }
+                        .padding(.horizontal, 14)
 
+                        // Deliberately outside the horizontal padding: the
+                        // caption's band has to reach both screen edges so its
+                        // only visible boundaries are the two feathered ones.
                         memoryCaption
                     }
-                    .padding(.horizontal, 14)
                     .padding(.top, 6)
 
                     Spacer()
@@ -321,18 +325,28 @@ struct FullScreenPhotoView: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.9)
 
+                // Was .white.opacity(0.75), which was its own defect: partial
+                // white composites toward the background, so over a blown-out
+                // sky the text was rendering at 252 against 245 — it was not
+                // merely hard to read, it was becoming the photo. Size and
+                // weight carry the hierarchy instead.
                 Text(captionDetail(for: date))
                     .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.75))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            // The scrim alone is thin this far down the screen, so the text
-            // carries its own contrast for bright photos.
-            .shadow(color: .black.opacity(0.55), radius: 3, y: 1)
+            // Edge definition only. A blurred shadow is a low-pass effect, so it
+            // helps against smooth backgrounds like sky and does nothing against
+            // foliage, whose detail sits at the same spatial frequency as the
+            // letter strokes. The band below is what makes this readable; this
+            // just keeps the edges crisp against whatever survives it.
+            .shadow(color: .black.opacity(0.7), radius: 1.2, y: 0.5)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity)
+            .background(captionScrim)
             .animation(.spring(response: 0.3, dampingFraction: 0.85), value: locationName)
             // Nothing here is tappable, and it sits directly over the pager. Left
             // hit-testable it would swallow both the swipe to the next memory and
@@ -341,6 +355,42 @@ struct FullScreenPhotoView: View {
             .allowsHitTesting(false)
             .accessibilityElement(children: .combine)
         }
+    }
+
+    /// The one thing that actually guarantees the caption is readable.
+    ///
+    /// The top scrim does not reach it: that gradient is 140pt measured from the
+    /// physical top of the screen, and with the safe area, the button row and
+    /// the spacing above it the caption starts around 117pt — where 0.38 alpha
+    /// has decayed to about 0.06 — and its second line falls past 140pt
+    /// entirely. So the caption had no background at all.
+    ///
+    /// Darkening is what fixes that, and it has to be sized against the
+    /// brightest pixel a photo can put here rather than the average one: 0.58
+    /// black holds even a blown-out white sky to roughly 5:1 for both lines,
+    /// which is a bound that holds for any image rather than a bet on most of
+    /// them. It reaches both screen edges and feathers top and bottom, so there
+    /// is no rectangle and no corner radius anywhere — it reads as light falling
+    /// off, not as a panel laid on the photograph. Over a dark or letterboxed
+    /// photo it is invisible, because black over black changes nothing.
+    private var captionScrim: some View {
+        Group {
+            if reduceTransparency {
+                Color.black.opacity(0.85)
+            } else {
+                LinearGradient(
+                    stops: [
+                        .init(color: .black.opacity(0), location: 0),
+                        .init(color: .black.opacity(0.58), location: 0.3),
+                        .init(color: .black.opacity(0.58), location: 0.7),
+                        .init(color: .black.opacity(0), location: 1)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     /// The secondary caption line. It always says something, which is the point:

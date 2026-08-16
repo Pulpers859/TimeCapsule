@@ -25,9 +25,24 @@ actor PlaceNameLookup {
             return cached
         }
 
-        let name = await Self.reverseGeocodedPlaceName(for: coordinate)
-        resolved[key] = name
-        return name
+        switch await Self.reverseGeocodedPlaceName(for: coordinate) {
+        case .answered(let name):
+            // The service gave a verdict, including "there is no name here".
+            // That verdict will not change, so it is worth remembering.
+            resolved[key] = name
+            return name
+        case .unavailable:
+            // Offline, rate limited, or otherwise transient. Caching this would
+            // turn a bad minute into a permanent blank for that place: nothing
+            // ever retries a cached answer, so the memory would silently never
+            // show where it happened again.
+            return nil
+        }
+    }
+
+    private enum LookupOutcome {
+        case answered(String?)
+        case unavailable
     }
 
     private static func cacheKey(for coordinate: CLLocationCoordinate2D) -> String {
@@ -36,12 +51,16 @@ actor PlaceNameLookup {
 
     private static func reverseGeocodedPlaceName(
         for coordinate: CLLocationCoordinate2D
-    ) async -> String? {
+    ) async -> LookupOutcome {
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
+        guard let request = MKReverseGeocodingRequest(location: location) else { return .unavailable }
 
-        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
-            request.getMapItems { items, _ in
+        return await withCheckedContinuation { (continuation: CheckedContinuation<LookupOutcome, Never>) in
+            request.getMapItems { items, error in
+                guard error == nil else {
+                    continuation.resume(returning: .unavailable)
+                    return
+                }
                 let bestMatch = items?.first
                 // `cityWithContext` lets MapKit decide how much context the
                 // reader needs, instead of us stitching city/state/country
@@ -49,7 +68,7 @@ actor PlaceNameLookup {
                 // point-of-interest name is the fallback, which keeps somewhere
                 // like a national park readable when there is no city to name.
                 let name = bestMatch?.addressRepresentations?.cityWithContext ?? bestMatch?.name
-                continuation.resume(returning: name)
+                continuation.resume(returning: .answered(name))
             }
         }
     }
