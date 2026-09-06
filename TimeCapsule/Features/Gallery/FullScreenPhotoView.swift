@@ -1,6 +1,5 @@
 import SwiftUI
 import Photos
-import Combine
 import UIKit
 import CoreLocation
 import MapKit
@@ -20,14 +19,11 @@ struct FullScreenPhotoView: View {
     @State private var isCurrentAssetZoomed = false
     @State private var isVideoScrubbing = false
     @State private var locationName: String? = nil
-    @State private var isAutoPlaying = false
-    @State private var autoPlayProgress: Double = 0
     @State private var showInfo = false
     @State private var shareTask: Task<Void, Never>? = nil
     @State private var isDeleting = false
     @State private var isPreparingShare = false
     @State private var shareError: String? = nil
-    private let autoPlayTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     private var currentAssetIsVideo: Bool {
         visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .video
     }
@@ -36,14 +32,6 @@ struct FullScreenPhotoView: View {
     /// only when the memory on screen actually changed.
     private var currentAssetIdentifier: String? {
         visibleAssets.indices.contains(currentIndex) ? visibleAssets[currentIndex].localIdentifier : nil
-    }
-    /// A video already carries its own play/pause in the scrubber a few points
-    /// below this button, and two play glyphs that close together read as one
-    /// broken control. The slideshow button stands down while a video is on
-    /// screen — unless a slideshow is actually running, in which case the way to
-    /// stop it has to stay reachable.
-    private var showsSlideshowButton: Bool {
-        !currentAssetIsVideo || isAutoPlaying
     }
     private var isPlaybackBlocked: Bool {
         showDeleteConfirm || showInfo || shareItem != nil || isPreparingShare || isDeleting
@@ -124,21 +112,6 @@ struct FullScreenPhotoView: View {
                 .transition(.opacity)
             }
 
-            if isAutoPlaying && !visibleAssets.isEmpty {
-                VStack {
-                    StoryProgressBar(
-                        count: visibleAssets.count,
-                        currentIndex: currentIndex,
-                        progress: autoPlayProgress
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.top, 6)
-                    Spacer()
-                }
-                .allowsHitTesting(false)
-                .transition(.opacity)
-            }
-
             if showChrome && !visibleAssets.isEmpty {
                 VStack(spacing: 0) {
                     VStack(spacing: 8) {
@@ -180,17 +153,16 @@ struct FullScreenPhotoView: View {
 
                     Spacer()
 
+                    // The counter is centred on the screen rather than by
+                    // balancing two equal-width buttons against each other. The
+                    // row used to hold a trailing slideshow button whose only
+                    // remaining job, once it was hidden for videos, was to act
+                    // as counterweight so the capsule did not slide sideways.
+                    // With the button gone a plain HStack would park the counter
+                    // 27pt right of centre, so the centring is stated directly
+                    // instead of being an emergent property of the contents.
                     GlassEffectContainer(spacing: 14) {
-                        HStack(spacing: 10) {
-                            ChromeButton(
-                                systemImage: "info.circle",
-                                accessibilityLabel: "Memory info",
-                                action: { showInfo = true }
-                            )
-                            .disabled(isDeleting || isPreparingShare)
-
-                            Spacer(minLength: 6)
-
+                        ZStack {
                             Text("\(currentIndex + 1) of \(visibleAssets.count)")
                                 .font(.footnote.weight(.medium))
                                 .monospacedDigit()
@@ -199,24 +171,25 @@ struct FullScreenPhotoView: View {
                                 .frame(height: 44)
                                 .glassEffect(in: Capsule())
 
-                            Spacer(minLength: 6)
+                            HStack {
+                                ChromeButton(
+                                    systemImage: "info.circle",
+                                    accessibilityLabel: "Memory info",
+                                    action: { showInfo = true }
+                                )
+                                .disabled(isDeleting || isPreparingShare)
 
-                            // Faded out rather than removed from the layout: the
-                            // counter is centred by the two spacers, so taking
-                            // the button out of the hierarchy would slide the
-                            // counter sideways every time a swipe crossed
-                            // between a photo and a video.
-                            ChromeButton(
-                                systemImage: isAutoPlaying ? "stop.fill" : "play.rectangle.on.rectangle",
-                                accessibilityLabel: isAutoPlaying ? "Stop slideshow" : "Play slideshow",
-                                action: toggleAutoPlay
-                            )
-                            .disabled(isDeleting || isPreparingShare)
-                            .opacity(showsSlideshowButton ? 1 : 0)
-                            .allowsHitTesting(showsSlideshowButton)
-                            .accessibilityHidden(!showsSlideshowButton)
-                            .animation(.easeInOut(duration: 0.2), value: showsSlideshowButton)
+                                Spacer(minLength: 6)
+                            }
+                            // The button is layered above the counter so it
+                            // still wins hit testing if the capsule ever grows
+                            // into it at the largest text sizes. Declaration
+                            // order would then have VoiceOver read the counter
+                            // first, so the leading-to-trailing order is
+                            // restored explicitly rather than left to the ZStack.
+                            .accessibilitySortPriority(1)
                         }
+                        .frame(maxWidth: .infinity)
                     }
                     .padding(.horizontal, 14)
                     .padding(.bottom, currentAssetIsVideo ? 92 : 10)
@@ -276,23 +249,13 @@ struct FullScreenPhotoView: View {
         .onChange(of: currentIndex) { _, _ in
             isCurrentAssetZoomed = false
             isVideoScrubbing = false
-            autoPlayProgress = 0
             shareTask?.cancel()
             isPreparingShare = false
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             locationName = nil
         }
-        .onChange(of: isCurrentAssetZoomed) { _, zoomed in
-            if zoomed {
-                stopAutoPlay()
-            }
-        }
-        .onReceive(autoPlayTimer) { _ in
-            autoPlayTick()
-        }
         .onDisappear {
             shareTask?.cancel()
-            UIApplication.shared.isIdleTimerDisabled = false
         }
         .preferredColorScheme(.dark)
         .accessibilityAction(named: "Previous memory") {
@@ -409,64 +372,6 @@ struct FullScreenPhotoView: View {
         return "\(lead) · \(locationName)"
     }
 
-    private var currentAutoPlayDuration: Double {
-        guard visibleAssets.indices.contains(currentIndex) else { return 4 }
-        let asset = visibleAssets[currentIndex]
-        if asset.mediaType == .video {
-            return min(max(asset.duration, 3), 15)
-        }
-        return 4
-    }
-
-    private func toggleAutoPlay() {
-        if isAutoPlaying {
-            stopAutoPlay()
-        } else {
-            guard !visibleAssets.isEmpty else { return }
-            autoPlayProgress = 0
-            withAnimation {
-                // Starting from the end means "replay" — wrap to the beginning.
-                if currentIndex == visibleAssets.count - 1 && visibleAssets.count > 1 {
-                    currentIndex = 0
-                }
-                isAutoPlaying = true
-                showChrome = false
-            }
-            UIApplication.shared.isIdleTimerDisabled = true
-        }
-    }
-
-    private func stopAutoPlay() {
-        guard isAutoPlaying else { return }
-        withAnimation {
-            isAutoPlaying = false
-        }
-        autoPlayProgress = 0
-        UIApplication.shared.isIdleTimerDisabled = false
-    }
-
-    private func autoPlayTick() {
-        guard isAutoPlaying, !visibleAssets.isEmpty else { return }
-        // Hold while the user is mid-interaction or a sheet/dialog is up.
-        guard shareItem == nil, !showDeleteConfirm, !showInfo, !isPreparingShare, !isDeleting,
-              !isCurrentAssetZoomed, !isVideoScrubbing, dragOffset == 0 else { return }
-
-        autoPlayProgress += 0.05 / max(currentAutoPlayDuration, 0.5)
-        if autoPlayProgress >= 1 {
-            if currentIndex < visibleAssets.count - 1 {
-                autoPlayProgress = 0
-                withAnimation(.easeOut(duration: 0.25)) {
-                    currentIndex += 1
-                }
-            } else {
-                stopAutoPlay()
-                withAnimation {
-                    showChrome = true
-                }
-            }
-        }
-    }
-
     private func pageDragGesture(pageWidth: CGFloat, isEnabled: Bool) -> some Gesture {
         DragGesture(minimumDistance: isEnabled ? 15 : .greatestFiniteMagnitude)
             .onChanged { value in
@@ -575,7 +480,6 @@ struct FullScreenPhotoView: View {
         isDeleting = true
         shareTask?.cancel()
         isPreparingShare = false
-        stopAutoPlay()
 
         PHPhotoLibrary.shared().performChanges({
             PHAssetChangeRequest.deleteAssets([assetToDelete] as NSArray)
@@ -665,52 +569,6 @@ private struct ChromeButton: View {
         .buttonStyle(.glass)
         .buttonBorderShape(.circle)
         .accessibilityLabel(accessibilityLabel)
-    }
-}
-
-struct StoryProgressBar: View {
-    let count: Int
-    let currentIndex: Int
-    let progress: Double
-
-    /// Past this many items, segments get too thin to read — fall back to one
-    /// continuous bar instead of rendering sliver capsules.
-    private let maxSegments = 24
-
-    var body: some View {
-        if count > maxSegments {
-            bar(fraction: overallFraction)
-        } else {
-            HStack(spacing: 3) {
-                ForEach(0..<count, id: \.self) { index in
-                    bar(fraction: fraction(for: index))
-                }
-            }
-        }
-    }
-
-    private var overallFraction: Double {
-        guard count > 0 else { return 0 }
-        return (Double(currentIndex) + min(max(progress, 0), 1)) / Double(count)
-    }
-
-    private func fraction(for index: Int) -> Double {
-        if index < currentIndex { return 1 }
-        if index == currentIndex { return min(max(progress, 0), 1) }
-        return 0
-    }
-
-    private func bar(fraction: Double) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.3))
-                Capsule()
-                    .fill(.white)
-                    .frame(width: max(geo.size.width * fraction, 0))
-            }
-        }
-        .frame(height: 3)
     }
 }
 
