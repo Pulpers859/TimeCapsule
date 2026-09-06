@@ -157,7 +157,11 @@ nonisolated enum MemoryRecapExporter {
     // MARK: - Video writing
 
     private static func writeVideo(slideURLs: [URL], onProgress: (Double) -> Void) -> URL? {
-        let url = FileManager.default.temporaryDirectory
+        // Written into the shared export directory rather than loose in `tmp`
+        // so `sweepStaleShareExports()` can reclaim it. A recap is handed to
+        // the share sheet exactly like a single memory, so it leaks the same
+        // way if the app is killed while the sheet is open.
+        let url = shareExportDirectory()
             .appendingPathComponent("TimeCapsuleRecap-\(UUID().uuidString).mp4")
         try? FileManager.default.removeItem(at: url)
         var completed = false

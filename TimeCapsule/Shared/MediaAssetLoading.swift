@@ -247,7 +247,7 @@ func loadPlayer(from asset: PHAsset) async -> AVPlayer? {
 /// later. The previous code wrote loose files into `tmp` and relied entirely on
 /// `completionWithItemsHandler` to clean them up, which leaks whenever the app
 /// is killed while the share sheet is open.
-func shareExportDirectory() -> URL {
+nonisolated func shareExportDirectory() -> URL {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("TimeCapsuleShare", isDirectory: true)
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -258,7 +258,7 @@ func shareExportDirectory() -> URL {
 ///
 /// The grace period matters: a share extension may still be reading the file
 /// after the share sheet reports completion, so nothing recent is touched.
-func sweepStaleShareExports(olderThan age: TimeInterval = 600) {
+nonisolated func sweepStaleShareExports(olderThan age: TimeInterval = 600) {
     let directory = shareExportDirectory()
     guard let entries = try? FileManager.default.contentsOfDirectory(
         at: directory,

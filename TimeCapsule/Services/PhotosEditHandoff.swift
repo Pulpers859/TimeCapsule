@@ -19,7 +19,12 @@ import Photos
 ///
 /// Nothing here runs unless the user taps the button. The library is never
 /// mutated in the background.
-enum PhotosEditHandoff {
+///
+/// `nonisolated` on purpose, matching `MemoryRecapExporter`. This target
+/// builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so without it every
+/// synchronous PhotoKit call below — including the album walk in `contains` —
+/// would run on the main thread, and this album is designed to accumulate.
+nonisolated enum PhotosEditHandoff {
     /// User albums keep insertion order, so the most recently staged memory is
     /// always the last one in this album. That ordering is the whole trick, and
     /// it is why this is an album rather than the Favorites flag: Favorites is

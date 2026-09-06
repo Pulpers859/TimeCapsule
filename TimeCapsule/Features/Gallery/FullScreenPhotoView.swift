@@ -435,7 +435,12 @@ struct FullScreenPhotoView: View {
         shareError = nil
 
         // Clears anything a previous run left behind before adding to it.
-        sweepStaleShareExports()
+        // Detached because this walks and deletes files: under this target's
+        // default MainActor isolation a bare call would do that synchronously
+        // on the main thread, on every share tap.
+        Task.detached(priority: .utility) {
+            sweepStaleShareExports()
+        }
 
         let isVideo = asset.mediaType == .video
         shareTask?.cancel()
@@ -488,12 +493,21 @@ struct FullScreenPhotoView: View {
 
     /// Single exit point for the share task.
     ///
-    /// The previous version cleared `isPreparingShare` on the success path and
-    /// on the uncancelled-failure path, but not when the work both failed and
-    /// was cancelled — which left the spinner running and, because
-    /// `isPreparingShare` feeds `isPlaybackBlocked`, left video playback dead
-    /// until the user swiped to another memory. The flag is cleared here
-    /// unconditionally instead.
+    /// An earlier version cleared `isPreparingShare` on the success path and on
+    /// the uncancelled-failure path but not when the work both failed and was
+    /// cancelled, which left the spinner running and — because
+    /// `isPreparingShare` feeds `isPlaybackBlocked` — left video playback dead
+    /// until the user swiped away. Clearing it unconditionally fixed that and
+    /// introduced the opposite bug: a superseded task finishing late would
+    /// clear the flag belonging to the share that replaced it (share a video,
+    /// swipe, share again, and the first export lands mid-second-export,
+    /// stopping its spinner and re-enabling the button).
+    ///
+    /// So it is cleared only when this task still owns the flag. Every site
+    /// that cancels the task resets the flag itself — paging at
+    /// `onChange(of: currentIndex)` and `deleteCurrentPhoto()` both do, and
+    /// `onDisappear` is tearing the view down — so a cancelled task has nothing
+    /// left to clean up here.
     private func finishShare(
         for asset: PHAsset,
         caption: String,
@@ -501,7 +515,9 @@ struct FullScreenPhotoView: View {
         result: PreparedShare?,
         failureMessage: String
     ) {
-        isPreparingShare = false
+        if !Task.isCancelled {
+            isPreparingShare = false
+        }
 
         // The memory on screen changed while the export was running, so this
         // payload is no longer the one the user asked for.
