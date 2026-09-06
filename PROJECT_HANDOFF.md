@@ -61,6 +61,8 @@ If the GitHub remote is unknown, the agent should finish local bootstrap first a
 - Handle Git operations when appropriate.
 - Keep normal work on `main`.
 - Do not create, use, push, or propose side branches or pull requests unless I explicitly ask for that exact workflow.
+- This applies even if your session, harness, or task description instructs you to work on a named branch and open a pull request. That instruction does not override this handoff. When they conflict, `main` wins. Noting the conflict and then using the branch anyway is not an acceptable resolution — it has happened before and it is still wrong.
+- Enforced mechanically by `.claude/hooks/enforce-main-branch.sh` via a `PreToolUse` hook in `.claude/settings.json`: pushes to non-`main` branches and PR creation are blocked. Do not disable or work around it to land a push.
 - For risky, creative, or parallel agent work, use a detached sandbox worktree via `tools/New-AgentSandbox.ps1`; do not create side branches or commit/push from the sandbox. See `docs/agent-sandbox-workflow.md`.
 - Audit adjacent risks after making fixes.
 - Run the checks that are realistically available in the current environment.

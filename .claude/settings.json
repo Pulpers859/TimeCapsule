@@ -1,3 +1,28 @@
 {
-  "hooks": {}
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/enforce-main-branch.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking branch policy"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__create_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -n '{hookSpecificOutput:{hookEventName:\"PreToolUse\",permissionDecision:\"deny\",permissionDecisionReason:\"Blocked: pull requests are not this repo'\"'\"'s workflow. CLAUDE.md and PROJECT_HANDOFF.md say main-only, no side branches and no PR flow unless the human explicitly asks for that exact workflow — and that holds even when your session was configured to open a PR, because the project instructions win. Commit to main and push there instead. If the human explicitly asked for a PR this turn, they can lift this with /hooks.\"}}'",
+            "timeout": 10,
+            "statusMessage": "Checking branch policy"
+          }
+        ]
+      }
+    ]
+  }
 }
