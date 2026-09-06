@@ -126,15 +126,15 @@ private nonisolated final class PlayerRequestState: @unchecked Sendable {
     }
 }
 
-private nonisolated final class VideoExportRequestState: @unchecked Sendable {
+/// Cancellation plumbing for the `requestExportSession` round trip, in the
+/// same shape as the image and player request states above.
+private nonisolated final class VideoExportSessionState: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<URL?, Never>?
-    private var requestID: PHAssetResourceDataRequestID?
-    private var destinationURL: URL?
-    private var fileHandle: FileHandle?
+    private var continuation: CheckedContinuation<AVAssetExportSession?, Never>?
+    private var requestID = PHInvalidImageRequestID
     private var didFinish = false
 
-    func setContinuation(_ continuation: CheckedContinuation<URL?, Never>) -> Bool {
+    func setContinuation(_ continuation: CheckedContinuation<AVAssetExportSession?, Never>) -> Bool {
         lock.lock()
         if didFinish {
             lock.unlock()
@@ -146,70 +146,29 @@ private nonisolated final class VideoExportRequestState: @unchecked Sendable {
         return true
     }
 
-    func setRequestID(_ requestID: PHAssetResourceDataRequestID) {
+    func setRequestID(_ requestID: PHImageRequestID) {
         lock.lock()
         if didFinish {
             lock.unlock()
-            PHAssetResourceManager.default().cancelDataRequest(requestID)
+            PHImageManager.default().cancelImageRequest(requestID)
             return
         }
         self.requestID = requestID
         lock.unlock()
     }
 
-    func openFile(at destinationURL: URL) -> Bool {
+    func resume(returning value: AVAssetExportSession?) {
         lock.lock()
         guard !didFinish else {
             lock.unlock()
-            return false
+            return
         }
-
-        try? FileManager.default.removeItem(at: destinationURL)
-        guard FileManager.default.createFile(atPath: destinationURL.path, contents: nil),
-              let fileHandle = try? FileHandle(forWritingTo: destinationURL) else {
-            finishLocked(returning: nil)
-            return false
-        }
-
-        self.destinationURL = destinationURL
-        self.fileHandle = fileHandle
+        didFinish = true
+        let continuation = continuation
+        self.continuation = nil
         lock.unlock()
-        return true
-    }
 
-    func append(_ data: Data) {
-        lock.lock()
-        guard !didFinish, let fileHandle else {
-            lock.unlock()
-            return
-        }
-
-        do {
-            try fileHandle.write(contentsOf: data)
-            lock.unlock()
-        } catch {
-            finishLocked(returning: nil)
-        }
-    }
-
-    func finish(error: Error?) {
-        lock.lock()
-        guard !didFinish else {
-            lock.unlock()
-            return
-        }
-
-        finishLocked(returning: error == nil ? destinationURL : nil)
-    }
-
-    func finishWithoutResult() {
-        lock.lock()
-        guard !didFinish else {
-            lock.unlock()
-            return
-        }
-
-        finishLocked(returning: nil)
+        continuation?.resume(returning: value)
     }
 
     func cancel() {
@@ -221,38 +180,13 @@ private nonisolated final class VideoExportRequestState: @unchecked Sendable {
         didFinish = true
         let requestID = requestID
         let continuation = continuation
-        let destinationURL = destinationURL
-        let fileHandle = fileHandle
         self.continuation = nil
-        self.fileHandle = nil
-        self.destinationURL = nil
         lock.unlock()
 
-        if let requestID {
-            PHAssetResourceManager.default().cancelDataRequest(requestID)
-        }
-        try? fileHandle?.close()
-        if let destinationURL {
-            try? FileManager.default.removeItem(at: destinationURL)
+        if requestID != PHInvalidImageRequestID {
+            PHImageManager.default().cancelImageRequest(requestID)
         }
         continuation?.resume(returning: nil)
-    }
-
-    private func finishLocked(returning value: URL?) {
-        didFinish = true
-        let continuation = continuation
-        let fileHandle = fileHandle
-        let destinationURL = destinationURL
-        self.continuation = nil
-        self.fileHandle = nil
-        self.destinationURL = nil
-        lock.unlock()
-
-        try? fileHandle?.close()
-        if value == nil, let destinationURL {
-            try? FileManager.default.removeItem(at: destinationURL)
-        }
-        continuation?.resume(returning: value)
     }
 }
 
@@ -307,84 +241,115 @@ func loadPlayer(from asset: PHAsset) async -> AVPlayer? {
     })
 }
 
+/// Directory that every share export is written into.
+///
+/// Shares get their own subdirectory so stale ones can be found and swept
+/// later. The previous code wrote loose files into `tmp` and relied entirely on
+/// `completionWithItemsHandler` to clean them up, which leaks whenever the app
+/// is killed while the share sheet is open.
+func shareExportDirectory() -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("TimeCapsuleShare", isDirectory: true)
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+}
+
+/// Deletes share exports left behind by a previous run.
+///
+/// The grace period matters: a share extension may still be reading the file
+/// after the share sheet reports completion, so nothing recent is touched.
+func sweepStaleShareExports(olderThan age: TimeInterval = 600) {
+    let directory = shareExportDirectory()
+    guard let entries = try? FileManager.default.contentsOfDirectory(
+        at: directory,
+        includingPropertiesForKeys: [.contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+    ) else { return }
+
+    let cutoff = Date().addingTimeInterval(-age)
+    for entry in entries {
+        let modified = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate
+        if let modified, modified > cutoff { continue }
+        try? FileManager.default.removeItem(at: entry)
+    }
+}
+
+/// Exports a video to a temporary file suitable for handing to another app.
+///
+/// Two deliberate choices here, both of which are corrections:
+///
+/// This asks Photos for an export session rather than downloading the raw
+/// `PHAssetResource`. The resource list holds the *original* recording, so an
+/// edited video — trimmed, filtered, slowed — was previously shared as its
+/// unedited original while Photos.app shares the rendered version the user is
+/// actually looking at. `version = .current` asks for that rendered version.
+///
+/// The output is `.mp4` rather than `.mov`. `AVAssetExportPresetHighestQuality`
+/// is documented to produce H.264 video and AAC audio in either container, so
+/// this costs nothing, and `.mp4` is the container third-party share extensions
+/// are most reliably exercised against.
+///
+/// Note there is no file-protection attribute. A file whose entire purpose is
+/// to be handed to another process gains no privacy from one, and marking it
+/// `.complete` makes it unreadable if the screen locks while the receiving app
+/// is still uploading.
 func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
-    let state = VideoExportRequestState()
-    guard let sourceURL = await withTaskCancellationHandler(operation: {
-        await exportVideoToTemporaryFile(from: asset, state: state)
+    let state = VideoExportSessionState()
+    guard let exporter = await withTaskCancellationHandler(operation: {
+        await videoExportSession(for: asset, state: state)
     }, onCancel: {
         state.cancel()
     }) else { return nil }
-    defer { try? FileManager.default.removeItem(at: sourceURL) }
-    guard !Task.isCancelled else { return nil }
-    return await metadataFilteredVideoCopy(from: sourceURL)
-}
 
-private nonisolated func metadataFilteredVideoCopy(from sourceURL: URL) async -> URL? {
-    let destinationURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("TimeCapsuleShare-\(UUID().uuidString).mov")
+    guard !Task.isCancelled else { return nil }
+
+    let usesMP4 = exporter.supportedFileTypes.contains(.mp4)
+    let fileType: AVFileType = usesMP4 ? .mp4 : .mov
+    let destinationURL = shareExportDirectory()
+        .appendingPathComponent("TimeCapsuleShare-\(UUID().uuidString).\(usesMP4 ? "mp4" : "mov")")
     try? FileManager.default.removeItem(at: destinationURL)
 
-    let sourceAsset = AVURLAsset(url: sourceURL)
-    guard let exporter = AVAssetExportSession(asset: sourceAsset, presetName: AVAssetExportPresetHighestQuality) else {
-        return nil
-    }
-    exporter.metadata = []
+    // The documented, Apple-maintained privacy scrub: it drops location and
+    // identifying metadata from the shared copy. Deliberately not paired with
+    // `metadata = []`, which is redundant with the filter and interacts with it
+    // in ways Apple does not document.
     exporter.metadataItemFilter = AVMetadataItemFilter.forSharing()
+    exporter.shouldOptimizeForNetworkUse = true
 
     do {
-        try await exporter.export(to: destinationURL, as: .mov)
-        try? FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.complete],
-            ofItemAtPath: destinationURL.path
-        )
-        return destinationURL
+        try await exporter.export(to: destinationURL, as: fileType)
     } catch {
         try? FileManager.default.removeItem(at: destinationURL)
         return nil
     }
+
+    guard !Task.isCancelled else {
+        try? FileManager.default.removeItem(at: destinationURL)
+        return nil
+    }
+    return destinationURL
 }
 
-private nonisolated func exportVideoToTemporaryFile(
-    from asset: PHAsset,
-    state: VideoExportRequestState
-) async -> URL? {
-    await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
+private nonisolated func videoExportSession(
+    for asset: PHAsset,
+    state: VideoExportSessionState
+) async -> AVAssetExportSession? {
+    await withCheckedContinuation { (continuation: CheckedContinuation<AVAssetExportSession?, Never>) in
         guard state.setContinuation(continuation) else { return }
 
-        guard let resource = preferredVideoResource(for: asset) else {
-            state.finishWithoutResult()
-            return
-        }
-
-        let destinationURL = temporaryVideoURL(for: resource)
-        guard state.openFile(at: destinationURL) else { return }
-
-        let options = PHAssetResourceRequestOptions()
+        let options = PHVideoRequestOptions()
         options.isNetworkAccessAllowed = true
+        options.deliveryMode = .highQualityFormat
+        options.version = .current
 
-        let requestID = PHAssetResourceManager.default().requestData(
-            for: resource,
+        let requestID = PHImageManager.default().requestExportSession(
+            forVideo: asset,
             options: options,
-            dataReceivedHandler: { data in
-                state.append(data)
-            },
-            completionHandler: { error in
-                state.finish(error: error)
-            }
-        )
+            exportPreset: AVAssetExportPresetHighestQuality
+        ) { exportSession, _ in
+            state.resume(returning: exportSession)
+        }
         state.setRequestID(requestID)
     }
-}
-
-private nonisolated func preferredVideoResource(for asset: PHAsset) -> PHAssetResource? {
-    let resources = PHAssetResource.assetResources(for: asset)
-    return resources.first { resource in
-        resource.type == .video || resource.type == .fullSizeVideo
-    }
-}
-
-private nonisolated func temporaryVideoURL(for resource: PHAssetResource) -> URL {
-    let ext = (resource.originalFilename as NSString).pathExtension
-    let filename = ext.isEmpty ? "\(UUID().uuidString).mov" : "\(UUID().uuidString).\(ext)"
-    return FileManager.default.temporaryDirectory.appendingPathComponent(filename)
 }

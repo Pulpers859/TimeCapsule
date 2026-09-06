@@ -265,9 +265,11 @@ nonisolated enum MemoryRecapExporter {
             }
         }
         completed = writer.status == .completed
-        if completed {
-            try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
-        }
+        // Deliberately no file-protection attribute. This file exists only to
+        // be handed to another app through the share sheet, so protecting it
+        // buys no privacy, and marking it `.complete` makes it unreadable the
+        // moment the screen locks — including while the receiving app is still
+        // uploading it.
         return completed ? url : nil
     }
 

@@ -163,7 +163,7 @@ struct TimeCapsuleView: View {
                 pruneSelectionToVisibleItems()
             }
             .sheet(item: $recapShareItem) { item in
-                ShareSheet(items: item.items, cleanupURLs: item.cleanupURLs)
+                ShareSheet(source: item.source, cleanupURLs: item.cleanupURLs)
             }
             .alert("Couldn't Delete", isPresented: deleteErrorBinding) {
                 Button("OK", role: .cancel) {}
@@ -216,7 +216,10 @@ struct TimeCapsuleView: View {
                 recapProgress = nil
                 recapTask = nil
                 if let url {
-                    recapShareItem = ShareItem(items: [url], cleanupURLs: [url])
+                    recapShareItem = ShareItem(
+                        source: MemoryShareItemSource(item: url, caption: title, poster: nil),
+                        cleanupURLs: [url]
+                    )
                 } else {
                     recapError = "Couldn't create the recap video. Please try again."
                 }

@@ -2,7 +2,9 @@ import SwiftUI
 import Photos
 import UIKit
 import CoreLocation
+import LinkPresentation
 import MapKit
+import UniformTypeIdentifiers
 
 struct FullScreenPhotoView: View {
     let asset: PHAsset
@@ -207,7 +209,7 @@ struct FullScreenPhotoView: View {
             Text("This moves the item to Recently Deleted in Photos, where it can still be recovered for a limited time.")
         }
         .sheet(item: $shareItem) { item in
-            ShareSheet(items: item.items, cleanupURLs: item.cleanupURLs)
+            ShareSheet(source: item.source, cleanupURLs: item.cleanupURLs)
         }
         .alert("Couldn't Delete", isPresented: deleteErrorBinding) {
             Button("OK", role: .cancel) {}
@@ -414,6 +416,17 @@ struct FullScreenPhotoView: View {
             }
     }
 
+    /// Builds the share payload.
+    ///
+    /// The memory is handed over as a *single* attachment. It used to go out as
+    /// two — the media plus a caption string — and a share sheet given two
+    /// attachments hands both to the receiving extension, which then has to
+    /// decide which one it is being asked to post. Extensions that expect a
+    /// single movie can pick the wrong one and present an empty composer, which
+    /// is what Snapchat does with a video from here. The caption survives as
+    /// metadata on the item rather than as a second attachment: it becomes the
+    /// mail subject and the title shown in the share sheet header, neither of
+    /// which is an attachment an extension has to disambiguate.
     private func shareCurrentPhoto() {
         guard currentIndex < visibleAssets.count, !isPreparingShare, !isDeleting else { return }
         let asset = visibleAssets[currentIndex]
@@ -421,49 +434,104 @@ struct FullScreenPhotoView: View {
         isPreparingShare = true
         shareError = nil
 
-        if asset.mediaType == .video {
-            shareTask?.cancel()
-            shareTask = Task {
-                if let videoURL = await exportVideoToTemporaryFile(from: asset) {
-                    await MainActor.run {
-                        guard !Task.isCancelled,
-                              visibleAssets.indices.contains(currentIndex),
-                              visibleAssets[currentIndex].localIdentifier == asset.localIdentifier else {
-                            try? FileManager.default.removeItem(at: videoURL)
-                            return
-                        }
-                        shareItem = ShareItem(items: [videoURL, caption], cleanupURLs: [videoURL])
-                        isPreparingShare = false
-                    }
-                } else if !Task.isCancelled {
-                    await MainActor.run {
-                        isPreparingShare = false
-                        shareError = "The video could not be downloaded or exported. Check its iCloud availability and try again."
-                    }
+        // Clears anything a previous run left behind before adding to it.
+        sweepStaleShareExports()
+
+        let isVideo = asset.mediaType == .video
+        shareTask?.cancel()
+        shareTask = Task {
+            if isVideo {
+                // A video has no image to stand in for it in the sheet header,
+                // so a poster frame is fetched alongside the export. It runs
+                // concurrently because it is decorative — a failure here must
+                // not fail the share, and it must not delay it either.
+                async let poster = loadImage(
+                    from: asset,
+                    targetSize: CGSize(width: 400, height: 400),
+                    contentMode: .aspectFit
+                )
+                let videoURL = await exportVideoToTemporaryFile(from: asset)
+                let thumbnail = await poster
+                await MainActor.run {
+                    finishShare(
+                        for: asset,
+                        caption: caption,
+                        poster: thumbnail,
+                        result: videoURL.map { .video($0) },
+                        failureMessage: "The video could not be downloaded or exported. Check its iCloud availability and try again."
+                    )
                 }
-            }
-        } else {
-            shareTask?.cancel()
-            shareTask = Task {
-                if let image = await loadImage(
+            } else {
+                let image = await loadImage(
                     from: asset,
                     targetSize: CGSize(width: 1290, height: 2796),
                     contentMode: .aspectFit
-                ) {
-                    await MainActor.run {
-                        guard !Task.isCancelled,
-                              visibleAssets.indices.contains(currentIndex),
-                              visibleAssets[currentIndex].localIdentifier == asset.localIdentifier else { return }
-                        shareItem = ShareItem(items: [image, caption])
-                        isPreparingShare = false
-                    }
-                } else if !Task.isCancelled {
-                    await MainActor.run {
-                        isPreparingShare = false
-                        shareError = "The photo could not be downloaded. Check its iCloud availability and try again."
-                    }
+                )
+                await MainActor.run {
+                    finishShare(
+                        for: asset,
+                        caption: caption,
+                        // A photo is its own preview — no second fetch.
+                        poster: image,
+                        result: image.map { .photo($0) },
+                        failureMessage: "The photo could not be downloaded. Check its iCloud availability and try again."
+                    )
                 }
             }
+        }
+    }
+
+    private enum PreparedShare {
+        case video(URL)
+        case photo(UIImage)
+    }
+
+    /// Single exit point for the share task.
+    ///
+    /// The previous version cleared `isPreparingShare` on the success path and
+    /// on the uncancelled-failure path, but not when the work both failed and
+    /// was cancelled — which left the spinner running and, because
+    /// `isPreparingShare` feeds `isPlaybackBlocked`, left video playback dead
+    /// until the user swiped to another memory. The flag is cleared here
+    /// unconditionally instead.
+    private func finishShare(
+        for asset: PHAsset,
+        caption: String,
+        poster: UIImage?,
+        result: PreparedShare?,
+        failureMessage: String
+    ) {
+        isPreparingShare = false
+
+        // The memory on screen changed while the export was running, so this
+        // payload is no longer the one the user asked for.
+        let stillCurrent = visibleAssets.indices.contains(currentIndex)
+            && visibleAssets[currentIndex].localIdentifier == asset.localIdentifier
+
+        guard let result else {
+            if stillCurrent, !Task.isCancelled {
+                shareError = failureMessage
+            }
+            return
+        }
+
+        guard stillCurrent, !Task.isCancelled else {
+            if case .video(let url) = result {
+                try? FileManager.default.removeItem(at: url)
+            }
+            return
+        }
+
+        switch result {
+        case .video(let url):
+            shareItem = ShareItem(
+                source: MemoryShareItemSource(item: url, caption: caption, poster: poster),
+                cleanupURLs: [url]
+            )
+        case .photo(let image):
+            shareItem = ShareItem(
+                source: MemoryShareItemSource(item: image, caption: caption, poster: poster)
+            )
         }
     }
 
@@ -576,6 +644,14 @@ struct MemoryInfoSheet: View {
     let asset: PHAsset
     let locationName: String?
     @State private var mapPosition: MapCameraPosition
+    @State private var handoff: HandoffState = .idle
+
+    private enum HandoffState {
+        case idle
+        case working
+        case done(PhotosEditHandoff.Outcome)
+        case failed(String)
+    }
 
     init(asset: PHAsset, locationName: String?) {
         self.asset = asset
@@ -642,6 +718,8 @@ struct MemoryInfoSheet: View {
                 }
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
+                editHandoffSection
+
                 if let coordinate = asset.location?.coordinate {
                     Map(position: $mapPosition, interactionModes: [.zoom, .pan]) {
                         Marker("Memory Location", coordinate: coordinate)
@@ -659,6 +737,118 @@ struct MemoryInfoSheet: View {
             .padding(20)
         }
         .background(Color(.systemGroupedBackground))
+    }
+
+    /// "Take me to this one in Photos so I can edit it."
+    ///
+    /// iOS has no public way to open the Photos app at a specific asset, so
+    /// this does the next best thing and makes the memory trivial to find once
+    /// the user gets there — see `PhotosEditHandoff` for why the direct route
+    /// does not exist. The copy is deliberately explicit about where to look,
+    /// because a vague confirmation would leave the user hunting anyway.
+    @ViewBuilder
+    private var editHandoffSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: stageForEditing) {
+                HStack(spacing: 12) {
+                    Image(systemName: "photo.badge.plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 28, alignment: .center)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Send to Photos for Editing")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text("Files it in an album so you can find it right away")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .multilineTextAlignment(.leading)
+
+                    Spacer(minLength: 12)
+
+                    if isWorking {
+                        ProgressView()
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isWorking)
+            .background(
+                Color(.secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
+
+            if let outcome = handoffResult {
+                Label {
+                    Text(outcome)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.accentColor)
+                }
+                .font(.footnote)
+                .transition(.opacity)
+            }
+
+            if case .failed(let message) = handoff {
+                Label {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                .font(.footnote)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: isWorking)
+    }
+
+    private var isWorking: Bool {
+        if case .working = handoff { return true }
+        return false
+    }
+
+    private var handoffResult: String? {
+        guard case .done(let outcome) = handoff else { return nil }
+        switch outcome {
+        case .addedToAlbum:
+            return "Added to your \(PhotosEditHandoff.albumTitle) album. In Photos, open Albums → \(PhotosEditHandoff.albumTitle) — it's the last one in there."
+        case .alreadyInAlbum:
+            return "Already in your \(PhotosEditHandoff.albumTitle) album. In Photos, open Albums → \(PhotosEditHandoff.albumTitle) to edit it."
+        case .markedFavorite:
+            return "Marked as a Favorite. Time Capsule only has limited access to your library, so it can't create an album — look in Albums → Favorites, filed under this memory's original date."
+        }
+    }
+
+    private func stageForEditing() {
+        guard !isWorking else { return }
+        handoff = .working
+        let asset = asset
+        Task {
+            do {
+                let outcome = try await PhotosEditHandoff.stage(asset)
+                await MainActor.run { handoff = .done(outcome) }
+            } catch {
+                await MainActor.run {
+                    handoff = .failed(
+                        error.localizedDescription.isEmpty
+                            ? "That memory could not be sent to Photos."
+                            : error.localizedDescription
+                    )
+                }
+            }
+        }
     }
 
     private func infoRow(label: String, value: String, icon: String) -> some View {
@@ -686,26 +876,106 @@ struct MemoryInfoSheet: View {
     }
 }
 
+/// Carries a memory into the share sheet as one attachment.
+///
+/// `UIActivityViewController` turns each element of `activityItems` into a
+/// separate attachment on the extension item it hands to the receiving app.
+/// Passing media plus a caption string therefore produced a two-attachment
+/// payload, and an extension written to accept a single movie has to guess
+/// which of the two it is meant to post. Snapchat guesses wrong and shows an
+/// empty composer.
+///
+/// So the caption stops being an attachment. `subjectForActivityType` puts it
+/// in a mail subject line, and `activityViewControllerLinkMetadata` puts it in
+/// the sheet header alongside a poster frame — replacing the raw temporary
+/// filename the sheet showed before. Neither is something an extension has to
+/// disambiguate.
+final class MemoryShareItemSource: NSObject, UIActivityItemSource {
+    private let item: Any
+    private let caption: String
+    private let poster: UIImage?
+
+    init(item: Any, caption: String, poster: UIImage?) {
+        self.item = item
+        self.caption = caption
+        self.poster = poster
+    }
+
+    /// The real item, not a stand-in. This is called on the main thread before
+    /// the sheet appears, so it has to be something already in hand — it is,
+    /// because the export finished before the sheet was presented.
+    func activityViewControllerPlaceholderItem(_ controller: UIActivityViewController) -> Any {
+        item
+    }
+
+    func activityViewController(
+        _ controller: UIActivityViewController,
+        itemForActivityType activityType: UIActivity.ActivityType?
+    ) -> Any? {
+        item
+    }
+
+    /// Declares the type explicitly rather than letting the sheet infer it from
+    /// the path extension, so an extension asking for a specific movie type
+    /// gets a definite answer.
+    func activityViewController(
+        _ controller: UIActivityViewController,
+        dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?
+    ) -> String {
+        if let url = item as? URL {
+            return UTType(filenameExtension: url.pathExtension)?.identifier
+                ?? UTType.movie.identifier
+        }
+        return UTType.image.identifier
+    }
+
+    func activityViewController(
+        _ controller: UIActivityViewController,
+        subjectForActivityType activityType: UIActivity.ActivityType?
+    ) -> String {
+        caption
+    }
+
+    func activityViewControllerLinkMetadata(
+        _ controller: UIActivityViewController
+    ) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = caption
+        if let poster {
+            metadata.imageProvider = NSItemProvider(object: poster)
+        }
+        return metadata
+    }
+}
+
 struct ShareItem: Identifiable {
     let id = UUID()
-    let items: [Any]
+    let source: MemoryShareItemSource
     let cleanupURLs: [URL]
 
-    init(items: [Any], cleanupURLs: [URL] = []) {
-        self.items = items
+    init(source: MemoryShareItemSource, cleanupURLs: [URL] = []) {
+        self.source = source
         self.cleanupURLs = cleanupURLs
     }
 }
 
 struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
+    let source: MemoryShareItemSource
     let cleanupURLs: [URL]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: [source], applicationActivities: nil)
         controller.completionWithItemsHandler = { _, _, _, _ in
-            for url in cleanupURLs {
-                try? FileManager.default.removeItem(at: url)
+            // Deleted after a grace period rather than immediately. A share
+            // extension can report completion and still be reading the file —
+            // some finish the upload in their containing app — and deleting it
+            // out from under them fails the send. Anything this misses is
+            // caught by the sweep at the start of the next share.
+            let urls = cleanupURLs
+            DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+                for url in urls {
+                    try? FileManager.default.removeItem(at: url)
+                }
             }
         }
         return controller

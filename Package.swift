@@ -17,7 +17,8 @@ let package = Package(
             exclude: [
                 "MemoryLibrary.swift",
                 "MemoryRecapExporter.swift",
-                "NotificationManager.swift"
+                "NotificationManager.swift",
+                "PhotosEditHandoff.swift"
             ],
             sources: [
                 "GalleryStateLogic.swift",
