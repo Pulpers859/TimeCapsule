@@ -15,8 +15,37 @@ struct SettingsView: View {
     @AppStorage(MemoryWindow.dayStartHourKey)
     private var dayStartHour = MemoryWindow.defaultDayStartHour
 
+    @EnvironmentObject private var purchaseStore: PurchaseStore
+
     @State private var notificationTime = Date()
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
+    @State private var showPaywall = false
+
+    /// Writes through to `NotificationManager` only when the value actually
+    /// differs from what is stored.
+    ///
+    /// The picker used to be driven by `.onChange(of: notificationTime)`, but
+    /// `notificationTime` is seeded from storage in `.task`, so simply *opening*
+    /// Settings changed it (from "now" to the stored time) and triggered a full
+    /// reschedule — the most expensive path in the app — even if the user only
+    /// came to read the Good to Know section. Worse, on the spring-forward DST
+    /// day `reminderDate` can fall back to "now", so that spurious write
+    /// silently replaced the user's chosen reminder time with whatever time
+    /// they happened to open Settings.
+    ///
+    /// A binding only fires on user interaction, so the seeding assignment no
+    /// longer reaches the scheduler at all.
+    private var notificationTimeBinding: Binding<Date> {
+        Binding(
+            get: { notificationTime },
+            set: { newValue in
+                notificationTime = newValue
+                let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+                guard components.hour != notificationHour || components.minute != notificationMinute else { return }
+                NotificationManager.shared.updatePreferences(enabled: notificationsEnabled, notifyAt: newValue)
+            }
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -28,33 +57,51 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Picker(selection: $memoryDayWindow) {
-                        Text("Exact day").tag(0)
-                        Text("±1 day").tag(1)
-                        Text("±3 days").tag(3)
-                    } label: {
-                        SettingsRowLabel(
+                    if purchaseStore.isUnlocked {
+                        Picker(selection: $memoryDayWindow) {
+                            Text("Exact day").tag(0)
+                            Text("±1 day").tag(1)
+                            Text("±3 days").tag(3)
+                        } label: {
+                            SettingsRowLabel(
+                                symbol: "calendar",
+                                tint: .accentColor,
+                                title: "Memory range",
+                                subtitle: "How many nearby days to include"
+                            )
+                        }
+                    } else {
+                        ProLockedRow(
                             symbol: "calendar",
                             tint: .accentColor,
                             title: "Memory range",
-                            subtitle: "How many nearby days to include"
-                        )
+                            subtitle: "Include nearby days, not just the exact date"
+                        ) { showPaywall = true }
                     }
 
-                    Picker(selection: $dayStartHour) {
-                        Text("Midnight").tag(0)
-                        Text("2 AM").tag(2)
-                        Text("3 AM").tag(3)
-                        Text("4 AM").tag(4)
-                        Text("5 AM").tag(5)
-                        Text("6 AM").tag(6)
-                    } label: {
-                        SettingsRowLabel(
+                    if purchaseStore.isUnlocked {
+                        Picker(selection: $dayStartHour) {
+                            Text("Midnight").tag(0)
+                            Text("2 AM").tag(2)
+                            Text("3 AM").tag(3)
+                            Text("4 AM").tag(4)
+                            Text("5 AM").tag(5)
+                            Text("6 AM").tag(6)
+                        } label: {
+                            SettingsRowLabel(
+                                symbol: "moon.stars",
+                                tint: .indigo,
+                                title: "New day starts at",
+                                subtitle: "Keeps late nights with the evening before"
+                            )
+                        }
+                    } else {
+                        ProLockedRow(
                             symbol: "moon.stars",
                             tint: .indigo,
                             title: "New day starts at",
-                            subtitle: "Keeps late nights with the evening before"
-                        )
+                            subtitle: "Keep an evening that ran past midnight together"
+                        ) { showPaywall = true }
                     }
                 } header: {
                     Text("Memories")
@@ -74,7 +121,7 @@ struct SettingsView: View {
                         )
                     }
 
-                    DatePicker(selection: $notificationTime, displayedComponents: .hourAndMinute) {
+                    DatePicker(selection: notificationTimeBinding, displayedComponents: .hourAndMinute) {
                         SettingsRowLabel(
                             symbol: "clock",
                             tint: .teal,
@@ -131,6 +178,40 @@ struct SettingsView: View {
                 } header: {
                     Text("Good to Know")
                 }
+
+                Section {
+                    if purchaseStore.isUnlocked {
+                        SettingsRowLabel(
+                            symbol: "checkmark.seal.fill",
+                            tint: .green,
+                            title: "Time Capsule Pro",
+                            subtitle: "Unlocked. Thank you."
+                        )
+                    } else {
+                        Button {
+                            showPaywall = true
+                        } label: {
+                            SettingsRowLabel(
+                                symbol: "sparkles",
+                                tint: .accentColor,
+                                title: "Time Capsule Pro",
+                                subtitle: "Recap videos and a wider memory range"
+                            )
+                        }
+                        // App Review requires a visible restore control for a
+                        // non-consumable, reachable without buying anything.
+                        Button("Restore Purchase") {
+                            Task { await purchaseStore.restore() }
+                        }
+                    }
+                } header: {
+                    Text("Upgrade")
+                }
+            }
+            .sheet(isPresented: $showPaywall) {
+                // Passed explicitly rather than relying on the sheet inheriting
+                // it: a missing EnvironmentObject is a crash, not a warning.
+                PaywallView().environmentObject(purchaseStore)
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -148,9 +229,6 @@ struct SettingsView: View {
         .onChange(of: notificationsEnabled) { _, newValue in
             NotificationManager.shared.updatePreferences(enabled: newValue, notifyAt: notificationTime)
             Task { await loadNotificationSettings() }
-        }
-        .onChange(of: notificationTime) { _, newValue in
-            NotificationManager.shared.updatePreferences(enabled: notificationsEnabled, notifyAt: newValue)
         }
         .onChange(of: memoryDayWindow) { _, _ in
             // One post refreshes both surfaces: the model refetches the gallery
@@ -200,6 +278,42 @@ private struct SettingsBrandHeader: View {
 
 /// The tinted-tile row treatment the system Settings app uses. It costs almost
 /// nothing and does most of the work of making a form feel finished.
+/// A Pro setting shown to someone who has not bought the unlock.
+///
+/// Deliberately a row that opens the paywall rather than a disabled control:
+/// a greyed-out picker tells the user the feature is broken, while this tells
+/// them it exists and how to get it.
+private struct ProLockedRow: View {
+    let symbol: String
+    let tint: Color
+    let title: String
+    let subtitle: String
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack {
+                SettingsRowLabel(
+                    symbol: symbol,
+                    tint: tint,
+                    title: title,
+                    subtitle: subtitle
+                )
+                Spacer(minLength: 8)
+                Text("PRO")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule().fill(Color.accentColor.opacity(0.15))
+                    )
+            }
+        }
+        .accessibilityHint("Requires Time Capsule Pro")
+    }
+}
+
 private struct SettingsRowLabel: View {
     let symbol: String
     let tint: Color

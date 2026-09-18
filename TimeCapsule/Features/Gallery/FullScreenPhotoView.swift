@@ -258,6 +258,10 @@ struct FullScreenPhotoView: View {
         }
         .onDisappear {
             shareTask?.cancel()
+            // Leaving the viewer is the only point at which no video can be
+            // playing, so it is the right place to hand audio back to whatever
+            // the user was listening to before.
+            VideoAudioSession.end()
         }
         .preferredColorScheme(.dark)
         .accessibilityAction(named: "Previous memory") {

@@ -10,6 +10,9 @@ struct TimeCapsuleView: View {
     @State private var showDeleteConfirm = false
     @State private var deleteError: String? = nil
     @State private var isDeleting = false
+    @EnvironmentObject private var purchaseStore: PurchaseStore
+
+    @State private var showPaywall = false
     @State private var recapProgress: Double? = nil
     @State private var recapShareItem: ShareItem? = nil
     @State private var recapError: String? = nil
@@ -162,6 +165,9 @@ struct TimeCapsuleView: View {
             .onChange(of: visibleIdentifierSignature) { _, _ in
                 pruneSelectionToVisibleItems()
             }
+            .sheet(isPresented: $showPaywall) {
+                PaywallView().environmentObject(purchaseStore)
+            }
             .sheet(item: $recapShareItem) { item in
                 ShareSheet(source: item.source, cleanupURLs: item.cleanupURLs)
             }
@@ -189,6 +195,13 @@ struct TimeCapsuleView: View {
     }
 
     private func createRecap() {
+        // The recap is the Pro feature. Gated here rather than by hiding the
+        // button: someone who has not paid should still see that the feature
+        // exists, which is the whole point of a free install.
+        guard purchaseStore.isUnlocked else {
+            showPaywall = true
+            return
+        }
         guard recapProgress == nil else { return }
         let photos = allFilteredAssets.filter { $0.mediaType == .image }
         guard photos.count >= 2 else {

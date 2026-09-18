@@ -18,7 +18,8 @@ let package = Package(
                 "MemoryLibrary.swift",
                 "MemoryRecapExporter.swift",
                 "NotificationManager.swift",
-                "PhotosEditHandoff.swift"
+                "PhotosEditHandoff.swift",
+                "PurchaseStore.swift"
             ],
             sources: [
                 "GalleryStateLogic.swift",

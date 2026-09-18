@@ -1,0 +1,31 @@
+{
+  "identifier" : "A1B2C3D4",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : true,
+      "internalID" : "TCPRO0001",
+      "localizations" : [
+        {
+          "description" : "Recap videos, a widened memory range, and late-night grouping. A one-time purchase, not a subscription.",
+          "displayName" : "Time Capsule Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "timecapsule.pro.lifetime",
+      "referenceName" : "Time Capsule Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "TimeCapsule",
+    "_developerTeamID" : "R4L58G49L2",
+    "_lastSynchronizedDate" : 0
+  },
+  "subscriptionGroups" : [],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

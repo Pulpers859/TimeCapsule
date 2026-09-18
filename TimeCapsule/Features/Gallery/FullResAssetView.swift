@@ -131,6 +131,9 @@ struct FullResAssetView: View {
                         onDurationChange: { duration = $0 },
                         onPlayingChange: { isPlaying = $0 }
                     )
+                    if loadedPlayer != nil {
+                        VideoAudioSession.begin()
+                    }
                     loadedPlayer?.play()
                 } else {
                     releasePlayer()
@@ -159,6 +162,7 @@ struct FullResAssetView: View {
         .onChange(of: isActive) { _, active in
             if active {
                 if let player {
+                    VideoAudioSession.begin()
                     player.play()
                 }
             } else {
