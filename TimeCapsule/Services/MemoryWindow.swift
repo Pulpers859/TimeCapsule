@@ -95,19 +95,51 @@ nonisolated enum MemoryWindow {
         let day = calendar.component(.day, from: referenceDate)
         let startHour = dayStartHour
 
+        let window = clampedDayWindow(dayWindow)
+
         // Include hour so the window begins at dayStartHour, not midnight.
-        // The month/day equality check still correctly rejects non-existent
-        // dates (e.g. Feb 29 in non-leap years).
-        guard let anniversary = calendar.date(from: DateComponents(
+        // The month/day equality check rejects dates that do not exist in this
+        // year (Feb 29 outside a leap year); `Calendar` would otherwise roll
+        // them silently forward to Mar 1.
+        let exactAnniversary = calendar.date(from: DateComponents(
             year: anniversaryYear, month: month, day: day,
             hour: startHour, minute: 0, second: 0
-        )),
-              calendar.component(.month, from: anniversary) == month,
-              calendar.component(.day, from: anniversary) == day else {
-            return nil
+        )).flatMap { candidate -> Date? in
+            guard calendar.component(.month, from: candidate) == month,
+                  calendar.component(.day, from: candidate) == day else { return nil }
+            return candidate
         }
 
-        let window = clampedDayWindow(dayWindow)
+        let anniversary: Date
+        if let exactAnniversary {
+            anniversary = exactAnniversary
+        } else {
+            // Feb 29 viewed from a non-leap year.
+            //
+            // With no window there is genuinely no anniversary to show, so the
+            // year is correctly dropped. With a window there very much is: a
+            // user on Feb 29 with +/-3 days is asking for Feb 26 - Mar 3, a
+            // range that exists in *every* year. The old code checked existence
+            // before widening, so it discarded 15 of the last 20 years on the
+            // one day a user is most likely to go looking.
+            //
+            // Anchoring on the last real day of the month (Feb 28) skews the
+            // window one day early rather than losing the year entirely. That
+            // is the same convention a monthly reminder set for the 31st uses.
+            guard window > 0,
+                  let monthStart = calendar.date(from: DateComponents(
+                      year: anniversaryYear, month: month, day: 1,
+                      hour: startHour, minute: 0, second: 0
+                  )),
+                  let daysInMonth = calendar.range(of: .day, in: .month, for: monthStart)?.count,
+                  let clamped = calendar.date(from: DateComponents(
+                      year: anniversaryYear, month: month, day: min(day, daysInMonth),
+                      hour: startHour, minute: 0, second: 0
+                  )) else {
+                return nil
+            }
+            anniversary = clamped
+        }
         guard let start = calendar.date(byAdding: .day, value: -window, to: anniversary),
               let end = calendar.date(byAdding: .day, value: window + 1, to: anniversary) else {
             return nil

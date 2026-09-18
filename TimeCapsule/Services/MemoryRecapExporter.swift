@@ -133,7 +133,15 @@ nonisolated enum MemoryRecapExporter {
         let url = directory.appendingPathComponent(String(format: "slide-%03d.jpg", index))
         guard let data = image.jpegData(compressionQuality: 0.92) else { return nil }
         do {
-            try data.write(to: url, options: [.atomic, .completeFileProtection])
+            // No `.completeFileProtection` here. These slides are read back by
+            // `UIImage(contentsOfFile:)` further down, and a complete-protected
+            // file becomes unreadable the moment the screen locks — which is
+            // exactly what happens when the user sets a long recap going and
+            // stops touching the phone. The container's default protection
+            // (complete-until-first-user-authentication) is the right level: the
+            // file is already unreadable while the device is locked at boot, and
+            // it is deleted as soon as the export finishes.
+            try data.write(to: url, options: [.atomic])
             return url
         } catch {
             return nil
@@ -192,6 +200,16 @@ nonisolated enum MemoryRecapExporter {
         guard writer.startWriting() else { return nil }
         writer.startSession(atSourceTime: .zero)
 
+        // `cancelWriting()` is only legal while the writer is actually writing.
+        // Calling it on a writer that has already failed — or that is finishing
+        // — is documented misuse and raises an Objective-C exception, which
+        // Swift cannot catch, so it would take the app down rather than
+        // surfacing the "Couldn't create the recap" alert the code intends.
+        func abortWriting() {
+            guard writer.status == .writing else { return }
+            writer.cancelWriting()
+        }
+
         let timescale: CMTimeScale = 600
         let hold = CMTime(value: 1080, timescale: timescale)    // 1.8s per slide
         let fadeStep = CMTime(value: 60, timescale: timescale)  // 0.1s per blend frame
@@ -201,56 +219,75 @@ nonisolated enum MemoryRecapExporter {
         var appended = 0
         let totalAppends = slideURLs.count + max(slideURLs.count - 1, 0) * fadeFrames
 
+        // Budgets are counted in polls, not wall-clock time. A `Date()` deadline
+        // measures how long the *clock* ran, and the clock keeps running while
+        // the app is suspended in the background — so backgrounding a recap for
+        // a minute used to blow every remaining deadline instantly and lose the
+        // export. Counting polls measures time actually spent waiting, which is
+        // what the budget was meant to express, and is immune to suspension.
+        let readinessPollInterval: TimeInterval = 0.01
+        let readinessPollBudget = Int(10 / readinessPollInterval)
+
         func append(_ image: UIImage, at presentationTime: CMTime) -> Bool {
-            guard let buffer = pixelBuffer(from: image, pool: adaptor.pixelBufferPool) else { return false }
-            let readinessDeadline = Date().addingTimeInterval(10)
-            while !input.isReadyForMoreMediaData {
-                guard !Task.isCancelled,
-                      writer.status == .writing,
-                      Date() < readinessDeadline else {
-                    return false
+            // One drain point per frame. Each append allocates a 1080x1920
+            // pixel buffer and a CGContext (~8 MB), and `writeVideo` is one
+            // long synchronous job with no suspension point, so without an
+            // explicit pool nothing is released until the whole export ends.
+            return autoreleasepool { () -> Bool in
+                guard let buffer = pixelBuffer(from: image, pool: adaptor.pixelBufferPool) else { return false }
+                var pollsRemaining = readinessPollBudget
+                while !input.isReadyForMoreMediaData {
+                    guard !Task.isCancelled,
+                          writer.status == .writing,
+                          pollsRemaining > 0 else {
+                        return false
+                    }
+                    pollsRemaining -= 1
+                    Thread.sleep(forTimeInterval: readinessPollInterval)
                 }
-                Thread.sleep(forTimeInterval: 0.01)
+                guard !Task.isCancelled else { return false }
+                let ok = adaptor.append(buffer, withPresentationTime: presentationTime)
+                appended += 1
+                onProgress(Double(appended) / Double(totalAppends))
+                return ok
             }
-            guard !Task.isCancelled else { return false }
-            let ok = adaptor.append(buffer, withPresentationTime: presentationTime)
-            appended += 1
-            onProgress(Double(appended) / Double(totalAppends))
-            return ok
         }
 
         guard var previousSlide = UIImage(contentsOfFile: slideURLs[0].path) else {
-            writer.cancelWriting()
+            abortWriting()
             return nil
         }
 
         guard append(previousSlide, at: time) else {
-            writer.cancelWriting()
+            abortWriting()
             return nil
         }
         time = time + hold
 
         for nextURL in slideURLs.dropFirst() {
             guard !Task.isCancelled else {
-                writer.cancelWriting()
+                abortWriting()
                 return nil
             }
             guard let nextSlide = UIImage(contentsOfFile: nextURL.path) else {
-                writer.cancelWriting()
+                abortWriting()
                 return nil
             }
 
             for step in 1...fadeFrames {
-                let alpha = CGFloat(step) / CGFloat(fadeFrames + 1)
-                guard append(blend(previousSlide, with: nextSlide, alpha: alpha), at: time) else {
-                    writer.cancelWriting()
+                let appendedFrame = autoreleasepool { () -> Bool in
+                    let alpha = CGFloat(step) / CGFloat(fadeFrames + 1)
+                    return append(blend(previousSlide, with: nextSlide, alpha: alpha), at: time)
+                }
+                guard appendedFrame else {
+                    abortWriting()
                     return nil
                 }
                 time = time + fadeStep
             }
 
             guard append(nextSlide, at: time) else {
-                writer.cancelWriting()
+                abortWriting()
                 return nil
             }
             time = time + hold
@@ -261,12 +298,16 @@ nonisolated enum MemoryRecapExporter {
         writer.endSession(atSourceTime: time)
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
-        let finishDeadline = Date().addingTimeInterval(30)
+        // Same poll-budget reasoning as the readiness wait above. Note there is
+        // no `cancelWriting()` in this loop: `finishWriting` has already been
+        // called, and no other method may be invoked on the writer afterwards.
+        // Giving up here means giving up on waiting, not cancelling the write.
+        var finishPollsRemaining = 300  // 300 x 0.1s = 30s of real waiting
         while done.wait(timeout: .now() + 0.1) == .timedOut {
-            guard !Task.isCancelled, Date() < finishDeadline else {
-                writer.cancelWriting()
+            guard !Task.isCancelled, finishPollsRemaining > 0 else {
                 return nil
             }
+            finishPollsRemaining -= 1
         }
         completed = writer.status == .completed
         // Deliberately no file-protection attribute. This file exists only to

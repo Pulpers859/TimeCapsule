@@ -12,6 +12,28 @@
                 <string>CA92.1</string>
             </array>
         </dict>
+        <!--
+            sweepStaleShareExports() in MediaAssetLoading.swift reads
+            contentModificationDateKey to age out share exports the app left in
+            its own temporary directory. That key is on Apple's required-reason
+            list, and an undeclared use is refused at upload, not at review.
+
+            C617.1 is the reason for file metadata inside the app container,
+            which is where TimeCapsuleShare/ lives. DDA9.1 would be wrong: no
+            timestamp is ever shown to the user.
+
+            Note this declaration is NOT for PHAsset.creationDate, which the app
+            uses widely. The creationDate on Apple's list is
+            FileAttributeKey.creationDate; the PhotoKit property is unrelated.
+        -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
     </array>
     <key>NSPrivacyCollectedDataTypes</key>
     <array/>

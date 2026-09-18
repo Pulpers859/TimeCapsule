@@ -77,6 +77,34 @@ final class MemoryWindowTests: XCTestCase {
         )
     }
 
+    /// Regression: the existence check used to run *before* the window was
+    /// applied, so a user on Feb 29 with a widened range lost every non-leap
+    /// year — 15 of the last 20 — even though the range they asked for
+    /// (Feb 26 - Mar 3) exists in all of them.
+    func testLeapDayWithWindowStillCoversNonLeapAnniversaryYear() throws {
+        let leapDay = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2024, month: 2, day: 29))
+        )
+        let range = try XCTUnwrap(
+            MemoryWindow.range(
+                for: leapDay,
+                anniversaryYear: 2023,
+                dayWindow: 3,
+                calendar: calendar
+            )
+        )
+
+        // Anchored on Feb 28 2023, the last real day of that month.
+        XCTAssertEqual(
+            calendar.dateComponents([.year, .month, .day], from: range.start),
+            DateComponents(year: 2023, month: 2, day: 25)
+        )
+        XCTAssertEqual(
+            calendar.dateComponents([.year, .month, .day], from: range.end),
+            DateComponents(year: 2023, month: 3, day: 4)
+        )
+    }
+
     func testLeapDayIsAcceptedInLeapAnniversaryYear() throws {
         let leapDay = try XCTUnwrap(
             calendar.date(from: DateComponents(year: 2024, month: 2, day: 29))
