@@ -13,13 +13,9 @@ let package = Package(
     targets: [
         .target(
             name: "TimeCapsuleCore",
-            path: "TimeCapsule/Services",
+            path: "AtticShared",
             exclude: [
-                "MemoryLibrary.swift",
-                "MemoryRecapExporter.swift",
-                "NotificationManager.swift",
-                "PhotosEditHandoff.swift",
-                "PurchaseStore.swift"
+                "MemoryLibrary.swift"
             ],
             sources: [
                 "GalleryStateLogic.swift",

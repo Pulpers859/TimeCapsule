@@ -11,6 +11,11 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		AA0000000000000000000001 /* AtticShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AtticShared;
+			sourceTree = "<group>";
+		};
 		01B025E92F69E12100A0AF65 /* TimeCapsule */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = TimeCapsule;
@@ -32,6 +37,7 @@
 		01B025DE2F69E12100A0AF65 = {
 			isa = PBXGroup;
 			children = (
+				AA0000000000000000000001 /* AtticShared */,
 				01B025E92F69E12100A0AF65 /* TimeCapsule */,
 				01B025E82F69E12100A0AF65 /* Products */,
 			);
@@ -62,6 +68,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				01B025E92F69E12100A0AF65 /* TimeCapsule */,
+				AA0000000000000000000001 /* AtticShared */,
 			);
 			name = TimeCapsule;
 			packageProductDependencies = (
