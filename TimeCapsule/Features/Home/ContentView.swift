@@ -136,15 +136,29 @@ struct PermissionRequestView: View {
                 .padding(.bottom, 34)
 
             VStack(alignment: .leading, spacing: 18) {
+                // These two strings are a privacy claim, so they have to match
+                // what the binary actually does.
+                //
+                // "Nothing is uploaded" was not true: a memory's coordinates are
+                // sent to Apple Maps to name the place. And "when you open a
+                // memory's details" described a lookup that actually fires
+                // automatically as each photo comes into view, because the place
+                // name appears in the caption while browsing, not only in the
+                // details sheet.
+                //
+                // The feature is fine and worth keeping -- it uses coordinates
+                // already stored in the photo, never the device's current
+                // location, and asks for no location permission. It was only the
+                // description that was wrong, so the description is what changed.
                 PermissionPoint(
                     symbol: "iphone",
                     title: "Stays on your iPhone",
-                    detail: "Matching happens on device. Nothing is uploaded."
+                    detail: "Your photos and videos are never uploaded. Finding your memories happens entirely on device."
                 )
                 PermissionPoint(
                     symbol: "location",
-                    title: "Locations only on request",
-                    detail: "Place names are looked up when you open a memory's details."
+                    title: "Place names from Apple Maps",
+                    detail: "When a memory has coordinates saved in it, those are sent to Apple Maps to name the place. Your current location is never used."
                 )
                 PermissionPoint(
                     symbol: "bell.badge",

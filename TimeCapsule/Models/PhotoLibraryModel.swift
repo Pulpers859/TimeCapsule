@@ -8,6 +8,7 @@ class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     @Published var isLoading: Bool
 
     private var cancellable: AnyCancellable?
+    private var externalChangeTask: Task<Void, Never>?
     private var fetchGeneration = 0
 
     override init() {
@@ -26,11 +27,31 @@ class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     }
 
     deinit {
+        externalChangeTask?.cancel()
         PHPhotoLibrary.shared().unregisterChangeObserver(self)
     }
 
     nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) {
         Task { @MainActor [weak self] in
+            self?.scheduleExternalRefresh()
+        }
+    }
+
+    /// Debounced because PhotoKit fires `photoLibraryDidChange` for every
+    /// mutation from any source. During an iCloud sync batch -- a restored
+    /// backup, a new device, shared-album activity -- that is a sustained
+    /// burst, and each one previously kicked off a full 20-year fetch with
+    /// nothing on screen changing.
+    ///
+    /// Only this path is debounced. The app's own deletes post
+    /// `.timeCapsulePhotosDidChange` separately and still refresh immediately,
+    /// so the gallery stays responsive to the user's own actions; this only
+    /// slows down reacting to somebody else's.
+    private func scheduleExternalRefresh() {
+        externalChangeTask?.cancel()
+        externalChangeTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
             await self?.refreshAuthorizationAndMemories()
         }
     }

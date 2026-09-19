@@ -10,6 +10,7 @@ final class NotificationManager: NSObject {
     private let daysToSchedule = 60
     private let preferences = UserDefaults.standard
     private var schedulingTask: Task<Void, Never>?
+    private var coalescedRefreshTask: Task<Void, Never>?
     private var generation = 0
 
     private override init() {
@@ -201,6 +202,20 @@ final class NotificationManager: NSObject {
     }
 
     @objc private func handlePhotoLibraryChange() {
-        refreshScheduleIfNeeded(force: true)
+        // `force: true` is right: a delete changes the counts, so the bodies of
+        // the already-scheduled notifications are stale and the daily guard
+        // must be bypassed. Doing it per notification was not.
+        //
+        // Deleting several memories in a row posts one of these each, and each
+        // one cancelled the in-flight reschedule and restarted the 60-day pass
+        // from zero -- so during a burst the schedule never actually landed,
+        // and the work done up to that point was thrown away every time.
+        // Coalescing runs it once, after the user stops.
+        coalescedRefreshTask?.cancel()
+        coalescedRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            self?.refreshScheduleIfNeeded(force: true)
+        }
     }
 }

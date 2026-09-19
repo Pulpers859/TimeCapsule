@@ -209,6 +209,19 @@ struct TimeCapsuleView: View {
         }
         recapProgress = 0
         recapTask?.cancel()
+
+        // Recaps are written into the shared export directory so they can be
+        // reclaimed, but the only sweep in the app used to live in the
+        // per-photo share path. Someone who makes recaps and never taps share
+        // on an individual memory therefore accumulated 1080x1920 H.264 files
+        // in tmp indefinitely: the share sheet's own cleanup only runs if the
+        // sheet reaches completion, so a cancelled recap or an app killed with
+        // the sheet open left the file behind, and iOS only purges tmp under
+        // disk pressure. Sweeping here as well costs nothing and closes that.
+        Task.detached(priority: .utility) {
+            sweepStaleShareExports()
+        }
+
         let title = dateString
         recapTask = Task {
             let url = await MemoryRecapExporter.export(assets: photos, title: title) { value in
