@@ -71,7 +71,38 @@ final class PurchaseStore: ObservableObject {
                 unlocked = true
             }
         }
+
+        let hadEntitlement = isUnlocked
         isUnlocked = unlocked
+        if hadEntitlement && !unlocked {
+            releaseProSettings()
+        }
+    }
+
+    /// Returns the settings Pro unlocks to their free defaults.
+    ///
+    /// Without this, two of the three Pro features survive a refund forever,
+    /// and no jailbreak is needed to get there: buy Pro, widen the memory range
+    /// and set a late day start, then ask Apple for a refund. The entitlement
+    /// correctly disappears and the pickers correctly re-lock — but the values
+    /// live in `UserDefaults`, and `MemoryWindow` reads them directly with no
+    /// idea an entitlement was ever involved. Only the recap is gated at the
+    /// point of use and so is genuinely revoked.
+    ///
+    /// The reset belongs here rather than inside `MemoryWindow`. That type is
+    /// `nonisolated` and is read from a detached task in the notification
+    /// scheduler; it has no access to this store and should not grow one.
+    ///
+    /// Reached only on a true -> false transition, so a first launch (which
+    /// starts at false) never wipes anything.
+    private func releaseProSettings() {
+        let defaults = UserDefaults.standard
+        defaults.set(MemoryWindow.defaultDayWindow, forKey: MemoryWindow.storageKey)
+        defaults.set(MemoryWindow.defaultDayStartHour, forKey: MemoryWindow.dayStartHourKey)
+
+        // Same post Settings uses when these change: the gallery refetches and
+        // the notification schedule rebuilds with the corrected counts.
+        NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
     }
 
     private func apply(_ result: VerificationResult<Transaction>) async {

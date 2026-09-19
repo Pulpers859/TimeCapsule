@@ -214,7 +214,7 @@ Working branch: dev
 
 Important:
 - `C:\Dev\Transform` is the source of truth.
-- Do not use `C:\Users\Patrick's Computer\OneDrive - WV School of Osteopathic Medicine\Desktop\Transform` as the active repo unless explicitly asked to inspect the stale copy.
+- Do not use the pre-migration copy under the user's OneDrive Desktop folder as the active repo unless explicitly asked to inspect the stale copy.
 - A dedicated shortcut named `Transform PowerShell` should open the repo at `C:\Dev\Transform`.
 - The PowerShell profile should stay normal; do not globally pin every shell to this project again.
 - Repo-local Git setup should remain in place:

@@ -6,7 +6,7 @@ This file is the `TimeCapsule`-specific companion to [AI_PROJECT_HANDOFF_TEMPLAT
 - Project name: `TimeCapsule`
 - Project type: `iOS app`
 - Source-of-truth repo path: `C:\Dev\TimeCapsule`
-- Stale/old copies to ignore if applicable: `C:\Users\Patrick's Computer\OneDrive - WV School of Osteopathic Medicine\Desktop\TimeCapsule` after migration to `C:\Dev\TimeCapsule`
+- Stale/old copies to ignore if applicable: the pre-migration copy under the user's OneDrive Desktop folder; everything now lives in `C:\Dev\TimeCapsule`
 - Primary target for normal work if multiple surfaces exist: `Main app`
 - GitHub intent/status: `remote attached`
 - GitHub remote: `https://github.com/Pulpers859/TimeCapsule.git`

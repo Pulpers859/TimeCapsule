@@ -11,6 +11,16 @@ struct TimeCapsuleApp: App {
 
     init() {
         NotificationManager.shared.requestAndSchedule()
+
+        // Every other sweep runs at the *start* of the next share or recap, so
+        // a user who shares once and never again leaves that export sitting in
+        // `tmp` indefinitely — and the share sheet's own 60-second cleanup is a
+        // main-queue timer that never fires if the app is suspended or killed
+        // first. Sweeping at launch is the only path that reclaims anything
+        // left by a run that did not end cleanly.
+        Task.detached(priority: .utility) {
+            sweepStaleShareExports()
+        }
     }
 
     var body: some Scene {

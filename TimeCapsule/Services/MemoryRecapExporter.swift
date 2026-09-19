@@ -18,7 +18,16 @@ nonisolated enum MemoryRecapExporter {
         let photos = sample(assets.filter { $0.mediaType == .image }, limit: maxPhotos)
         guard !photos.isEmpty, !Task.isCancelled else { return nil }
 
-        let frameDirectory = FileManager.default.temporaryDirectory
+        // Inside the shared export directory, not loose in `tmp`.
+        //
+        // This holds up to 31 full-frame JPEGs of the user's photos. The
+        // `defer` below removes them on every normal and cancelled path, but
+        // not when the process dies — and this export allocates ~8 MB a frame,
+        // so being jetsammed is a real possibility, as is a force-quit
+        // mid-render. Loose in `tmp` nothing would ever reclaim them, because
+        // `sweepStaleShareExports()` only enumerates the share directory and
+        // iOS purges `tmp` on its own unpredictable schedule.
+        let frameDirectory = shareExportDirectory()
             .appendingPathComponent("TimeCapsuleRecapFrames-\(UUID().uuidString)", isDirectory: true)
         guard (try? FileManager.default.createDirectory(at: frameDirectory, withIntermediateDirectories: true)) != nil else {
             return nil

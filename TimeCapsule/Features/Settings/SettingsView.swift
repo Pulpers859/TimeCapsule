@@ -169,11 +169,15 @@ struct SettingsView: View {
                         title: "Deletes are recoverable",
                         subtitle: "Items go to Recently Deleted in Photos"
                     )
+                    // "Only when you ask" was not true: the place-name lookup
+                    // fires automatically as each memory comes into view, not on
+                    // request. Matching genuinely does stay on device, so the
+                    // title stands; the subtitle now says what actually happens.
                     SettingsRowLabel(
                         symbol: "lock.shield",
                         tint: .green,
                         title: "Matching stays on device",
-                        subtitle: "Locations are looked up only when you ask"
+                        subtitle: "Place names come from Apple Maps when you open a memory"
                     )
                 } header: {
                     Text("Good to Know")
