@@ -18,6 +18,7 @@ let package = Package(
                 "MemoryLibrary.swift"
             ],
             sources: [
+                "AtticDefaults.swift",
                 "GalleryStateLogic.swift",
                 "MemoryWindow.swift",
                 "NotificationPlan.swift",
