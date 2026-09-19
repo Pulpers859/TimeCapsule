@@ -8,6 +8,43 @@ nonisolated enum MemoryRecapExporter {
     static let renderSize = CGSize(width: 1080, height: 1920)
     static let maxPhotos = 30
 
+    /// Motion is what separates a slideshow from a montage, so each photo gets
+    /// a slow push in or pull out rather than sitting still.
+    ///
+    /// The cost is real and worth stating plainly: holding a slide used to be
+    /// a *single* appended frame stretched over 1.8 seconds by its
+    /// presentation timestamp. Motion means actually encoding every frame of
+    /// that 1.8 seconds, so a full recap goes from ~180 appends to ~1700. That
+    /// is paid for by drawing each frame directly into the pixel buffer
+    /// instead of rendering an intermediate `UIImage` first, which is what the
+    /// crossfade used to do.
+    static let framesPerSecond = 24
+    static let holdFrames = 43   // ~1.8s
+    static let fadeFrames = 12   // ~0.5s
+    static let maxZoom = 1.08
+
+    nonisolated private struct Slide {
+        let url: URL
+        let zoomFrom: Double
+        let zoomTo: Double
+        let focusX: Double
+        let focusY: Double
+    }
+
+    nonisolated private struct Layer {
+        let image: CGImage
+        let rect: CGRect
+        let alpha: CGFloat
+    }
+
+    nonisolated private struct ActiveSlide {
+        let image: CGImage
+        let base: CGRect
+        let slide: Slide
+        let visibleTotal: Int
+        var visibleIndex: Int
+    }
+
     /// Returns a temporary .mp4 URL, or nil on failure. `onProgress` is
     /// called with 0...1 and may arrive on any queue.
     static func export(
@@ -36,26 +73,36 @@ nonisolated enum MemoryRecapExporter {
             try? FileManager.default.removeItem(at: frameDirectory)
         }
 
-        var slideURLs: [URL] = []
-        if let card = renderTitleCard(title: title) {
-            if let url = writeSlideImage(card, to: frameDirectory, index: slideURLs.count) {
-                slideURLs.append(url)
-            }
+        var slides: [Slide] = []
+        if let card = renderTitleCard(title: title),
+           let url = writeSlideImage(card, to: frameDirectory, index: 0) {
+            // The title card holds still. A block of text drifting across the
+            // screen reads as a rendering fault, not as production value.
+            slides.append(Slide(url: url, zoomFrom: 1, zoomTo: 1, focusX: 0.5, focusY: 0.5))
         }
         for (index, asset) in photos.enumerated() {
             guard !Task.isCancelled else { return nil }
             if let image = await loadImage(from: asset, targetSize: renderSize, contentMode: .aspectFit),
-               let frame = composeFrame(image),
-               let url = writeSlideImage(frame, to: frameDirectory, index: slideURLs.count) {
-                slideURLs.append(url)
+               let photo = normalizedPhoto(image),
+               let url = writeSlideImage(photo, to: frameDirectory, index: slides.count) {
+                // Alternate the direction so consecutive slides don't all
+                // drift the same way, which looks like a stuck animation.
+                let pushesIn = slides.count.isMultiple(of: 2)
+                slides.append(Slide(
+                    url: url,
+                    zoomFrom: pushesIn ? 1 : maxZoom,
+                    zoomTo: pushesIn ? maxZoom : 1,
+                    focusX: 0.5,
+                    focusY: 0.5
+                ))
             }
             onProgress(0.45 * Double(index + 1) / Double(photos.count))
         }
-        guard slideURLs.count > 1, !Task.isCancelled else { return nil }
+        guard slides.count > 1, !Task.isCancelled else { return nil }
 
-        let finalSlideURLs = slideURLs
+        let finalSlides = slides
         let encodingTask = Task.detached(priority: .userInitiated) {
-            writeVideo(slideURLs: finalSlideURLs) { frameProgress in
+            writeVideo(slides: finalSlides) { frameProgress in
                 onProgress(0.45 + 0.55 * frameProgress)
             }
         }
@@ -73,32 +120,22 @@ nonisolated enum MemoryRecapExporter {
 
     // MARK: - Frame composition
 
-    /// Full-frame slide: photo aspect-fit, centered on black. Rendering
-    /// through UIKit bakes in EXIF orientation so the writer never sees
-    /// rotated pixels.
-    private static func composeFrame(_ image: UIImage) -> UIImage? {
+    /// Redraws the photo at its fitted size on an opaque canvas.
+    ///
+    /// Two jobs. It bakes in EXIF orientation, so the writer never sees
+    /// rotated pixels. And it deliberately does *not* letterbox: the slide on
+    /// disk is the photo alone, because the pan and zoom are applied to the
+    /// photo's rectangle at encode time. Letterboxing first would scale the
+    /// black bars along with the picture.
+    private static func normalizedPhoto(_ image: UIImage) -> UIImage? {
+        let fitted = aspectFitRect(for: image.size, in: renderSize).size
+        guard fitted.width >= 1, fitted.height >= 1 else { return nil }
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: renderSize, format: format)
-        return renderer.image { context in
-            UIColor.black.setFill()
-            context.fill(CGRect(origin: .zero, size: renderSize))
-            let fitted = aspectFitRect(for: image.size, in: renderSize)
-            image.draw(in: fitted)
-        }
-    }
-
-    private static func blend(_ a: UIImage, with b: UIImage, alpha: CGFloat) -> UIImage {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: renderSize, format: format)
-        return renderer.image { context in
-            UIColor.black.setFill()
-            context.fill(CGRect(origin: .zero, size: renderSize))
-            a.draw(in: CGRect(origin: .zero, size: renderSize))
-            b.draw(in: CGRect(origin: .zero, size: renderSize), blendMode: .normal, alpha: alpha)
+        let renderer = UIGraphicsImageRenderer(size: fitted, format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: fitted))
         }
     }
 
@@ -171,9 +208,31 @@ nonisolated enum MemoryRecapExporter {
         )
     }
 
+    /// Where a slide sits at one point in its own motion.
+    private static func frameRect(for active: ActiveSlide) -> CGRect {
+        let progress = Double(active.visibleIndex) / Double(max(active.visibleTotal - 1, 1))
+        let zoom = RecapPlan.zoomFactor(
+            from: active.slide.zoomFrom,
+            to: active.slide.zoomTo,
+            progress: progress
+        )
+        let framed = RecapPlan.framedRect(
+            base: RecapPlan.Rect(
+                x: active.base.origin.x,
+                y: active.base.origin.y,
+                width: active.base.width,
+                height: active.base.height
+            ),
+            zoom: zoom,
+            focusX: active.slide.focusX,
+            focusY: active.slide.focusY
+        )
+        return CGRect(x: framed.x, y: framed.y, width: framed.width, height: framed.height)
+    }
+
     // MARK: - Video writing
 
-    private static func writeVideo(slideURLs: [URL], onProgress: (Double) -> Void) -> URL? {
+    private static func writeVideo(slides: [Slide], onProgress: (Double) -> Void) -> URL? {
         // Written into the shared export directory rather than loose in `tmp`
         // so `sweepStaleShareExports()` can reclaim it. A recap is handed to
         // the share sheet exactly like a single memory, so it leaks the same
@@ -220,13 +279,14 @@ nonisolated enum MemoryRecapExporter {
         }
 
         let timescale: CMTimeScale = 600
-        let hold = CMTime(value: 1080, timescale: timescale)    // 1.8s per slide
-        let fadeStep = CMTime(value: 60, timescale: timescale)  // 0.1s per blend frame
-        let fadeFrames = 5                                       // 0.5s crossfade
+        let frameDuration = CMTime(
+            value: CMTimeValue(timescale) / CMTimeValue(framesPerSecond),
+            timescale: timescale
+        )
 
         var time = CMTime.zero
         var appended = 0
-        let totalAppends = slideURLs.count + max(slideURLs.count - 1, 0) * fadeFrames
+        let totalAppends = slides.count * holdFrames + max(slides.count - 1, 0) * fadeFrames
 
         // Budgets are counted in polls, not wall-clock time. A `Date()` deadline
         // measures how long the *clock* ran, and the clock keeps running while
@@ -237,13 +297,13 @@ nonisolated enum MemoryRecapExporter {
         let readinessPollInterval: TimeInterval = 0.01
         let readinessPollBudget = Int(10 / readinessPollInterval)
 
-        func append(_ image: UIImage, at presentationTime: CMTime) -> Bool {
+        func append(_ layers: [Layer], at presentationTime: CMTime) -> Bool {
             // One drain point per frame. Each append allocates a 1080x1920
             // pixel buffer and a CGContext (~8 MB), and `writeVideo` is one
             // long synchronous job with no suspension point, so without an
             // explicit pool nothing is released until the whole export ends.
             return autoreleasepool { () -> Bool in
-                guard let buffer = pixelBuffer(from: image, pool: adaptor.pixelBufferPool) else { return false }
+                guard let buffer = pixelBuffer(layers: layers, pool: adaptor.pixelBufferPool) else { return false }
                 var pollsRemaining = readinessPollBudget
                 while !input.isReadyForMoreMediaData {
                     guard !Task.isCancelled,
@@ -262,45 +322,75 @@ nonisolated enum MemoryRecapExporter {
             }
         }
 
-        guard var previousSlide = UIImage(contentsOfFile: slideURLs[0].path) else {
-            abortWriting()
-            return nil
-        }
+        var previous: ActiveSlide?
 
-        guard append(previousSlide, at: time) else {
-            abortWriting()
-            return nil
-        }
-        time = time + hold
-
-        for nextURL in slideURLs.dropFirst() {
+        for (index, slide) in slides.enumerated() {
             guard !Task.isCancelled else {
                 abortWriting()
                 return nil
             }
-            guard let nextSlide = UIImage(contentsOfFile: nextURL.path) else {
+            guard let uiImage = UIImage(contentsOfFile: slide.url.path),
+                  let cgImage = uiImage.cgImage else {
                 abortWriting()
                 return nil
             }
 
-            for step in 1...fadeFrames {
-                let appendedFrame = autoreleasepool { () -> Bool in
-                    let alpha = CGFloat(step) / CGFloat(fadeFrames + 1)
-                    return append(blend(previousSlide, with: nextSlide, alpha: alpha), at: time)
+            var current = ActiveSlide(
+                image: cgImage,
+                base: aspectFitRect(for: uiImage.size, in: renderSize),
+                slide: slide,
+                visibleTotal: RecapPlan.visibleFrameCount(
+                    slideIndex: index,
+                    slideCount: slides.count,
+                    holdFrames: holdFrames,
+                    fadeFrames: fadeFrames
+                ),
+                visibleIndex: 0
+            )
+
+            if var outgoing = previous {
+                for step in 0..<fadeFrames {
+                    // A true dissolve: the outgoing slide fades out as the
+                    // incoming one fades in. Holding the outgoing slide at
+                    // full opacity and simply covering it would be wrong here,
+                    // because a slide is now the photo's own rectangle rather
+                    // than a full-frame letterboxed composite — a portrait
+                    // photo does not cover the landscape one behind it, so its
+                    // edges would still be on screen at the end of the fade
+                    // and then vanish in one frame.
+                    //
+                    // Reaching exactly 1.0 and 0.0 on the last fade frame is
+                    // what makes the handoff to the next solo frame invisible.
+                    let progress = CGFloat(step + 1) / CGFloat(fadeFrames)
+                    let layers = [
+                        Layer(image: outgoing.image, rect: frameRect(for: outgoing), alpha: 1 - progress),
+                        Layer(image: current.image, rect: frameRect(for: current), alpha: progress)
+                    ]
+                    guard append(layers, at: time) else {
+                        abortWriting()
+                        return nil
+                    }
+                    time = time + frameDuration
+                    outgoing.visibleIndex += 1
+                    current.visibleIndex += 1
                 }
-                guard appendedFrame else {
+            }
+
+            for _ in 0..<holdFrames {
+                guard !Task.isCancelled else {
                     abortWriting()
                     return nil
                 }
-                time = time + fadeStep
+                let layers = [Layer(image: current.image, rect: frameRect(for: current), alpha: 1)]
+                guard append(layers, at: time) else {
+                    abortWriting()
+                    return nil
+                }
+                time = time + frameDuration
+                current.visibleIndex += 1
             }
 
-            guard append(nextSlide, at: time) else {
-                abortWriting()
-                return nil
-            }
-            time = time + hold
-            previousSlide = nextSlide
+            previous = current
         }
 
         input.markAsFinished()
@@ -327,7 +417,20 @@ nonisolated enum MemoryRecapExporter {
         return completed ? url : nil
     }
 
-    private static func pixelBuffer(from image: UIImage, pool: CVPixelBufferPool?) -> CVPixelBuffer? {
+    /// Core Graphics puts its origin at the bottom-left, while every rectangle
+    /// computed above is in top-left space (the convention UIKit, PhotoKit and
+    /// the aspect-fit maths all use). The conversion happens here, once,
+    /// rather than being reasoned about at each call site.
+    private static func flippedToCoreGraphics(_ rect: CGRect) -> CGRect {
+        CGRect(
+            x: rect.minX,
+            y: renderSize.height - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
+    }
+
+    private static func pixelBuffer(layers: [Layer], pool: CVPixelBufferPool?) -> CVPixelBuffer? {
         var buffer: CVPixelBuffer?
         if let pool {
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
@@ -346,7 +449,7 @@ nonisolated enum MemoryRecapExporter {
                 &buffer
             )
         }
-        guard let buffer, let cgImage = image.cgImage else { return nil }
+        guard let buffer else { return nil }
 
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
@@ -361,7 +464,17 @@ nonisolated enum MemoryRecapExporter {
             bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
         ) else { return nil }
 
-        context.draw(cgImage, in: CGRect(origin: .zero, size: renderSize))
+        // A pooled buffer is recycled, so it arrives holding the previous
+        // frame. Clearing is what makes the letterbox black instead of a
+        // smear of whatever was encoded before.
+        context.setFillColor(UIColor.black.cgColor)
+        context.fill(CGRect(origin: .zero, size: renderSize))
+        context.interpolationQuality = .medium
+
+        for layer in layers where layer.alpha > 0.001 {
+            context.setAlpha(layer.alpha)
+            context.draw(layer.image, in: flippedToCoreGraphics(layer.rect))
+        }
         return buffer
     }
 }
