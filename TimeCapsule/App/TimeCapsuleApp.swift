@@ -1,4 +1,5 @@
  import SwiftUI
+import WidgetKit
 
 @main
 struct TimeCapsuleApp: App {
@@ -39,6 +40,15 @@ struct TimeCapsuleApp: App {
                         // the app was backgrounded: a refund, a Family Sharing
                         // change, or a purchase made on another device.
                         Task { await purchaseStore.refreshEntitlement() }
+                    }
+                    if newPhase == .background {
+                        // The widget otherwise waits for its own day-boundary
+                        // reload, so a memory deleted in the app would keep
+                        // showing on the home screen until tomorrow. Leaving
+                        // the app is the one moment that covers every way its
+                        // contents can have changed: a delete, a wider memory
+                        // range, a different day-start hour.
+                        WidgetCenter.shared.reloadAllTimelines()
                     }
                 }
         }
