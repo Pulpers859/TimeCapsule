@@ -10,6 +10,35 @@ decision, a hosted URL, or an App Store Connect account.
 
 ## Blocked on you
 
+### 0. Naming — decided, and why
+
+The app was called **Time Capsule** until this commit. That is a **registered
+Apple trademark** — it appears twice on
+[Apple's own trademark list](https://www.apple.com/legal/intellectual-property/trademark/appletmlist.html)
+("Time Capsule®" and "AirPort Time Capsule®"), and App Review Guideline 5.2.1
+forbids using a third party's trademark in an app name. Submitting a mark Apple
+owns, to Apple's own store, was not a bet worth taking — and it also meant the
+name could never be registered or defended.
+
+Now **Attic**. Screened against Apple's trademark list (absent) and the App
+Store (no consumer photo, memory or journaling app of that name). Around 30
+other candidates were eliminated, most of them because the names that say what
+the app does most obviously are exactly the names everyone else already took.
+
+**This screening is not a clearance search.** It catches obvious collisions and
+well-known brands. It does not catch pending USPTO applications, unregistered
+common-law marks, or foreign registrations. Pay a trademark attorney for a real
+Class 9 clearance before submitting.
+
+Deliberately unchanged: the Xcode project, scheme, target, source directory and
+internal type names are still `TimeCapsule`. The display name and the project
+name do not need to match, and renaming those would touch the CI workflow
+paths, `Package.swift` and the branch-policy hook for no user-visible gain.
+
+The App Store **subtitle** is where "on this day" belongs — descriptive phrases
+are useful there and can't be the mark. Something like
+*"Attic — your photos, on this day, every year."*
+
 ### 1. Bundle identifier — permanent, decide before the first upload
 
 `PRODUCT_BUNDLE_IDENTIFIER` is still `Patrick-App.TimeCapsule`.
@@ -22,8 +51,11 @@ product's identity.
 It also isn't valid reverse-DNS and reads as a placeholder to anyone who
 inspects the binary.
 
-Set it to reverse-DNS of a domain you control, e.g. `com.yourdomain.timecapsule`.
+Set it to reverse-DNS of a domain you control, e.g. `com.yourdomain.attic`.
 It appears twice in `TimeCapsule.xcodeproj/project.pbxproj`.
+
+Note the bundle ID should now derive from whatever domain you pick for Attic,
+not the old name.
 
 ### 2. Privacy policy — a certain rejection without it
 
@@ -47,7 +79,7 @@ in App Store Connect; the config file only affects simulator testing.
 
 ### 4. App icon format
 
-`Time Capsule.jpg` is a valid 1024×1024 JPEG and Xcode's single-size mode is
+`Attic.jpg` is a valid 1024×1024 JPEG and Xcode's single-size mode is
 supported, so this is insurance rather than a blocker. But rejection reports for
 `ITMS-90704` consistently involve non-PNG icons, and Apple's docs don't state
 the requirement either way.
@@ -63,8 +95,8 @@ rather than a designed one.
 
 Signed Paid Applications Agreement, banking and tax forms completed, screenshots
 at the required device sizes, and the IAP product created in App Store Connect
-with product ID **`timecapsule.pro.lifetime`** (must match
-`TimeCapsulePro.productID` exactly).
+with product ID **`attic.pro.lifetime`** (must match
+`AtticPro.productID` exactly).
 
 ---
 
@@ -78,24 +110,24 @@ and that reads as broken.
 
 Suggested notes:
 
-> Time Capsule shows photos and videos taken on today's date in previous years,
+> Attic shows photos and videos taken on today's date in previous years,
 > read from the device's own photo library. Nothing is uploaded.
 >
 > **To see the app populated**, the test device needs photos whose capture date
 > is today's month and day in an earlier year. If the library has none, the app
 > correctly shows an empty state. You can widen the search from Settings →
 > Memory range, which looks at nearby days as well. (Memory range is part of the
-> paid Time Capsule Pro unlock; see below.)
+> paid Attic Pro unlock; see below.)
 >
-> **In-app purchase:** one non-consumable, `timecapsule.pro.lifetime`, which
+> **In-app purchase:** one non-consumable, `attic.pro.lifetime`, which
 > unlocks recap videos, the widened memory range, and late-night grouping. The
 > whole daily browsing experience is free. Restore Purchase is in Settings →
 > Upgrade and is reachable without buying anything.
 >
 > **Photo library access** is read-write and used for three things, all
 > user-initiated: showing memories, deleting a memory (which goes to Recently
-> Deleted via the system confirmation sheet), and adding a memory to a
-> "Time Capsule Edits" album so it can be edited in Photos. Limited access is
+> Deleted via the system confirmation sheet), and adding a memory to an
+> "Attic Edits" album so it can be edited in Photos. Limited access is
 > supported as a first-class state.
 >
 > **Location:** no location permission is requested and the device's current
@@ -160,7 +192,7 @@ Config and submission
   (an undeclared required-reason API is refused at **upload**, not review)
 - iPhone-only device family
 - `ITSAppUsesNonExemptEncryption = NO`
-- `CFBundleDisplayName = "Time Capsule"`
+- `CFBundleDisplayName = "Attic"`
 - Photo library purpose string now describes delete and album-write, not just
   viewing
 - Deployment target lowered from 26.1 to 18.0

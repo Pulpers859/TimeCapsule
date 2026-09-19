@@ -1,7 +1,7 @@
 import StoreKit
 import SwiftUI
 
-/// The one place Time Capsule asks for money.
+/// The one place Attic asks for money.
 ///
 /// Presented when someone reaches a Pro feature, and reachable on demand from
 /// Settings. Deliberately does not block the daily "on this day" experience —
@@ -25,7 +25,7 @@ struct PaywallView: View {
                             .padding(.top, 12)
                             .padding(.bottom, 24)
 
-                        Text("Time Capsule Pro")
+                        Text("Attic Pro")
                             .font(.system(size: 30, design: .rounded).weight(.bold))
                             .padding(.bottom, 8)
 

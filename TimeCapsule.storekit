@@ -9,12 +9,12 @@
       "localizations" : [
         {
           "description" : "Recap videos, a widened memory range, and late-night grouping. A one-time purchase, not a subscription.",
-          "displayName" : "Time Capsule Pro",
+          "displayName" : "Attic Pro",
           "locale" : "en_US"
         }
       ],
-      "productID" : "timecapsule.pro.lifetime",
-      "referenceName" : "Time Capsule Pro",
+      "productID" : "attic.pro.lifetime",
+      "referenceName" : "Attic Pro",
       "type" : "NonConsumable"
     }
   ],

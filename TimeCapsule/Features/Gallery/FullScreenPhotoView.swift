@@ -640,9 +640,9 @@ struct FullScreenPhotoView: View {
     }
 
     private func shareCaption(for asset: PHAsset) -> String {
-        guard let creationDate = asset.creationDate else { return "A Time Capsule memory" }
+        guard let creationDate = asset.creationDate else { return "An Attic memory" }
         let years = MemoryWindow.yearsAgo(for: creationDate)
-        guard years > 0 else { return "A Time Capsule memory" }
+        guard years > 0 else { return "An Attic memory" }
         let timing = MemoryWindow.dayWindow > 0 ? "around this day" : "today"
         return "\(years) year\(years == 1 ? "" : "s") ago \(timing)"
     }
@@ -780,7 +780,7 @@ struct MemoryInfoSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .allowsHitTesting(false)
 
-                    Text("The location name is requested from Apple's Maps service using this photo's coordinates. The coordinates come from the photo itself — Time Capsule never asks for your current location.")
+                    Text("The location name is requested from Apple's Maps service using this photo's coordinates. The coordinates come from the photo itself — Attic never asks for your current location.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -878,7 +878,7 @@ struct MemoryInfoSheet: View {
         case .alreadyInAlbum:
             return "Already in your \(PhotosEditHandoff.albumTitle) album. In Photos, open Albums → \(PhotosEditHandoff.albumTitle) to edit it."
         case .markedFavorite:
-            return "Marked as a Favorite. Time Capsule only has limited access to your library, so it can't create an album — look in Albums → Favorites, filed under this memory's original date."
+            return "Marked as a Favorite. Attic only has limited access to your library, so it can't create an album — look in Albums → Favorites, filed under this memory's original date."
         }
     }
 

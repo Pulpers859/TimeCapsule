@@ -15,7 +15,7 @@ import Photos
 /// item again in a library of thousands" — from the other end. It cannot
 /// control where Photos opens, but it can control how findable the memory is
 /// once the user gets there: the asset is added to a small app-owned album, so
-/// the hunt collapses to Albums → Time Capsule Edits → the last item.
+/// the hunt collapses to Albums → Attic Edits → the last item.
 ///
 /// Nothing here runs unless the user taps the button. The library is never
 /// mutated in the background.
@@ -30,7 +30,7 @@ nonisolated enum PhotosEditHandoff {
     /// it is why this is an album rather than the Favorites flag: Favorites is
     /// a smart album sorted by capture date, so a memory from six years ago
     /// would land six years back in the list — exactly the hunt being avoided.
-    static let albumTitle = "Time Capsule Edits"
+    static let albumTitle = "Attic Edits"
 
     enum Outcome {
         case addedToAlbum
@@ -48,7 +48,7 @@ nonisolated enum PhotosEditHandoff {
         var errorDescription: String? {
             switch self {
             case .notAuthorized:
-                return "Time Capsule needs access to your photo library to do this."
+                return "Attic needs access to your photo library to do this."
             case .albumUnavailable:
                 return "The \(PhotosEditHandoff.albumTitle) album could not be created."
             case .writeFailed(let reason):

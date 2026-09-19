@@ -256,9 +256,9 @@
 				DEVELOPMENT_TEAM = R4L58G49L2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Time Capsule";
+				INFOPLIST_KEY_CFBundleDisplayName = "Attic";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Time Capsule shows photos and videos from this day in past years. From a memory you can also delete it to Recently Deleted, or add it to a Time Capsule Edits album so you can edit it in the Photos app.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Attic shows photos and videos from this day in past years. From a memory you can also delete it to Recently Deleted, or add it to an Attic Edits album so you can edit it in the Photos app.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -292,9 +292,9 @@
 				DEVELOPMENT_TEAM = R4L58G49L2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Time Capsule";
+				INFOPLIST_KEY_CFBundleDisplayName = "Attic";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Time Capsule shows photos and videos from this day in past years. From a memory you can also delete it to Recently Deleted, or add it to a Time Capsule Edits album so you can edit it in the Photos app.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Attic shows photos and videos from this day in past years. From a memory you can also delete it to Recently Deleted, or add it to an Attic Edits album so you can edit it in the Photos app.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

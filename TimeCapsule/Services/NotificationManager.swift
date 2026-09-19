@@ -151,7 +151,7 @@ final class NotificationManager: NSObject {
             for (slot, count) in plannedRequests {
                 guard isCurrent(requestedGeneration) else { throw CancellationError() }
                 let content = UNMutableNotificationContent()
-                content.title = "Time Capsule"
+                content.title = "Attic"
                 content.body = NotificationPlan.body(memoryCount: count, dayWindow: dayWindow)
                 content.sound = .default
                 let components = calendar.dateComponents(

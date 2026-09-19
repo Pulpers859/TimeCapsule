@@ -135,7 +135,7 @@ struct SettingsView: View {
                     if authorizationStatus == .denied {
                         VStack(alignment: .leading, spacing: 12) {
                             Label {
-                                Text("Notifications are turned off for Time Capsule in iPhone Settings.")
+                                Text("Notifications are turned off for Attic in iPhone Settings.")
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             } icon: {
@@ -188,7 +188,7 @@ struct SettingsView: View {
                         SettingsRowLabel(
                             symbol: "checkmark.seal.fill",
                             tint: .green,
-                            title: "Time Capsule Pro",
+                            title: "Attic Pro",
                             subtitle: "Unlocked. Thank you."
                         )
                     } else {
@@ -198,7 +198,7 @@ struct SettingsView: View {
                             SettingsRowLabel(
                                 symbol: "sparkles",
                                 tint: .accentColor,
-                                title: "Time Capsule Pro",
+                                title: "Attic Pro",
                                 subtitle: "Recap videos and a wider memory range"
                             )
                         }
@@ -267,7 +267,7 @@ private struct SettingsBrandHeader: View {
         VStack(spacing: 12) {
             BrandGlyph(systemName: "clock.arrow.circlepath", size: 64)
 
-            Text("Time Capsule")
+            Text("Attic")
                 .font(.system(.title3, design: .rounded, weight: .bold))
 
             Text("This day, every year you've had a camera.")
@@ -314,7 +314,7 @@ private struct ProLockedRow: View {
                     )
             }
         }
-        .accessibilityHint("Requires Time Capsule Pro")
+        .accessibilityHint("Requires Attic Pro")
     }
 }
 

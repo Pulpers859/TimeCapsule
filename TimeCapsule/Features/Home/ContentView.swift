@@ -123,7 +123,7 @@ struct PermissionRequestView: View {
             BrandGlyph(systemName: "clock.arrow.circlepath", size: 104)
                 .padding(.bottom, 28)
 
-            Text("Time Capsule")
+            Text("Attic")
                 .font(.system(size: 34, design: .rounded).weight(.bold))
                 .padding(.bottom, 8)
 
@@ -231,7 +231,7 @@ struct PermissionDeniedView: View {
         EmptyStateScaffold(
             symbol: "lock.fill",
             title: "Photos Access Required",
-            message: "Time Capsule needs access to your library to find memories from this day. Enable it in Settings → Privacy → Photos → Time Capsule."
+            message: "Attic needs access to your library to find memories from this day. Enable it in Settings → Privacy → Photos → Attic."
         ) {
             Button {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -263,7 +263,7 @@ struct LimitedLibraryBanner: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Limited Photos Access")
                     .font(.subheadline.weight(.semibold))
-                Text("Time Capsule can only see the photos you've picked.")
+                Text("Attic can only see the photos you've picked.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)

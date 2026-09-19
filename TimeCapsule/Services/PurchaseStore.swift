@@ -7,11 +7,11 @@ import StoreKit
 /// no continuously delivered content, so a recurring charge would be charging
 /// rent for something already sitting on the user's phone — and reviewers say
 /// so, loudly, in the only place that affects sales.
-enum TimeCapsulePro {
+enum AtticPro {
     /// Must match the product identifier created in App Store Connect exactly.
     /// It does not have to match the bundle identifier, and deliberately does
     /// not, so that changing one never silently invalidates the other.
-    static let productID = "timecapsule.pro.lifetime"
+    static let productID = "attic.pro.lifetime"
 }
 
 /// Owns entitlement state for the lifetime of the app.
@@ -67,7 +67,7 @@ final class PurchaseStore: ObservableObject {
         var unlocked = false
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }
-            if transaction.productID == TimeCapsulePro.productID {
+            if transaction.productID == AtticPro.productID {
                 unlocked = true
             }
         }
@@ -121,7 +121,7 @@ final class PurchaseStore: ObservableObject {
         isLoadingProduct = true
         defer { isLoadingProduct = false }
         do {
-            product = try await Product.products(for: [TimeCapsulePro.productID]).first
+            product = try await Product.products(for: [AtticPro.productID]).first
         } catch {
             // Offline, or the product is not yet approved in App Store Connect.
             // The paywall shows its unavailable state; nothing is broken.
@@ -145,7 +145,7 @@ final class PurchaseStore: ObservableObject {
                 // Ask to Buy, or a required banking action. The purchase is not
                 // lost and not failed; it will arrive through Transaction.updates
                 // if and when it is approved.
-                pendingApprovalNotice = "This purchase needs approval before it can finish. Time Capsule Pro will unlock automatically once it goes through."
+                pendingApprovalNotice = "This purchase needs approval before it can finish. Attic Pro will unlock automatically once it goes through."
 
             case .userCancelled:
                 break
