@@ -12,6 +12,48 @@ nonisolated public enum RecapPlan {
         }
     }
 
+    /// Even sampling, then a single place of give so a pick can land on a
+    /// photo worth keeping.
+    ///
+    /// Even spacing is what guarantees every year appears, so it stays the
+    /// skeleton — a pick may move by one position at most, and never past its
+    /// neighbours. That keeps the year spread intact while letting an obvious
+    /// favourite displace the arbitrary frame that happened to fall on the
+    /// sampled index.
+    ///
+    /// When the set is short enough that every item is already included, or
+    /// the picks are adjacent, there is no slack and nothing moves.
+    public static func sampleIndices(
+        itemCount: Int,
+        maximum: Int,
+        preferring preferred: [Bool]
+    ) -> [Int] {
+        let base = sampleIndices(itemCount: itemCount, maximum: maximum)
+        guard preferred.count == itemCount, base.count > 1 else { return base }
+
+        var result = base
+        for position in result.indices {
+            let index = result[position]
+            if preferred[index] { continue }
+
+            // The lower bound reads from `result` (already settled) and the
+            // upper bound from `base` (not yet visited). Together they keep the
+            // picks strictly increasing no matter which way anything moves.
+            let lowerBound = position > 0 ? result[position - 1] + 1 : 0
+            let upperBound = position < base.count - 1 ? base[position + 1] - 1 : itemCount - 1
+
+            for candidate in [index - 1, index + 1]
+            where candidate >= lowerBound && candidate <= upperBound
+                && candidate >= 0 && candidate < itemCount {
+                if preferred[candidate] {
+                    result[position] = candidate
+                    break
+                }
+            }
+        }
+        return result
+    }
+
     // MARK: - Slide motion
 
     /// A rectangle in the recap's own render space, in Doubles rather than

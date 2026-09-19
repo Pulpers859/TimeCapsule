@@ -1,6 +1,7 @@
 import AVFoundation
 import Photos
 import UIKit
+import Vision
 
 /// Renders a shareable "recap" slideshow video (title card, crossfading
 /// photos) from this day's memories. Photos only — videos are skipped.
@@ -52,7 +53,7 @@ nonisolated enum MemoryRecapExporter {
         title: String,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async -> URL? {
-        let photos = sample(assets.filter { $0.mediaType == .image }, limit: maxPhotos)
+        let photos = sample(candidates(from: assets), limit: maxPhotos)
         guard !photos.isEmpty, !Task.isCancelled else { return nil }
 
         // Inside the shared export directory, not loose in `tmp`.
@@ -82,19 +83,17 @@ nonisolated enum MemoryRecapExporter {
         }
         for (index, asset) in photos.enumerated() {
             guard !Task.isCancelled else { return nil }
+            // Alternating the direction keeps consecutive slides from all
+            // drifting the same way, which reads as a stuck animation.
+            let pushesIn = slides.count.isMultiple(of: 2)
             if let image = await loadImage(from: asset, targetSize: renderSize, contentMode: .aspectFit),
-               let photo = normalizedPhoto(image),
-               let url = writeSlideImage(photo, to: frameDirectory, index: slides.count) {
-                // Alternate the direction so consecutive slides don't all
-                // drift the same way, which looks like a stuck animation.
-                let pushesIn = slides.count.isMultiple(of: 2)
-                slides.append(Slide(
-                    url: url,
-                    zoomFrom: pushesIn ? 1 : maxZoom,
-                    zoomTo: pushesIn ? maxZoom : 1,
-                    focusX: 0.5,
-                    focusY: 0.5
-                ))
+               let slide = await stageSlide(
+                   image,
+                   to: frameDirectory,
+                   index: slides.count,
+                   pushesIn: pushesIn
+               ) {
+                slides.append(slide)
             }
             onProgress(0.45 * Double(index + 1) / Double(photos.count))
         }
@@ -113,9 +112,30 @@ nonisolated enum MemoryRecapExporter {
         }
     }
 
-    /// Evenly samples across the full set so every year is represented.
+    /// What is eligible to appear in a recap at all.
+    ///
+    /// Screenshots are the single loudest complaint about Google Photos'
+    /// memories: it pulls from the whole camera roll, so receipts, memes and
+    /// shipping confirmations turn up alongside real memories. PhotoKit hands
+    /// us that distinction for free in `mediaSubtypes`, with no pixels loaded.
+    ///
+    /// The fallback matters. If a day holds nothing but screenshots, showing
+    /// them is still better than reporting that the recap failed.
+    private static func candidates(from assets: [PHAsset]) -> [PHAsset] {
+        let images = assets.filter { $0.mediaType == .image }
+        let photographs = images.filter { !$0.mediaSubtypes.contains(.photoScreenshot) }
+        return photographs.isEmpty ? images : photographs
+    }
+
+    /// Evenly samples across the full set so every year is represented, then
+    /// lets each pick drift by a single place to land on a favourite.
     private static func sample(_ assets: [PHAsset], limit: Int) -> [PHAsset] {
-        RecapPlan.sampleIndices(itemCount: assets.count, maximum: limit).map { assets[$0] }
+        let indices = RecapPlan.sampleIndices(
+            itemCount: assets.count,
+            maximum: limit,
+            preferring: assets.map(\.isFavorite)
+        )
+        return indices.map { assets[$0] }
     }
 
     // MARK: - Frame composition
@@ -137,6 +157,80 @@ nonisolated enum MemoryRecapExporter {
         return renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: fitted))
         }
+    }
+
+    /// Normalises, measures and writes one slide, off the main actor.
+    ///
+    /// `export` is called from a `Task` inside a SwiftUI view, and this target
+    /// builds with `NonisolatedNonsendingByDefault`, so a plain `nonisolated
+    /// async` function here would still run on the main thread — the same trap
+    /// documented at length in `MediaAssetLoading`. That was survivable when
+    /// staging was one redraw per photo. Face detection adds tens of
+    /// milliseconds per photo, thirty times over, so `@concurrent` is what
+    /// keeps the progress bar moving instead of freezing the UI while a recap
+    /// is prepared.
+    @concurrent
+    nonisolated private static func stageSlide(
+        _ image: UIImage,
+        to directory: URL,
+        index: Int,
+        pushesIn: Bool
+    ) async -> Slide? {
+        guard let photo = normalizedPhoto(image),
+              let url = writeSlideImage(photo, to: directory, index: index) else { return nil }
+        let focus = focusPoint(in: photo)
+        return Slide(
+            url: url,
+            zoomFrom: pushesIn ? 1 : maxZoom,
+            zoomTo: pushesIn ? maxZoom : 1,
+            focusX: focus.x,
+            focusY: focus.y
+        )
+    }
+
+    /// Where the zoom should be anchored: the centre of the faces when there
+    /// are any, the centre of the frame otherwise.
+    ///
+    /// A push that drifts toward the people in a shot rather than its
+    /// geometric middle is most of what makes Apple's own memory movies read
+    /// as produced. Vision runs entirely on device, so this costs nothing in
+    /// privacy terms and needs no new permission.
+    ///
+    /// Bigger faces weigh more, so a row of strangers in the background can't
+    /// drag the anchor off the subject in the foreground.
+    private static func focusPoint(in image: UIImage) -> (x: Double, y: Double) {
+        let centre = (x: 0.5, y: 0.5)
+        guard let cgImage = image.cgImage else { return centre }
+
+        // Deliberately the established request API rather than iOS 18's Vision
+        // rewrite: for face rectangles the behaviour is identical, and this
+        // spelling is stable across the whole supported range.
+        let request = VNDetectFaceRectanglesRequest()
+        // No orientation argument: the handler defaults to `.up`, which is
+        // correct here precisely because `normalizedPhoto` has already baked
+        // EXIF orientation into the pixels. Passing it explicitly would mean
+        // naming a type from a module this file does not import directly,
+        // which this target's `MemberImportVisibility` would reject.
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        guard (try? handler.perform([request])) != nil,
+              let faces = request.results,
+              !faces.isEmpty else { return centre }
+
+        var weightedX = 0.0
+        var weightedY = 0.0
+        var totalWeight = 0.0
+        for face in faces {
+            let box = face.boundingBox
+            let weight = Double(box.width) * Double(box.height)
+            guard weight > 0 else { continue }
+            // Vision measures from the bottom-left. Everything downstream of
+            // here — the framing maths, the draw rects — is top-left.
+            weightedX += Double(box.midX) * weight
+            weightedY += (1 - Double(box.midY)) * weight
+            totalWeight += weight
+        }
+        guard totalWeight > 0 else { return centre }
+        return (x: weightedX / totalWeight, y: weightedY / totalWeight)
     }
 
     private static func renderTitleCard(title: String) -> UIImage? {

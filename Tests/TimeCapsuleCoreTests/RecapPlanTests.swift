@@ -14,6 +14,69 @@ final class RecapPlanTests: XCTestCase {
         XCTAssertEqual(RecapPlan.sampleIndices(itemCount: 4, maximum: 30), [0, 1, 2, 3])
     }
 
+    // MARK: - Favouring
+
+    func testNothingPreferredLeavesTheEvenSpreadAlone() {
+        let base = RecapPlan.sampleIndices(itemCount: 100, maximum: 30)
+        let favoured = RecapPlan.sampleIndices(
+            itemCount: 100,
+            maximum: 30,
+            preferring: Array(repeating: false, count: 100)
+        )
+        XCTAssertEqual(favoured, base)
+    }
+
+    func testMismatchedPreferenceCountIsIgnored() {
+        let base = RecapPlan.sampleIndices(itemCount: 100, maximum: 30)
+        XCTAssertEqual(
+            RecapPlan.sampleIndices(itemCount: 100, maximum: 30, preferring: [true, false]),
+            base
+        )
+    }
+
+    func testAPickMovesOnePlaceToReachAFavourite() {
+        var preferred = Array(repeating: false, count: 100)
+        preferred[4] = true
+        let base = RecapPlan.sampleIndices(itemCount: 100, maximum: 30)
+        XCTAssertEqual(base[1], 3, "guard against the fixture drifting out from under this test")
+
+        let favoured = RecapPlan.sampleIndices(itemCount: 100, maximum: 30, preferring: preferred)
+        XCTAssertEqual(favoured[1], 4)
+        // Only the one pick should have moved.
+        XCTAssertEqual(Array(favoured.dropFirst(2)), Array(base.dropFirst(2)))
+    }
+
+    func testAFavouriteTwoPlacesAwayIsOutOfReach() {
+        var preferred = Array(repeating: false, count: 100)
+        preferred[5] = true
+        let base = RecapPlan.sampleIndices(itemCount: 100, maximum: 30)
+        XCTAssertEqual(
+            RecapPlan.sampleIndices(itemCount: 100, maximum: 30, preferring: preferred),
+            base
+        )
+    }
+
+    func testFavouringNeverReordersOrRepeatsAPick() {
+        // Every other item favoured is the case most likely to make two picks
+        // collide, because every pick has somewhere it wants to go.
+        let preferred = (0..<100).map { $0.isMultiple(of: 2) }
+        let favoured = RecapPlan.sampleIndices(itemCount: 100, maximum: 30, preferring: preferred)
+
+        XCTAssertEqual(favoured.count, 30)
+        XCTAssertEqual(Set(favoured).count, favoured.count, "a pick was duplicated")
+        XCTAssertEqual(favoured, favoured.sorted(), "picks came out of order")
+        XCTAssertTrue(favoured.allSatisfy { $0 >= 0 && $0 < 100 })
+    }
+
+    func testShortRecapHasNoSlackToMoveInto() {
+        // Every item is already included, so there is nowhere for a pick to go.
+        let preferred = (0..<4).map { $0 == 3 }
+        XCTAssertEqual(
+            RecapPlan.sampleIndices(itemCount: 4, maximum: 30, preferring: preferred),
+            [0, 1, 2, 3]
+        )
+    }
+
     // MARK: - Motion
 
     func testEasingPinsBothEndsAndMidpoint() {
