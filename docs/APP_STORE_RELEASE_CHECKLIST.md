@@ -52,7 +52,10 @@ It also isn't valid reverse-DNS and reads as a placeholder to anyone who
 inspects the binary.
 
 Set it to reverse-DNS of a domain you control, e.g. `com.yourdomain.attic`.
-It appears twice in `TimeCapsule.xcodeproj/project.pbxproj`.
+It appears four times in `TimeCapsule.xcodeproj/project.pbxproj`: twice for the
+app and twice for the widget, whose identifier must stay a suffix of the app's
+(`<app id>.AtticWidget`) or the extension will not be accepted. The App Group in
+item 5 should be renamed to match at the same time.
 
 Note the bundle ID should now derive from whatever domain you pick for Attic,
 not the old name.
@@ -91,7 +94,24 @@ The `dark` and `tinted` entries in `Contents.json` have no file, so iOS
 auto-derives them. Legal, but a paid app is shipping a system-generated icon
 rather than a designed one.
 
-### 5. Account prerequisites
+### 5. App Group — the widget reads the wrong settings without it
+
+The widget runs in its own process and cannot see the app's
+`UserDefaults.standard`, so the memory range and day-start hour live in a
+shared App Group suite: **`group.Patrick-App.TimeCapsule`**, declared in
+`Config/Attic.entitlements` and `Config/AtticWidget.entitlements`.
+
+Enable **App Groups** on both the app and the widget in the developer portal
+and register that identifier. If the bundle identifier changes (item 1), change
+the group with it — it is referenced in one constant,
+`AtticDefaults.appGroupIdentifier`, plus the two entitlement files.
+
+**This fails silently if skipped.** `UserDefaults(suiteName:)` returns nil when
+the group is not provisioned, and the code falls back to `.standard` rather
+than crashing. In the app everything keeps working; in the widget the memory
+range silently reverts to the free-tier default. Nothing logs an error.
+
+### 6. Account prerequisites
 
 Signed Paid Applications Agreement, banking and tax forms completed, screenshots
 at the required device sizes, and the IAP product created in App Store Connect
@@ -178,6 +198,22 @@ verified only by the CI build.
       after leaving the viewer. Note that auto-play on swipe now takes over
       audio, matching Photos. If that feels wrong, the alternative is muted
       auto-play with tap-to-unmute — a product decision, not a technical one.
+- [ ] **Widget, all four families** — small, medium, lock screen rectangular,
+      lock screen circular — plus StandBy. None of this has been rendered.
+      Check the label stays legible over a bright photo and a dark one, since
+      the gradient scrim is the only thing separating them.
+- [ ] **Widget with the App Group provisioned**, confirming a widened memory
+      range in Settings actually changes what the widget shows. This is the
+      silent-failure path described above.
+- [ ] **Widget empty and no-access states**, the second by revoking photo
+      access in Settings.
+- [ ] **Widget freshness** — delete a memory in the app, background the app,
+      confirm the widget drops it rather than waiting for tomorrow.
+- [ ] **Recap export timing.** Motion took the encode from ~180 frames to
+      ~1700. It should still finish in a reasonable time on the oldest device
+      you intend to support, and must not be jetsammed partway.
+- [ ] **Recap framing** — confirm the push lands on faces and that the
+      crossfade between a portrait and a landscape photo has no visible pop.
 - [ ] **Swipe performance** on a large library with the memory range widened.
 - [ ] **Delete** from both the grid and the viewer, checking the gallery and the
       notification count stay in step.
@@ -202,6 +238,18 @@ Monetization
   `Transaction.currentEntitlements`
 - Paywall, Settings upgrade section, Restore control
 - `.storekit` config wired into the scheme
+
+Widget
+- Home screen (two sizes), lock screen and StandBy, reading the photo library
+  directly so it is correct without the app being opened
+- Shares `MemoryLibrary` with the gallery, so widget and grid cannot disagree
+- Reloads at the day boundary, and when the app is backgrounded
+- Rotates through up to four memories, one per year first
+
+Recap quality
+- Eased pan and zoom on every slide, anchored on faces via on-device Vision
+- Screenshots excluded from recaps; favourites can displace a neighbouring pick
+- Slide staging moved off the main actor (it was blocking the UI before)
 
 Correctness
 - Recap slides no longer written with `.completeFileProtection` (failed whenever
