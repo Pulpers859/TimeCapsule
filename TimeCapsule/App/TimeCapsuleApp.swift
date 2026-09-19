@@ -10,6 +10,11 @@ struct TimeCapsuleApp: App {
     @StateObject private var purchaseStore = PurchaseStore()
 
     init() {
+        // Before anything reads the memory window. The notification schedule
+        // below is the first reader, and if it ran against an unmigrated suite
+        // it would build sixty days of counts from the wrong day window.
+        AtticDefaults.migrateIfNeeded()
+
         NotificationManager.shared.requestAndSchedule()
 
         // Every other sweep runs at the *start* of the next share or recap, so

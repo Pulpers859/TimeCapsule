@@ -17,9 +17,12 @@ nonisolated enum MemoryWindow {
     }
 
     /// 0 = exact day only. Clamped so a corrupt default can't explode fetches.
+    ///
+    /// Read from the shared suite, not `.standard`, so the widget resolves the
+    /// same window the gallery does.
     static var dayWindow: Int {
         clampedDayWindow(
-            UserDefaults.standard.object(forKey: storageKey) as? Int ?? defaultDayWindow
+            AtticDefaults.shared.object(forKey: storageKey) as? Int ?? defaultDayWindow
         )
     }
 
@@ -28,7 +31,7 @@ nonisolated enum MemoryWindow {
     /// runs past midnight stays grouped under the evening it started.
     /// 0 = midnight (default, preserves prior behavior).
     static var dayStartHour: Int {
-        max(0, min(UserDefaults.standard.object(forKey: dayStartHourKey) as? Int ?? defaultDayStartHour, 6))
+        max(0, min(AtticDefaults.shared.object(forKey: dayStartHourKey) as? Int ?? defaultDayStartHour, 6))
     }
 
     /// Returns the "logical date" for a given wall-clock time.

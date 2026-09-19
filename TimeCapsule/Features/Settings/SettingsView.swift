@@ -10,9 +10,12 @@ struct SettingsView: View {
     private var notificationHour = NotificationPreferences.defaultNotificationHour
     @AppStorage(NotificationPreferences.notificationMinuteKey)
     private var notificationMinute = NotificationPreferences.defaultNotificationMinute
-    @AppStorage(MemoryWindow.storageKey)
+    // These two go to the shared suite because the widget reads them too.
+    // Writing them to `.standard` while `MemoryWindow` reads the group would
+    // leave both controls looking functional and doing nothing.
+    @AppStorage(MemoryWindow.storageKey, store: AtticDefaults.shared)
     private var memoryDayWindow = MemoryWindow.defaultDayWindow
-    @AppStorage(MemoryWindow.dayStartHourKey)
+    @AppStorage(MemoryWindow.dayStartHourKey, store: AtticDefaults.shared)
     private var dayStartHour = MemoryWindow.defaultDayStartHour
 
     @EnvironmentObject private var purchaseStore: PurchaseStore

@@ -96,7 +96,8 @@ final class PurchaseStore: ObservableObject {
     /// Reached only on a true -> false transition, so a first launch (which
     /// starts at false) never wipes anything.
     private func releaseProSettings() {
-        let defaults = UserDefaults.standard
+        // The shared suite, because these are the two keys the widget reads.
+        let defaults = AtticDefaults.shared
         defaults.set(MemoryWindow.defaultDayWindow, forKey: MemoryWindow.storageKey)
         defaults.set(MemoryWindow.defaultDayStartHour, forKey: MemoryWindow.dayStartHourKey)
 
