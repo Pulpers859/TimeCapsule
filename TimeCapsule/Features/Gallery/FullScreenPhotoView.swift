@@ -148,7 +148,7 @@ struct FullScreenPhotoView: View {
             if showChrome && !visibleAssets.isEmpty {
                 VStack(spacing: 0) {
                     VStack(spacing: 8) {
-                        GlassEffectContainer(spacing: 14) {
+                        TCGlassContainer(spacing: 14) {
                             HStack(spacing: 10) {
                                 ChromeButton(
                                     systemImage: "xmark",
@@ -194,7 +194,7 @@ struct FullScreenPhotoView: View {
                     // With the button gone a plain HStack would park the counter
                     // 27pt right of centre, so the centring is stated directly
                     // instead of being an emergent property of the contents.
-                    GlassEffectContainer(spacing: 14) {
+                    TCGlassContainer(spacing: 14) {
                         ZStack {
                             Text("\(currentIndex + 1) of \(visibleAssets.count)")
                                 .font(.footnote.weight(.medium))
@@ -202,7 +202,7 @@ struct FullScreenPhotoView: View {
                                 .contentTransition(.numericText())
                                 .padding(.horizontal, 16)
                                 .frame(height: 44)
-                                .glassEffect(in: Capsule())
+                                .tcGlass(in: Capsule())
 
                             HStack {
                                 ChromeButton(
@@ -685,7 +685,7 @@ private struct ChromeButton: View {
             .frame(width: 44, height: 44)
             .contentShape(Circle())
         }
-        .buttonStyle(.glass)
+        .tcGlassButtonStyle(isProminent: false)
         .buttonBorderShape(.circle)
         .accessibilityLabel(accessibilityLabel)
     }

@@ -53,6 +53,15 @@ actor PlaceNameLookup {
         for coordinate: CLLocationCoordinate2D
     ) async -> LookupOutcome {
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        if #available(iOS 26.0, *) {
+            return await mapKitPlaceName(for: location)
+        } else {
+            return await placemarkPlaceName(for: location)
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private static func mapKitPlaceName(for location: CLLocation) async -> LookupOutcome {
         guard let request = MKReverseGeocodingRequest(location: location) else { return .unavailable }
 
         return await withCheckedContinuation { (continuation: CheckedContinuation<LookupOutcome, Never>) in
@@ -71,5 +80,43 @@ actor PlaceNameLookup {
                 continuation.resume(returning: .answered(name))
             }
         }
+    }
+
+    /// Pre-iOS 26 path. `MKReverseGeocodingRequest` and `cityWithContext` are
+    /// both iOS 26, so below that the name has to be assembled from a
+    /// `CLPlacemark` by hand.
+    private static func placemarkPlaceName(for location: CLLocation) async -> LookupOutcome {
+        do {
+            let placemarks = try await CLGeocoder().reverseGeocodeLocation(location)
+            guard let placemark = placemarks.first else { return .answered(nil) }
+            return .answered(composedName(from: placemark))
+        } catch let error as CLError where error.code == .geocodeFoundNoResult {
+            // A definite verdict of "nothing is here", which is worth caching
+            // exactly like the iOS 26 path's nil answer.
+            return .answered(nil)
+        } catch {
+            // Offline, rate limited, or cancelled. Must NOT be cached: doing so
+            // would turn one bad minute into a permanently blank place name.
+            return .unavailable
+        }
+    }
+
+    /// Approximates what `cityWithContext` does: enough context to place the
+    /// city, without reciting a postal address.
+    private static func composedName(from placemark: CLPlacemark) -> String? {
+        guard let city = placemark.locality ?? placemark.subAdministrativeArea else {
+            // Somewhere with no town at all — a national park, open water.
+            // The point-of-interest name is the best available, which is the
+            // same fallback the iOS 26 path uses.
+            return placemark.name ?? placemark.areasOfInterest?.first
+        }
+
+        // At home the reader wants the state; abroad they want the country.
+        // That is the distinction MapKit makes for us on iOS 26.
+        let isHomeCountry = placemark.isoCountryCode == Locale.current.region?.identifier
+        if let context = isHomeCountry ? placemark.administrativeArea : placemark.country {
+            return "\(city), \(context)"
+        }
+        return city
     }
 }

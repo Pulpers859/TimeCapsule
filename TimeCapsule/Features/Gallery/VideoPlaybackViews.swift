@@ -70,7 +70,7 @@ struct VideoPlaybackControls: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .glassEffect(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .tcGlass(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
     }
 
     private func formattedTime(_ seconds: Double) -> String {

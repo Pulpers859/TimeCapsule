@@ -138,9 +138,8 @@ struct TimeCapsuleView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 52)
                     }
-                    .buttonStyle(.glassProminent)
+                    .tcGlassCapsuleStyle(isProminent: true, tint: .red)
                     .buttonBorderShape(.capsule)
-                    .tint(.red)
                     .padding(.horizontal, TCMetrics.screenPadding)
                     .padding(.bottom, 10)
                     .disabled(isDeleting)
@@ -654,7 +653,7 @@ struct MemoryControlsBar: View {
     }
 
     var body: some View {
-        GlassEffectContainer(spacing: 16) {
+        TCGlassContainer(spacing: 16) {
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     GlassIconButton(
@@ -671,7 +670,7 @@ struct MemoryControlsBar: View {
                         .minimumScaleFactor(0.8)
                         .padding(.horizontal, 16)
                         .frame(height: TCMetrics.controlHeight)
-                        .glassEffect(in: Capsule())
+                        .tcGlass(in: Capsule())
                         .accessibilityAddTraits(.isHeader)
 
                     Spacer(minLength: 6)
@@ -684,7 +683,7 @@ struct MemoryControlsBar: View {
                             .frame(height: TCMetrics.controlHeight)
                             .contentTransition(.numericText())
                     }
-                    .buttonStyle(.glass)
+                    .tcGlassCapsuleStyle(isProminent: false)
                     .buttonBorderShape(.capsule)
                 }
 
@@ -717,7 +716,7 @@ struct MemoryControlsBar: View {
                                 .lineLimit(1)
                                 .padding(.horizontal, 14)
                                 .frame(height: 38)
-                                .glassEffect(in: Capsule())
+                                .tcGlass(in: Capsule())
                             }
                             .buttonStyle(.plain)
                             .fixedSize(horizontal: true, vertical: false)
@@ -762,11 +761,7 @@ private extension View {
     /// genuinely different material, rather than just a recoloured background.
     @ViewBuilder
     func filterChipStyle(isSelected: Bool) -> some View {
-        if isSelected {
-            self.buttonStyle(.glassProminent).tint(Color.accentColor)
-        } else {
-            self.buttonStyle(.glass)
-        }
+        self.tcGlassCapsuleStyle(isProminent: isSelected)
     }
 }
 

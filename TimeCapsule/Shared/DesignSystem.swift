@@ -164,6 +164,101 @@ struct SkeletonGalleryView: View {
     }
 }
 
+// MARK: - Liquid Glass compatibility
+
+/// Liquid Glass arrived in iOS 26; this app supports iOS 18. Every use of it
+/// goes through the three helpers below rather than being gated at each call
+/// site, so there is one place that decides what the pre-26 appearance is and
+/// one place to delete when the deployment target eventually catches up.
+///
+/// The fallback is a material rather than a flat colour on purpose: this chrome
+/// floats directly over the user's photos, so it has to stay legible against a
+/// blown-out sky and a night shot alike. `.ultraThinMaterial` with a hairline
+/// border is the pre-Glass idiom for exactly that, and is already what the
+/// app's own cards use elsewhere in this file.
+
+/// Stands in for `GlassEffectContainer`, whose only job is to let neighbouring
+/// glass shapes merge into each other. Before iOS 26 there is no glass to
+/// merge, so it becomes a passthrough and the layout is unchanged.
+struct TCGlassContainer<Content: View>: View {
+    var spacing: CGFloat
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing, content: content)
+        } else {
+            content()
+        }
+    }
+}
+
+extension View {
+    /// `.glassEffect(in:)` where the system has it, a material where it does not.
+    @ViewBuilder
+    func tcGlass<S: InsettableShape>(in shape: S) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(in: shape)
+        } else {
+            self
+                .background(.ultraThinMaterial, in: shape)
+                .overlay(shape.strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+        }
+    }
+
+    /// Capsule-shaped equivalent of `tcGlassButtonStyle`.
+    ///
+    /// Takes the tint as a parameter rather than leaving callers to chain
+    /// `.tint()`: on the pre-26 path the tint *is* the fill, so it has to be
+    /// known here rather than applied afterwards to a style that ignores it.
+    @ViewBuilder
+    func tcGlassCapsuleStyle(isProminent: Bool, tint: Color? = nil) -> some View {
+        if #available(iOS 26.0, *) {
+            if isProminent {
+                self.buttonStyle(.glassProminent).tint(tint ?? Color.accentColor)
+            } else {
+                self.buttonStyle(.glass)
+            }
+        } else if isProminent {
+            self
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .background(tint ?? Color.accentColor, in: Capsule())
+        } else {
+            self
+                .buttonStyle(.plain)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+        }
+    }
+
+    /// `.buttonStyle(.glass)` / `.glassProminent` where available.
+    ///
+    /// `.glassProminent` is known to render artifacts on circular borders, so
+    /// the prominent variant keeps its explicit clip. The pre-26 branch has to
+    /// build the affordance itself, because `.plain` strips all decoration.
+    @ViewBuilder
+    func tcGlassButtonStyle(isProminent: Bool) -> some View {
+        if #available(iOS 26.0, *) {
+            if isProminent {
+                self.buttonStyle(.glassProminent).clipShape(Circle())
+            } else {
+                self.buttonStyle(.glass)
+            }
+        } else if isProminent {
+            self
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .background(Color.accentColor, in: Circle())
+        } else {
+            self
+                .buttonStyle(.plain)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+        }
+    }
+}
+
 // MARK: - Shared chrome
 
 /// Circular glass control. Used only where it floats over content — per Apple's
@@ -182,21 +277,8 @@ struct GlassIconButton: View {
                 .contentShape(Circle())
         }
         .buttonBorderShape(.circle)
-        .glassIconStyle(isProminent: isProminent)
+        .tcGlassButtonStyle(isProminent: isProminent)
         .accessibilityLabel(accessibilityLabel)
-    }
-}
-
-private extension View {
-    /// `.glassProminent` is known to render artifacts on circular borders, so
-    /// the prominent variant gets an explicit clip.
-    @ViewBuilder
-    func glassIconStyle(isProminent: Bool) -> some View {
-        if isProminent {
-            self.buttonStyle(.glassProminent).clipShape(Circle())
-        } else {
-            self.buttonStyle(.glass)
-        }
     }
 }
 
