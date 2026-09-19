@@ -26,6 +26,16 @@ struct FullScreenPhotoView: View {
     @State private var isDeleting = false
     @State private var isPreparingShare = false
     @State private var shareError: String? = nil
+    /// Indices of the pages that are actually built: the current one and its
+    /// immediate neighbours, so a swipe has somewhere to swipe to.
+    private var pageWindow: [Int] {
+        guard !visibleAssets.isEmpty else { return [] }
+        let lower = max(currentIndex - 1, 0)
+        let upper = min(currentIndex + 1, visibleAssets.count - 1)
+        guard lower <= upper else { return [] }
+        return Array(lower...upper)
+    }
+
     private var currentAssetIsVideo: Bool {
         visibleAssets.indices.contains(currentIndex) && visibleAssets[currentIndex].mediaType == .video
     }
@@ -64,10 +74,31 @@ struct FullScreenPhotoView: View {
             } else {
                 GeometryReader { geo in
                     let pageWidth = geo.size.width
-                    HStack(spacing: 0) {
-                        ForEach(Array(visibleAssets.enumerated()), id: \.element.localIdentifier) { index, a in
+                    // Only the current page and its immediate neighbours are
+                    // built.
+                    //
+                    // This was a plain HStack over `visibleAssets`, which is
+                    // every asset from every year group, not just one year. So
+                    // opening the viewer constructed a FullResAssetView for all
+                    // of them up front — and because `dragOffset` is @State on
+                    // this view, every one of those bodies re-evaluated on every
+                    // frame of every swipe. On a large library with a widened
+                    // memory range that is hundreds of views per frame.
+                    //
+                    // A LazyHStack would not fix it: it only lazifies inside a
+                    // scroll container, and this is a hand-rolled pager driven
+                    // by .offset and a DragGesture. Windowing the ForEach is
+                    // the fix that keeps that gesture code untouched.
+                    //
+                    // Identity is by absolute index. FullResAssetView's
+                    // .task(id:) keys on the asset's localIdentifier, so a view
+                    // reused for a different asset after a delete reloads, and
+                    // its .onDisappear releases the player when it leaves the
+                    // window — the same cleanup `shouldRender: false` did.
+                    ZStack(alignment: .leading) {
+                        ForEach(pageWindow, id: \.self) { index in
                             FullResAssetView(
-                                asset: a,
+                                asset: visibleAssets[index],
                                 isActive: index == currentIndex && !isPlaybackBlocked,
                                 shouldRender: abs(index - currentIndex) <= 1,
                                 showControls: showChrome,
@@ -77,21 +108,21 @@ struct FullScreenPhotoView: View {
                                     }
                                 },
                                 onZoomStateChange: { isZoomed in
-                                    if visibleAssets.indices.contains(currentIndex),
-                                       visibleAssets[currentIndex].localIdentifier == a.localIdentifier {
+                                    if index == currentIndex {
                                         isCurrentAssetZoomed = isZoomed
                                     }
                                 },
                                 onScrubbingChanged: { isScrubbing in
-                                    if visibleAssets.indices.contains(currentIndex),
-                                       visibleAssets[currentIndex].localIdentifier == a.localIdentifier {
+                                    if index == currentIndex {
                                         isVideoScrubbing = isScrubbing
                                     }
                                 }
                             )
                                 .frame(width: pageWidth, height: geo.size.height)
+                                .offset(x: CGFloat(index) * pageWidth)
                         }
                     }
+                    .frame(width: pageWidth, height: geo.size.height, alignment: .leading)
                     .offset(x: -CGFloat(currentIndex) * pageWidth + dragOffset)
                     .gesture(pageDragGesture(pageWidth: pageWidth, isEnabled: !isCurrentAssetZoomed && !isVideoScrubbing && !isDeleting))
                     .animation(.easeOut(duration: 0.25), value: currentIndex)

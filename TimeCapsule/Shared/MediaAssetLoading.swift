@@ -190,7 +190,23 @@ private nonisolated final class VideoExportSessionState: @unchecked Sendable {
     }
 }
 
-func loadImage(
+// Isolation note for the loaders below.
+//
+// This target builds with `-default-isolation=MainActor`, so an unmarked
+// function is main-actor isolated. It also enables the upcoming feature
+// `NonisolatedNonsendingByDefault`, which means marking an *async* function
+// `nonisolated` is NOT enough to get it off the main actor: under that rule a
+// nonisolated async function runs on its caller's executor. Every caller here
+// is a SwiftUI view, so "nonisolated async" would still mean "on the main
+// thread". `@concurrent` is what actually moves the work to the concurrent
+// pool, which is the whole point of these functions.
+//
+// The synchronous helpers (`shareExportDirectory`, `sweepStaleShareExports`)
+// need only `nonisolated`, because a synchronous call really does run on
+// whatever thread invoked it.
+
+@concurrent
+nonisolated func loadImage(
     from asset: PHAsset,
     targetSize: CGSize = CGSize(width: 800, height: 800),
     contentMode: PHImageContentMode = .aspectFill
@@ -218,7 +234,8 @@ func loadImage(
     })
 }
 
-func loadPlayer(from asset: PHAsset) async -> AVPlayer? {
+@concurrent
+nonisolated func loadPlayer(from asset: PHAsset) async -> AVPlayer? {
     let state = PlayerRequestState()
     return await withTaskCancellationHandler(operation: {
         await withCheckedContinuation { (continuation: CheckedContinuation<AVPlayer?, Never>) in
@@ -294,7 +311,8 @@ nonisolated func sweepStaleShareExports(olderThan age: TimeInterval = 600) {
 /// to be handed to another process gains no privacy from one, and marking it
 /// `.complete` makes it unreadable if the screen locks while the receiving app
 /// is still uploading.
-func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
+@concurrent
+nonisolated func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
     let state = VideoExportSessionState()
     guard let exporter = await withTaskCancellationHandler(operation: {
         await videoExportSession(for: asset, state: state)
@@ -331,6 +349,7 @@ func exportVideoToTemporaryFile(from asset: PHAsset) async -> URL? {
     return destinationURL
 }
 
+@concurrent
 private nonisolated func videoExportSession(
     for asset: PHAsset,
     state: VideoExportSessionState
