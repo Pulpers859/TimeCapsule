@@ -57,6 +57,18 @@ nonisolated enum PhotosEditHandoff {
         }
     }
 
+    /// `@concurrent`, not just the enum's `nonisolated`.
+    ///
+    /// The type is marked `nonisolated` to keep the synchronous PhotoKit work
+    /// below — the album fetch and the `contains()` walk over every asset in
+    /// the album — off the main thread. That is not what `nonisolated` alone
+    /// does to an *async* function under this build's
+    /// NonisolatedNonsendingByDefault: such a function runs on its caller's
+    /// executor, and the caller is a SwiftUI view, so all of it was running on
+    /// the main thread anyway. `@concurrent` here moves the whole chain onto
+    /// the concurrent pool, and the private helpers inherit it from this entry
+    /// point rather than each needing their own annotation.
+    @concurrent
     static func stage(_ asset: PHAsset) async throws -> Outcome {
         switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
         case .authorized:
