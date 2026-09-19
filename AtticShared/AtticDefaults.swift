@@ -24,7 +24,19 @@ nonisolated enum AtticDefaults {
     /// that disagrees with the app is a worse outcome than one that agrees,
     /// and a better one than a crash — but it is silent, which is why
     /// provisioning the group is called out on the release checklist.
-    static let shared: UserDefaults = UserDefaults(suiteName: appGroupIdentifier) ?? .standard
+    /// `nonisolated(unsafe)` because `UserDefaults` is not `Sendable`, which
+    /// makes a static one an error under the Swift 6 language mode the package
+    /// builds in. It is the right annotation rather than a silencer:
+    /// `UserDefaults` is documented as thread-safe and synchronises its own
+    /// access, which is the "external synchronization mechanism" the
+    /// compiler's own diagnostic points at.
+    ///
+    /// The alternative it suggests — `@MainActor` — would be actively wrong.
+    /// `MemoryWindow` is nonisolated and is read from a detached task in the
+    /// notification scheduler and from the widget's own process, none of which
+    /// are on the main actor.
+    nonisolated(unsafe) static let shared: UserDefaults =
+        UserDefaults(suiteName: appGroupIdentifier) ?? .standard
 
     /// Copies settings written before the App Group existed.
     ///
