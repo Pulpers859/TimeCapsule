@@ -86,11 +86,22 @@ nonisolated struct MemoryProvider: TimelineProvider {
 
         // Exactly what the gallery asks for, through exactly the same service,
         // so the widget cannot disagree with the grid behind it.
+        //
+        // Capped at the number of memories this widget can actually show. An
+        // uncapped call retains a `PHAsset` for every match across the whole
+        // lookback — a widened memory range makes that a 15-day window over
+        // 20 years — to use four of them, inside an extension small enough
+        // that the difference can get it killed. A killed timeline never
+        // installs its next reload, so the home screen freezes on a stale
+        // photo until the app is next backgrounded.
         let queryDate = MemoryWindow.logicalDate(for: Date())
-        let groups = MemoryLibrary.yearGroups(on: queryDate)
+        let groups = MemoryLibrary.yearGroups(on: queryDate, maxPerYear: limit)
         guard !groups.isEmpty else { return [] }
 
-        let total = groups.reduce(0) { $0 + $1.assets.count }
+        // From `count(on:)`, not by summing the groups, which are capped and
+        // would undercount. That path answers from the fetch itself without
+        // materialising anything.
+        let total = MemoryLibrary.count(on: queryDate)
         let picks = Self.picks(from: groups, limit: limit)
 
         let now = Date()
@@ -200,6 +211,18 @@ struct MemoryWidgetView: View {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
+                } else {
+                    // A memory whose photo could not be loaded locally. The
+                    // widget never goes to the network, so an iCloud-only
+                    // original with no cached rendition lands here — and a
+                    // plain black tile captioned "3 Years Ago" reads as a
+                    // broken widget rather than as a photo it cannot reach.
+                    // Also covers the placeholder entry, which WidgetKit
+                    // redacts anyway.
+                    Image(systemName: "photo")
+                        .font(.system(size: 22, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.25))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 // A gradient rather than a solid scrim: the label has to stay
                 // legible over a bright sky and a dark room alike.

@@ -88,10 +88,22 @@ nonisolated enum MemoryLibrary {
         )
     }
 
+    /// - Parameter maxPerYear: caps how many assets each year retains. The
+    ///   gallery wants all of them and passes nil; the widget shows at most
+    ///   four and passes a small number.
+    ///
+    ///   Without a cap this holds on to a `PHAsset` for every match across
+    ///   the whole lookback — with a widened memory range that is a 15-day
+    ///   window across 20 years, which on a heavy library is a lot of
+    ///   objects to build inside a widget extension's jetsam limit purely to
+    ///   use four of them. A capped caller must take its total from
+    ///   `count(on:)` rather than by summing the groups, which is what that
+    ///   method is for.
     static func yearGroups(
         on date: Date,
         calendar: Calendar = .current,
-        exclusions: MemoryExclusions.Context? = nil
+        exclusions: MemoryExclusions.Context? = nil,
+        maxPerYear: Int? = nil
     ) -> [YearGroup] {
         let currentYear = calendar.component(.year, from: date)
         let ranges = anniversaryRanges(on: date, calendar: calendar)
@@ -118,6 +130,7 @@ nonisolated enum MemoryLibrary {
                   !exclusions.excludes(asset) else {
                 return
             }
+            if let maxPerYear, assetsByYear[matchingYear]?.count ?? 0 >= maxPerYear { return }
             assetsByYear[matchingYear, default: []].append(asset)
         }
 

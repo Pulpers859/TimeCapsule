@@ -243,6 +243,22 @@ verified only by the CI build.
       thousands of photos, then confirm the widget still refreshes at the day
       boundary rather than freezing on a stale photo. This was a real
       jetsam risk before the album lookup was bounded to the queried dates.
+- [ ] **Exclude a cloud SHARED album**, then open the gallery, let a
+      notification schedule run, and let the widget refresh. PhotoKit raises
+      an Objective-C exception — uncatchable from Swift, so the process dies
+      — if a fetch inside a shared album carries a predicate, and bounding
+      that lookup is exactly what introduced one. Shared albums are now
+      fetched unbounded to avoid it; this confirms the guard is in the right
+      place. Highest-value single test on this list.
+- [ ] **Widget's first PhotoKit call on a clean install.** The extension
+      reads the photo library and had no `NSPhotoLibraryUsageDescription` of
+      its own; purpose strings are read from the accessing binary, so the
+      extension was at risk of being terminated outright. One has been added
+      to both widget configs — confirm the widget actually renders.
+- [ ] **Widget on an iCloud-optimised library.** It never goes to the
+      network, so an original with no local rendition yields no image.
+      Confirm the placeholder glyph appears rather than a black tile
+      captioned with a year, which reads as a broken widget.
 
 ---
 

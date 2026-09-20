@@ -199,11 +199,27 @@ nonisolated enum MemoryExclusions {
         guard !ids.isEmpty else { return [] }
 
         let collections = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: ids, options: nil)
-        let options = PHFetchOptions()
-        options.predicate = predicate
 
         var members: Set<String> = []
         collections.enumerateObjects { collection, _, _ in
+            // Built per collection, because a cloud shared album must be
+            // fetched without one.
+            //
+            // PhotoKit does not support `predicate` or `sortDescriptors` when
+            // fetching inside a shared album, and it does not fail softly: it
+            // raises an Objective-C exception, which Swift cannot catch, so
+            // the process dies. Shared albums are offerable — the exclusion
+            // menu lists `.album` collections, and a family shared album is
+            // exactly the kind of thing someone wants to stop seeing — and
+            // once one is excluded this code runs on every gallery fetch,
+            // every notification schedule and every widget refresh. Bounding
+            // the query is a memory optimisation; it is not worth a crash, so
+            // a shared album is enumerated in full instead.
+            let options = PHFetchOptions()
+            if collection.assetCollectionSubtype != .albumCloudShared {
+                options.predicate = predicate
+            }
+
             PHAsset.fetchAssets(in: collection, options: options).enumerateObjects { asset, _, _ in
                 members.insert(asset.localIdentifier)
             }
