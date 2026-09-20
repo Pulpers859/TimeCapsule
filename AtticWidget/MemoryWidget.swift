@@ -95,13 +95,25 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // installs its next reload, so the home screen freezes on a stale
         // photo until the app is next backgrounded.
         let queryDate = MemoryWindow.logicalDate(for: Date())
-        let groups = MemoryLibrary.yearGroups(on: queryDate, maxPerYear: limit)
+
+        // Resolved once and handed to both calls. Left to their defaults they
+        // each build their own, which for an excluded cloud shared album —
+        // fetched unbounded, since PhotoKit rejects a predicate inside one —
+        // means two full walks of that album inside the extension. That would
+        // cost more than the per-year cap below saves, in the one process
+        // where the budget actually matters.
+        let exclusions = MemoryExclusions.Context.current()
+        let groups = MemoryLibrary.yearGroups(
+            on: queryDate,
+            exclusions: exclusions,
+            maxPerYear: limit
+        )
         guard !groups.isEmpty else { return [] }
 
         // From `count(on:)`, not by summing the groups, which are capped and
         // would undercount. That path answers from the fetch itself without
         // materialising anything.
-        let total = MemoryLibrary.count(on: queryDate)
+        let total = MemoryLibrary.count(on: queryDate, exclusions: exclusions)
         let picks = Self.picks(from: groups, limit: limit)
 
         let now = Date()

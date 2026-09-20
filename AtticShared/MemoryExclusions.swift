@@ -215,8 +215,17 @@ nonisolated enum MemoryExclusions {
             // every notification schedule and every widget refresh. Bounding
             // the query is a memory optimisation; it is not worth a crash, so
             // a shared album is enumerated in full instead.
+            // `.albumMyPhotoStream` is included defensively. It is the other
+            // cloud-backed `.album` subtype, it is just as reachable from the
+            // exclusion menu, and whether PhotoKit accepts a predicate inside
+            // one is not something this code can establish. Omitting the
+            // bound costs a full walk of an album capped at a thousand
+            // photos; guessing wrong costs an uncatchable exception.
+            let isCloudBacked = collection.assetCollectionSubtype == .albumCloudShared
+                || collection.assetCollectionSubtype == .albumMyPhotoStream
+
             let options = PHFetchOptions()
-            if collection.assetCollectionSubtype != .albumCloudShared {
+            if !isCloudBacked {
                 options.predicate = predicate
             }
 

@@ -274,10 +274,13 @@ struct SettingsView: View {
         }
     }
 
-    /// The day-start hour the app is really using, which is the free default
-    /// whenever Pro is not entitled regardless of what is stored.
+    /// The day-start hour the app is really using: the free default whenever
+    /// Pro is not entitled, and clamped the same way `MemoryWindow` clamps it
+    /// so a corrupt or legacy stored value cannot make this sentence promise
+    /// an hour the app will not honour.
     private var effectiveDayStartHour: Int {
-        purchaseStore.isUnlocked ? dayStartHour : MemoryWindow.defaultDayStartHour
+        guard purchaseStore.isUnlocked else { return MemoryWindow.defaultDayStartHour }
+        return max(0, min(dayStartHour, 6))
     }
 
     private func hourLabel(_ hour: Int) -> String {

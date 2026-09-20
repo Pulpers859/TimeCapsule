@@ -44,14 +44,6 @@ nonisolated enum AtticDefaults {
     nonisolated(unsafe) static let shared: UserDefaults =
         UserDefaults(suiteName: appGroupIdentifier) ?? .standard
 
-    /// Copies settings written before the App Group existed.
-    ///
-    /// Without this, someone who had already widened their memory range would
-    /// find it silently back at the default after updating, because the value
-    /// sits in the app's own defaults and nothing reads there any more.
-    ///
-    /// Runs once. Afterwards the shared suite is the only authority, so a key
-    /// the user has since reset is never resurrected from the old store.
     /// The last Pro entitlement `PurchaseStore` observed.
     ///
     /// Stored in the shared suite because the processes that need to honour
@@ -76,6 +68,14 @@ nonisolated enum AtticDefaults {
 
     static let proEntitlementKey = "Attic.lastObservedProEntitlement"
 
+    /// Copies settings written before the App Group existed.
+    ///
+    /// Without this, someone who had already widened their memory range would
+    /// find it silently back at the default after updating, because the value
+    /// sits in the app's own defaults and nothing reads there any more.
+    ///
+    /// Runs once. Afterwards the shared suite is the only authority, so a key
+    /// the user has since reset is never resurrected from the old store.
     static func migrateIfNeeded() {
         let migrationKey = "Attic.didMigrateSharedDefaults"
         guard shared !== UserDefaults.standard, !shared.bool(forKey: migrationKey) else { return }

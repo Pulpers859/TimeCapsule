@@ -342,14 +342,21 @@ Performance
   onboarding screen.
 - **iCloud-only assets show a bare spinner** with no progress and no timeout.
   Real gap on a slow connection; not yet addressed.
-- **A lapsed entitlement drops to free-tier behaviour within one refresh, not
-  instantly.** `MemoryWindow` gates the two Pro settings on
-  `AtticDefaults.isProEntitled`, a cached answer refreshed at launch and on
-  every foreground. Until that refresh runs, the previous answer applies. This
-  replaced resetting the stored values outright, which destroyed a paying
-  user's preferences whenever a reading merely looked empty — a verification
-  failure, or a device restored from backup mid-sync. The trade is deliberate:
-  a cache that is briefly stale costs a refresh; a destructive reset cost the
-  user their settings with no way back.
+- **A lapsed entitlement drops to free-tier behaviour on the next in-app
+  refresh, and only then.** `MemoryWindow` gates the two Pro settings on
+  `AtticDefaults.isProEntitled`, a cached answer written at launch, on every
+  foreground, and on any StoreKit transaction update. This replaced resetting
+  the stored values outright, which destroyed a paying user's preferences
+  whenever a reading merely looked empty — a verification failure, or a
+  device restored from backup mid-sync. The trade is deliberate: a cache that
+  is briefly stale costs a refresh; a destructive reset cost the user their
+  settings with no way back.
+
+  The real limit is that only the app can write that flag. StoreKit is not
+  reachable from a widget extension or from the notification scheduler, so
+  someone who is refunded and then never opens Attic again keeps the widened
+  memory range on their home screen and in their notification counts
+  indefinitely. Closing that would need a server-side receipt check, which
+  this app deliberately has no backend for.
 - **Test coverage** is four pure-logic files. Everything touching PhotoKit, UI or
   StoreKit is untested and unreachable from the SwiftPM target.

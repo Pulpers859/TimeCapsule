@@ -127,6 +127,20 @@ final class NotificationManager: NSObject {
         }()
         let dayWindow = MemoryWindow.dayWindow
         let countTask = Task.detached(priority: .utility) { () -> [(NotificationSlot, Int)]? in
+            // Resolved once for the whole pass, not per day.
+            //
+            // Album membership does not vary by date, so 60 resolutions can
+            // only ever repeat work. A per-day resolve was briefly defensible
+            // when every album lookup was bounded by the day being counted —
+            // but cloud shared albums must now be fetched unbounded, because
+            // PhotoKit raises an uncatchable exception on a predicate inside
+            // one. Sixty unbounded walks of a five-thousand-photo shared
+            // album per reschedule is the same scan storm this method was
+            // rewritten to remove, on the album type people most want to
+            // exclude, triggered by something as ordinary as deleting one
+            // memory. One unscoped resolve costs less than sixty bounded
+            // ones regardless.
+            let exclusions = MemoryExclusions.Context.current()
             var requests: [(NotificationSlot, Int)] = []
             for slot in slots {
                 guard !Task.isCancelled else { return nil }
@@ -141,13 +155,9 @@ final class NotificationManager: NSObject {
                 let target = MemoryWindow.logicalDate(for: slot.fireDate, calendar: calendar)
                 requests.append((
                     slot,
-                    // Each day resolves its own exclusions. They used to be
-                    // resolved once for the whole pass, because resolving
-                    // them walked every excluded album in full; now that the
-                    // album lookup is bounded by the day being counted, a
-                    // per-day resolve is both cheaper than the old shared one
-                    // and correct for the day in question.
-                    canAccessPhotos ? MemoryLibrary.count(on: target, calendar: calendar) : 0
+                    canAccessPhotos
+                        ? MemoryLibrary.count(on: target, calendar: calendar, exclusions: exclusions)
+                        : 0
                 ))
             }
             return requests
