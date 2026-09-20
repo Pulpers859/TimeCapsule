@@ -133,7 +133,15 @@ private nonisolated func parsedEXIF(from data: Data?) -> PhotoEXIF? {
         lensModel: exif?[kCGImagePropertyExifLensModel] as? String,
         fNumber: exif?[kCGImagePropertyExifFNumber] as? Double,
         exposureTime: exif?[kCGImagePropertyExifExposureTime] as? Double,
-        iso: (exif?[kCGImagePropertyExifISOSpeedRatings] as? [Int])?.first,
+        // Bridged through NSNumber for the same reason the focal length is
+        // read as Double: `as? [Int]` is value-preserving, so one
+        // non-integral entry drops the whole row silently.
+        iso: (exif?[kCGImagePropertyExifISOSpeedRatings] as? [NSNumber])?.first
+            .map(\.doubleValue)
+            .flatMap { value in
+                guard value.isFinite, (1...10_000_000).contains(value) else { return nil }
+                return Int(value.rounded())
+            },
         // Read as Double and rounded rather than cast straight to Int.
         // NSNumber bridging to Int is value-preserving, so a file whose
         // 35mm-equivalent arrives fractional fails an `as? Int` outright and

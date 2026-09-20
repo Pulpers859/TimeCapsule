@@ -110,9 +110,13 @@ struct SettingsView: View {
                 } header: {
                     Text("Memories")
                 } footer: {
-                    Text(dayStartHour == 0
+                    // Describes the hour actually in effect. The stored value
+                    // survives a lapsed entitlement but stops applying, so
+                    // reading it raw here would promise behaviour the app is
+                    // no longer performing.
+                    Text(effectiveDayStartHour == 0
                         ? "Widen the memory range on days with few matches. Set a later day start so an event running past midnight stays grouped with the evening it began."
-                        : "Photos taken before \(hourLabel(dayStartHour)) now count towards the previous day, so a night out stays in one place.")
+                        : "Photos taken before \(hourLabel(effectiveDayStartHour)) now count towards the previous day, so a night out stays in one place.")
                 }
 
                 Section {
@@ -268,6 +272,12 @@ struct SettingsView: View {
             guard newPhase == .active else { return }
             Task { await loadNotificationSettings() }
         }
+    }
+
+    /// The day-start hour the app is really using, which is the free default
+    /// whenever Pro is not entitled regardless of what is stored.
+    private var effectiveDayStartHour: Int {
+        purchaseStore.isUnlocked ? dayStartHour : MemoryWindow.defaultDayStartHour
     }
 
     private func hourLabel(_ hour: Int) -> String {

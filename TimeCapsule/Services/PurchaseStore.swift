@@ -28,7 +28,14 @@ enum AtticPro {
 ///   so it is already present before the user thinks to tap Restore.
 ///
 /// `currentEntitlements` reads the on-device signed transaction store, so it
-/// works offline. There is no need — and no good reason — to mirror it.
+/// works offline. There is no need — and no good reason — to mirror it as the
+/// thing that *authorizes* Pro.
+///
+/// What this store does publish is `AtticDefaults.isProEntitled`, the last
+/// answer it saw. That is not authorization: it exists because the widget
+/// extension and the notification scheduler have to know whether the two Pro
+/// settings apply, and neither can reach StoreKit. Every consumer of it is
+/// built to tolerate it being briefly stale.
 final class PurchaseStore: ObservableObject {
     @Published private(set) var isUnlocked = false
     @Published private(set) var product: Product?
@@ -72,59 +79,31 @@ final class PurchaseStore: ObservableObject {
             }
         }
 
-        // Compared against the last *observed* entitlement, which outlives the
-        // process, not against `isUnlocked`, which does not.
+        // Published to the shared suite so the widget and the notification
+        // scheduler — neither of which can ask StoreKit — honour the same
+        // answer. Nothing stored by the user is touched.
         //
-        // This is not mirroring the entitlement — `currentEntitlements` is
-        // still the only thing that authorizes anything, and this flag is
-        // never read to decide whether Pro is on. It exists solely so a
-        // true -> false transition can be noticed when the two observations
-        // fall in different launches, which is the normal case: Apple
-        // processes a refund hours or days later, almost certainly while the
-        // app is not running. Comparing against the in-memory value meant
-        // that launch saw false -> false, skipped the reset, and left a
-        // refunded user's widened memory range and late day start in place
-        // permanently — behind pickers that had re-locked, so they could not
-        // even put them back.
-        let defaults = AtticDefaults.shared
-        let hadEntitlement = defaults.bool(forKey: Self.lastObservedEntitlementKey)
+        // An earlier version reset the two Pro settings to their free
+        // defaults whenever the entitlement went away. That destroyed a
+        // paying user's preferences on any reading that merely *looked*
+        // empty, and there are several: an entitlement that fails
+        // verification is skipped by the `guard` above exactly like an absent
+        // one, and a device restored from backup brings the flag back while
+        // the signed transaction store may still be syncing. Because the
+        // reset also cleared the flag, nothing put the values back when the
+        // entitlement reappeared. Gating at the point of use instead —
+        // `MemoryWindow.dayWindow` and `dayStartHour` — makes a wrong reading
+        // cost nothing but a temporary drop to free-tier behaviour.
+        let wasEntitled = AtticDefaults.isProEntitled
         isUnlocked = unlocked
-        defaults.set(unlocked, forKey: Self.lastObservedEntitlementKey)
-        if hadEntitlement && !unlocked {
-            releaseProSettings()
+        AtticDefaults.isProEntitled = unlocked
+
+        if wasEntitled != unlocked {
+            // The effective memory window just changed, so the gallery has to
+            // refetch and the notification schedule has to rebuild its counts
+            // — the same post Settings makes when those values change.
+            NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
         }
-    }
-
-    /// Remembers only what the last entitlement check saw. Absent on a fresh
-    /// install, which reads as `false` and so correctly resets nothing.
-    private static let lastObservedEntitlementKey = "Attic.lastObservedProEntitlement"
-
-    /// Returns the settings Pro unlocks to their free defaults.
-    ///
-    /// Without this, two of the three Pro features survive a refund forever,
-    /// and no jailbreak is needed to get there: buy Pro, widen the memory range
-    /// and set a late day start, then ask Apple for a refund. The entitlement
-    /// correctly disappears and the pickers correctly re-lock — but the values
-    /// live in `UserDefaults`, and `MemoryWindow` reads them directly with no
-    /// idea an entitlement was ever involved. Only the recap is gated at the
-    /// point of use and so is genuinely revoked.
-    ///
-    /// The reset belongs here rather than inside `MemoryWindow`. That type is
-    /// `nonisolated` and is read from a detached task in the notification
-    /// scheduler; it has no access to this store and should not grow one.
-    ///
-    /// Reached only on a true -> false transition against the last *stored*
-    /// observation, so a fresh install never wipes anything while a refund
-    /// processed between launches still does.
-    private func releaseProSettings() {
-        // The shared suite, because these are the two keys the widget reads.
-        let defaults = AtticDefaults.shared
-        defaults.set(MemoryWindow.defaultDayWindow, forKey: MemoryWindow.storageKey)
-        defaults.set(MemoryWindow.defaultDayStartHour, forKey: MemoryWindow.dayStartHourKey)
-
-        // Same post Settings uses when these change: the gallery refetches and
-        // the notification schedule rebuilds with the corrected counts.
-        NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
     }
 
     private func apply(_ result: VerificationResult<Transaction>) async {

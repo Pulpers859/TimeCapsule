@@ -326,8 +326,14 @@ Performance
   onboarding screen.
 - **iCloud-only assets show a bare spinner** with no progress and no timeout.
   Real gap on a slow connection; not yet addressed.
-- **Pro settings are gated in the UI only.** Someone who buys, changes the memory
-  range, and is then refunded keeps the stored value. Enforcing it in
-  `MemoryWindow` would couple core logic to purchase state.
+- **A lapsed entitlement drops to free-tier behaviour within one refresh, not
+  instantly.** `MemoryWindow` gates the two Pro settings on
+  `AtticDefaults.isProEntitled`, a cached answer refreshed at launch and on
+  every foreground. Until that refresh runs, the previous answer applies. This
+  replaced resetting the stored values outright, which destroyed a paying
+  user's preferences whenever a reading merely looked empty — a verification
+  failure, or a device restored from backup mid-sync. The trade is deliberate:
+  a cache that is briefly stale costs a refresh; a destructive reset cost the
+  user their settings with no way back.
 - **Test coverage** is four pure-logic files. Everything touching PhotoKit, UI or
   StoreKit is untested and unreachable from the SwiftPM target.

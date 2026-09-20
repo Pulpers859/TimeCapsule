@@ -52,6 +52,30 @@ nonisolated enum AtticDefaults {
     ///
     /// Runs once. Afterwards the shared suite is the only authority, so a key
     /// the user has since reset is never resurrected from the old store.
+    /// The last Pro entitlement `PurchaseStore` observed.
+    ///
+    /// Stored in the shared suite because the processes that need to honour
+    /// it cannot ask StoreKit: the widget runs in its own extension, and
+    /// `MemoryWindow` is read from a detached task in the notification
+    /// scheduler. It authorizes nothing — `Transaction.currentEntitlements`
+    /// remains the only source of truth for whether Pro was bought — and is
+    /// read solely to decide whether the two Pro *settings* apply.
+    ///
+    /// Being a cache, it can be briefly wrong, and the design assumes so: a
+    /// stale `false` shows free-tier behaviour until the next refresh
+    /// corrects it, and nothing is lost either way. That tolerance is the
+    /// whole point. The previous approach reset the stored settings to their
+    /// free defaults on a false reading, which turned every transient into
+    /// permanent, unrecoverable destruction of a paying user's preferences —
+    /// and an entitlement that merely fails verification, as happens on
+    /// device clock skew, reads exactly like an absent one.
+    static var isProEntitled: Bool {
+        get { shared.bool(forKey: proEntitlementKey) }
+        set { shared.set(newValue, forKey: proEntitlementKey) }
+    }
+
+    static let proEntitlementKey = "Attic.lastObservedProEntitlement"
+
     static func migrateIfNeeded() {
         let migrationKey = "Attic.didMigrateSharedDefaults"
         guard shared !== UserDefaults.standard, !shared.bool(forKey: migrationKey) else { return }

@@ -20,8 +20,16 @@ nonisolated enum MemoryWindow {
     ///
     /// Read from the shared suite, not `.standard`, so the widget resolves the
     /// same window the gallery does.
+    ///
+    /// Returns the free default when Pro is not entitled, rather than the
+    /// stored value being wiped when an entitlement goes away. Gating at the
+    /// point of use is what makes a lapsed entitlement recoverable: the
+    /// user's chosen value survives, it simply stops applying, and buying
+    /// again — or a failed verification correcting itself — restores it with
+    /// nothing to re-enter.
     static var dayWindow: Int {
-        clampedDayWindow(
+        guard AtticDefaults.isProEntitled else { return defaultDayWindow }
+        return clampedDayWindow(
             AtticDefaults.shared.object(forKey: storageKey) as? Int ?? defaultDayWindow
         )
     }
@@ -30,8 +38,11 @@ nonisolated enum MemoryWindow {
     /// this hour are attributed to the previous calendar day, so an event that
     /// runs past midnight stays grouped under the evening it started.
     /// 0 = midnight (default, preserves prior behavior).
+    ///
+    /// Gated on the entitlement for the same reason as `dayWindow`.
     static var dayStartHour: Int {
-        max(0, min(AtticDefaults.shared.object(forKey: dayStartHourKey) as? Int ?? defaultDayStartHour, 6))
+        guard AtticDefaults.isProEntitled else { return defaultDayStartHour }
+        return max(0, min(AtticDefaults.shared.object(forKey: dayStartHourKey) as? Int ?? defaultDayStartHour, 6))
     }
 
     /// Returns the "logical date" for a given wall-clock time.
