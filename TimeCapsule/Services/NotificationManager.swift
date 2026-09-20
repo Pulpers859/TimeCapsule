@@ -127,12 +127,19 @@ final class NotificationManager: NSObject {
         }()
         let dayWindow = MemoryWindow.dayWindow
         let countTask = Task.detached(priority: .utility) { () -> [(NotificationSlot, Int)]? in
+            // Resolved once for the whole pass rather than once per slot: a
+            // schedule covers 60 days, and re-fetching excluded albums' full
+            // contents 60 times over would reintroduce exactly the kind of
+            // repeated-work storm `count(on:)` was rewritten to avoid.
+            let exclusions = MemoryExclusions.Context.current()
             var requests: [(NotificationSlot, Int)] = []
             for slot in slots {
                 guard !Task.isCancelled else { return nil }
                 requests.append((
                     slot,
-                    canAccessPhotos ? MemoryLibrary.count(on: slot.targetDate, calendar: calendar) : 0
+                    canAccessPhotos
+                        ? MemoryLibrary.count(on: slot.targetDate, calendar: calendar, exclusions: exclusions)
+                        : 0
                 ))
             }
             return requests

@@ -21,7 +21,14 @@ struct FullScreenPhotoView: View {
     @State private var isCurrentAssetZoomed = false
     @State private var isVideoScrubbing = false
     @State private var locationName: String? = nil
-    @State private var showInfo = false
+    // Captures the asset at the moment info is opened, rather than reading
+    // `visibleAssets[currentIndex]` live while the sheet is up. "Feature Less
+    // Often" lives inside this sheet and can shrink `visibleAssets` — down to
+    // empty, if it was the last one — while the sheet is still presented; a
+    // live read would have the sheet's content vanish out from under it for
+    // the ~900ms before it dismisses itself. Item-based presentation is what
+    // `shareItem` and `recapShareItem` already use for the same reason.
+    @State private var infoAsset: IdentifiableAsset? = nil
     @State private var shareTask: Task<Void, Never>? = nil
     @State private var isDeleting = false
     @State private var isPreparingShare = false
@@ -46,7 +53,7 @@ struct FullScreenPhotoView: View {
         visibleAssets.indices.contains(currentIndex) ? visibleAssets[currentIndex].localIdentifier : nil
     }
     private var isPlaybackBlocked: Bool {
-        showDeleteConfirm || showInfo || shareItem != nil || isPreparingShare || isDeleting
+        showDeleteConfirm || infoAsset != nil || shareItem != nil || isPreparingShare || isDeleting
     }
 
     init(asset: PHAsset, allAssets: [PHAsset]) {
@@ -208,7 +215,10 @@ struct FullScreenPhotoView: View {
                                 ChromeButton(
                                     systemImage: "info.circle",
                                     accessibilityLabel: "Memory info",
-                                    action: { showInfo = true }
+                                    action: {
+                                        guard visibleAssets.indices.contains(currentIndex) else { return }
+                                        infoAsset = IdentifiableAsset(visibleAssets[currentIndex])
+                                    }
                                 )
                                 .disabled(isDeleting || isPreparingShare)
 
@@ -252,15 +262,16 @@ struct FullScreenPhotoView: View {
         } message: {
             Text(shareError ?? "The memory could not be prepared for sharing.")
         }
-        .sheet(isPresented: $showInfo) {
-            if visibleAssets.indices.contains(currentIndex) {
-                MemoryInfoSheet(
-                    asset: visibleAssets[currentIndex],
-                    locationName: locationName
-                )
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
+        .sheet(item: $infoAsset) { wrapper in
+            MemoryInfoSheet(
+                asset: wrapper.asset,
+                locationName: locationName,
+                onExcludePhoto: excludeCurrentPhoto,
+                onExcludeAlbum: excludeAlbum,
+                onExcludePlace: excludePlace
+            )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         // Where a memory happened is part of remembering it, so the place name
         // resolves as each one comes into view rather than waiting to be asked
@@ -629,6 +640,72 @@ struct FullScreenPhotoView: View {
         }
     }
 
+    /// "Feature this less often." Three ways in, one way out: whatever just
+    /// got excluded, `applyExclusionRemoval` re-derives the current exclusion
+    /// state from scratch and filters `visibleAssets` against it, rather than
+    /// each call site trying to know which of *its own* assets just became
+    /// hidden. That keeps this surface, the grid, and tomorrow's notification
+    /// count reading the one definition in `MemoryExclusions`.
+    private func excludeCurrentPhoto() {
+        // From `infoAsset`, the asset the open sheet is actually showing,
+        // rather than `visibleAssets[currentIndex]` — the two cannot drift
+        // apart today since the pager cannot be swiped behind a presented
+        // sheet, but this makes that guarantee unnecessary rather than relied
+        // on.
+        guard let asset = infoAsset?.asset else { return }
+        MemoryExclusions.excludeAsset(asset)
+        applyExclusionRemoval()
+    }
+
+    private func excludeAlbum(_ collection: PHAssetCollection) {
+        MemoryExclusions.excludeAlbum(collection)
+        applyExclusionRemoval()
+    }
+
+    private func excludePlace(coordinate: CLLocationCoordinate2D, label: String) {
+        MemoryExclusions.excludePlace(near: coordinate, label: label)
+        applyExclusionRemoval()
+    }
+
+    /// `MemoryExclusions.Context.current()` is cheap for a photo or a place,
+    /// but excluding an album walks `PHAsset.fetchAssets(in:)` over every one
+    /// of its members — thousands, for someone's "Camera Roll"-sized album.
+    /// `NotificationManager` already does this same resolution off the main
+    /// actor; doing it inline here on a Button action would freeze the
+    /// pager for exactly as long as that album takes to enumerate.
+    private func applyExclusionRemoval() {
+        guard currentIndex < visibleAssets.count else { return }
+        let currentIdentifier = visibleAssets[currentIndex].localIdentifier
+        let assetsToFilter = visibleAssets
+
+        Task {
+            let context = await resolvedExclusionContext()
+            let filtered = assetsToFilter.filter { !context.excludes($0) }
+
+            await MainActor.run {
+                withAnimation {
+                    visibleAssets = filtered
+                    isCurrentAssetZoomed = false
+                    if filtered.isEmpty {
+                        currentIndex = 0
+                    } else if let index = filtered.firstIndex(where: { $0.localIdentifier == currentIdentifier }) {
+                        currentIndex = index
+                    } else {
+                        currentIndex = min(currentIndex, filtered.count - 1)
+                    }
+                }
+                locationName = nil
+                NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
+
+                if filtered.isEmpty {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
     private func moveToPreviousMemory() {
         guard !isDeleting, currentIndex > 0 else { return }
         currentIndex -= 1
@@ -694,8 +771,16 @@ private struct ChromeButton: View {
 struct MemoryInfoSheet: View {
     let asset: PHAsset
     let locationName: String?
+    let onExcludePhoto: () -> Void
+    let onExcludeAlbum: (PHAssetCollection) -> Void
+    let onExcludePlace: (CLLocationCoordinate2D, String) -> Void
+    @Environment(\.dismiss) private var dismiss
     @State private var mapPosition: MapCameraPosition
     @State private var handoff: HandoffState = .idle
+    @State private var exif: PhotoEXIF? = nil
+    @State private var exclusionConfirmation: String? = nil
+    @State private var pendingAction: PendingExclusion? = nil
+    @State private var containingAlbums: [PHAssetCollection] = []
 
     private enum HandoffState {
         case idle
@@ -704,9 +789,32 @@ struct MemoryInfoSheet: View {
         case failed(String)
     }
 
-    init(asset: PHAsset, locationName: String?) {
+    private enum PendingExclusion: Identifiable {
+        case photo
+        case place
+        case album(PHAssetCollection)
+
+        var id: String {
+            switch self {
+            case .photo: return "photo"
+            case .place: return "place"
+            case .album(let collection): return "album-\(collection.localIdentifier)"
+            }
+        }
+    }
+
+    init(
+        asset: PHAsset,
+        locationName: String?,
+        onExcludePhoto: @escaping () -> Void,
+        onExcludeAlbum: @escaping (PHAssetCollection) -> Void,
+        onExcludePlace: @escaping (CLLocationCoordinate2D, String) -> Void
+    ) {
         self.asset = asset
         self.locationName = locationName
+        self.onExcludePhoto = onExcludePhoto
+        self.onExcludeAlbum = onExcludeAlbum
+        self.onExcludePlace = onExcludePlace
         let center = asset.location?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
         let region = MKCoordinateRegion(
             center: center,
@@ -769,6 +877,10 @@ struct MemoryInfoSheet: View {
                 }
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
+                if let exif {
+                    cameraSection(exif)
+                }
+
                 editHandoffSection
 
                 if let coordinate = asset.location?.coordinate {
@@ -784,10 +896,212 @@ struct MemoryInfoSheet: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+
+                featureLessOftenSection
             }
             .padding(20)
         }
         .background(Color(.systemGroupedBackground))
+        .task(id: asset.localIdentifier) {
+            exif = nil
+            containingAlbums = Self.containingAlbums(for: asset)
+            guard asset.mediaType == .image else { return }
+            exif = await photoEXIF(for: asset)
+        }
+        .confirmationDialog(
+            confirmationTitle,
+            isPresented: isPendingActionPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Feature Less Often", role: .destructive) {
+                confirmPendingExclusion()
+            }
+            Button("Cancel", role: .cancel) { pendingAction = nil }
+        } message: {
+            Text("You can undo this later from Settings → Featured Less Often.")
+        }
+    }
+
+    private var confirmationTitle: String {
+        switch pendingAction {
+        case .photo:
+            return "Feature this photo less often?"
+        case .place:
+            return "Feature this place less often?"
+        case .album(let collection):
+            let name = collection.localizedTitle?.isEmpty == false ? collection.localizedTitle! : "this album"
+            return "Feature \(name) less often?"
+        case nil:
+            return ""
+        }
+    }
+
+    private var isPendingActionPresented: Binding<Bool> {
+        Binding(
+            get: { pendingAction != nil },
+            set: { if !$0 { pendingAction = nil } }
+        )
+    }
+
+    private func confirmPendingExclusion() {
+        guard let pendingAction else { return }
+        switch pendingAction {
+        case .photo:
+            onExcludePhoto()
+            exclusionConfirmation = "Won't feature this photo again"
+        case .place:
+            onExcludePlace(asset.location?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0), locationName ?? "This location")
+            exclusionConfirmation = "Won't feature this place as often"
+        case .album(let collection):
+            onExcludeAlbum(collection)
+            exclusionConfirmation = "Won't feature this album as often"
+        }
+        self.pendingAction = nil
+        Task {
+            try? await Task.sleep(for: .milliseconds(900))
+            dismiss()
+        }
+    }
+
+    /// EXIF is genuinely useless once formatting fails on every field, which
+    /// is common for screenshots and downloaded images — no camera made
+    /// them — so the section only appears when there is something to say.
+    private func cameraSection(_ exif: PhotoEXIF) -> some View {
+        VStack(spacing: 0) {
+            if let cameraModel = exif.cameraModel {
+                infoRow(label: "Camera", value: cameraModel, icon: "camera")
+            }
+            if let lensModel = exif.lensModel {
+                if exif.cameraModel != nil { Divider().padding(.leading, 40) }
+                infoRow(label: "Lens", value: lensModel, icon: "camera.aperture")
+            }
+            if let apertureDisplay = exif.apertureDisplay {
+                if exif.cameraModel != nil || exif.lensModel != nil { Divider().padding(.leading, 40) }
+                infoRow(label: "Aperture", value: apertureDisplay, icon: "camera.aperture")
+            }
+            if let shutterSpeedDisplay = exif.shutterSpeedDisplay {
+                Divider().padding(.leading, 40)
+                infoRow(label: "Shutter Speed", value: shutterSpeedDisplay, icon: "timer")
+            }
+            if let isoDisplay = exif.isoDisplay {
+                Divider().padding(.leading, 40)
+                infoRow(label: "ISO", value: isoDisplay, icon: "sun.max")
+            }
+            if let focalLengthDisplay = exif.focalLengthDisplay {
+                Divider().padding(.leading, 40)
+                infoRow(label: "Focal Length", value: focalLengthDisplay, icon: "camera.macro")
+            }
+        }
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// "Person" is deliberately not one of the three options here. PhotoKit
+    /// never hands third-party apps the named People it detects — that stays
+    /// internal to Photos.app — so there is no API this could be built on
+    /// short of Attic doing its own on-device face-identity clustering. Album
+    /// and place are the two exclusion axes that are actually implementable
+    /// without that.
+    @ViewBuilder
+    private var featureLessOftenSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Feature Less Often")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 0) {
+                exclusionRow(title: "This Photo", icon: "photo") {
+                    pendingAction = .photo
+                }
+
+                if asset.location != nil {
+                    Divider().padding(.leading, 40)
+                    exclusionRow(title: "This Place", icon: "location.slash") {
+                        pendingAction = .place
+                    }
+                }
+
+                if !containingAlbums.isEmpty {
+                    Divider().padding(.leading, 40)
+                    Menu {
+                        ForEach(containingAlbums, id: \.localIdentifier) { collection in
+                            Button(collection.localizedTitle ?? "Untitled Album") {
+                                pendingAction = .album(collection)
+                            }
+                        }
+                    } label: {
+                        exclusionRowLabel(title: "This Album", icon: "rectangle.stack.badge.minus")
+                    }
+                }
+            }
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            if let exclusionConfirmation {
+                Label {
+                    Text(exclusionConfirmation)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.accentColor)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: exclusionConfirmation)
+    }
+
+    private func exclusionRow(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            exclusionRowLabel(title: title, icon: icon)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func exclusionRowLabel(title: String, icon: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, alignment: .center)
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+            Spacer(minLength: 12)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
+
+    /// Albums and smart albums that actually make sense to offer. The three
+    /// excluded subtypes are PhotoKit's own catch-alls — "Recents" and "All
+    /// Hidden" contain nearly everything, so excluding them would be
+    /// indistinguishable from excluding the whole library, and "Recently
+    /// Deleted" cannot contain a memory that is still showing on screen.
+    ///
+    /// Resolved once per asset into `@State` rather than as a computed
+    /// property: SwiftUI re-evaluates `body` on every local state change —
+    /// the confirmation banner appearing is one — and a computed property
+    /// here would re-run two PhotoKit fetches on each of those for no reason.
+    private static func containingAlbums(for asset: PHAsset) -> [PHAssetCollection] {
+        let excludedSubtypes: Set<PHAssetCollectionSubtype> = [
+            .smartAlbumUserLibrary,
+            .smartAlbumRecentlyDeleted,
+            .smartAlbumAllHidden
+        ]
+        var results: [PHAssetCollection] = []
+        for type: PHAssetCollectionType in [.album, .smartAlbum] {
+            PHAssetCollection.fetchAssetCollectionsContaining(asset, with: type, options: nil)
+                .enumerateObjects { collection, _, _ in
+                    guard !excludedSubtypes.contains(collection.assetCollectionSubtype),
+                          let title = collection.localizedTitle, !title.isEmpty else { return }
+                    results.append(collection)
+                }
+        }
+        return results
     }
 
     /// "Take me to this one in Photos so I can edit it."

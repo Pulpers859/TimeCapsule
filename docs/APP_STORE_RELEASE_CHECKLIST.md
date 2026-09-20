@@ -218,6 +218,21 @@ verified only by the CI build.
 - [ ] **Delete** from both the grid and the viewer, checking the gallery and the
       notification count stay in step.
 - [ ] **Feb 29** behaviour, if you can set the device clock.
+- [ ] **EXIF display** against a real camera photo (aperture/shutter/ISO/lens
+      all present), a screenshot (section should not appear at all), and a
+      photo saved from Messages or WhatsApp (usually stripped of EXIF —
+      confirm that degrades to no section rather than a broken one).
+- [ ] **Feature Less Often**, all three axes: exclude a photo and confirm it
+      disappears from the grid, the pager, and tomorrow's notification count
+      without a relaunch; exclude an album and confirm every member vanishes,
+      including one added to that album after the exclusion; exclude a place
+      and confirm nearby-but-not-identical coordinates (a second visit to the
+      same café) are also caught. Then undo each from Settings → Featured
+      Less Often and confirm the memory returns.
+- [ ] **Merged grid view** — toggle to "All Together" on a day spanning many
+      years, confirm the year badges read correctly and the tap order into
+      the pager matches what "By Year" would have opened to for the same
+      photo.
 
 ---
 
@@ -251,6 +266,19 @@ Recap quality
 - Screenshots excluded from recaps; favourites can displace a neighbouring pick
 - Slide staging moved off the main actor (it was blocking the UI before)
 
+Viewer and browsing
+- Camera EXIF (model, lens, aperture, shutter speed, ISO, focal length) shown
+  in the memory info sheet alongside the existing date, dimensions, and map
+- "Feature Less Often" — exclude a photo, an album (including anything added
+  to it later), or a place (by proximity, not exact coordinates) from ever
+  showing as a memory again; undoable from Settings → Featured Less Often.
+  Not offered: excluding a *person*. PhotoKit does not expose named People to
+  third-party apps at all, so there is no API this could be built against
+  short of Attic shipping its own on-device face-identity system.
+- Merged grid view — a toggle between the existing per-year sections and a
+  single flat grid with a small year badge per tile, for a day whose photos
+  span many years but are few in number
+
 Correctness
 - Recap slides no longer written with `.completeFileProtection` (failed whenever
   the screen locked mid-export)
@@ -269,6 +297,8 @@ Performance
   actually leave the main actor (`nonisolated` alone does not, under this
   build's `NonisolatedNonsendingByDefault`)
 - Settings no longer rebuilds 60 notifications just for being opened
+- Exclusion context (excluded albums/places/photos) resolved once per
+  60-day notification schedule, not once per day
 - Library-change reschedules coalesced; external PhotoKit changes debounced
 - Recap exports are swept instead of accumulating in `tmp`
 - `AVAudioSession` configured for playback

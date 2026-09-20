@@ -18,6 +18,7 @@ struct TimeCapsuleView: View {
     @State private var recapError: String? = nil
     @State private var recapTask: Task<Void, Never>? = nil
     @SceneStorage("TimeCapsule.selectedFilter") private var selectedFilterRawValue = MemoryFilter.all.rawValue
+    @SceneStorage("TimeCapsule.gridLayoutMode") private var gridLayoutModeRawValue = GridLayoutMode.grouped.rawValue
 
     /// The gallery is built around the *logical* day, so a session that runs
     /// past midnight keeps showing the evening it started in. The header has to
@@ -35,6 +36,10 @@ struct TimeCapsuleView: View {
         get { MemoryFilter(rawValue: selectedFilterRawValue) ?? .all }
         nonmutating set { selectedFilterRawValue = newValue.rawValue }
     }
+    private var gridLayoutMode: GridLayoutMode {
+        get { GridLayoutMode(rawValue: gridLayoutModeRawValue) ?? .grouped }
+        nonmutating set { gridLayoutModeRawValue = newValue.rawValue }
+    }
     private var filteredYearGroups: [YearGroup] {
         yearGroups.compactMap { group in
             let filteredAssets = group.assets.filter(matchesCurrentFilters)
@@ -47,6 +52,16 @@ struct TimeCapsuleView: View {
     }
     private var allFilteredAssets: [PHAsset] {
         filteredYearGroups.flatMap(\.assets)
+    }
+    /// The same photos as `allFilteredAssets`, in the same order, annotated
+    /// with the year each one belongs to. Built from `filteredYearGroups`
+    /// rather than reconstructed from `allFilteredAssets` so the merged
+    /// grid's order is guaranteed to match the pager's — they come from the
+    /// one flattening, not two that happen to agree today.
+    private var mergedItems: [MergedMemoryItem] {
+        filteredYearGroups.flatMap { group in
+            group.assets.map { MergedMemoryItem(asset: $0, year: group.year, yearsAgo: group.yearsAgo) }
+        }
     }
     private var recapEligiblePhotoCount: Int {
         allFilteredAssets.reduce(0) { $0 + ($1.mediaType == .image ? 1 : 0) }
@@ -79,14 +94,26 @@ struct TimeCapsuleView: View {
                             .padding(.horizontal, TCMetrics.screenPadding)
                             .padding(.top, 8)
 
-                            ForEach(filteredYearGroups) { group in
-                                YearSection(
-                                    group: group,
+                            switch gridLayoutMode {
+                            case .grouped:
+                                ForEach(filteredYearGroups) { group in
+                                    YearSection(
+                                        group: group,
+                                        allAssets: allFilteredAssets,
+                                        isSelecting: isSelecting,
+                                        selectedIDs: $selectedIDs
+                                    )
+                                    .id(sectionID(for: group))
+                                }
+                            case .merged:
+                                MemoryGridBody(
+                                    items: mergedItems,
                                     allAssets: allFilteredAssets,
                                     isSelecting: isSelecting,
+                                    showYearBadges: true,
                                     selectedIDs: $selectedIDs
                                 )
-                                .id(sectionID(for: group))
+                                .padding(.top, 20)
                             }
                         }
                     }
@@ -97,10 +124,16 @@ struct TimeCapsuleView: View {
                     MemoryControlsBar(
                         dateString: dateString,
                         selectedFilter: selectedFilter,
+                        gridLayoutMode: gridLayoutMode,
                         isSelecting: isSelecting,
                         selectedCount: selectedCount,
                         yearGroups: filteredYearGroups,
                         onSelectFilter: { selectedFilter = $0 },
+                        onToggleGridLayoutMode: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                gridLayoutMode = gridLayoutMode == .grouped ? .merged : .grouped
+                            }
+                        },
                         onToggleSelecting: {
                             withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
                                 isSelecting.toggle()
@@ -401,11 +434,6 @@ struct YearSection: View {
     let allAssets: [PHAsset]
     let isSelecting: Bool
     @Binding var selectedIDs: Set<String>
-    @State private var selectedAsset: IdentifiableAsset? = nil
-
-    private let columns = [
-        GridItem(.adaptive(minimum: 108, maximum: 180), spacing: TCMetrics.gridSpacing)
-    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -413,31 +441,70 @@ struct YearSection: View {
                 .padding(.horizontal, TCMetrics.screenPadding)
                 .padding(.top, 20)
 
-            LazyVGrid(columns: columns, spacing: TCMetrics.gridSpacing) {
-                ForEach(group.assets, id: \.localIdentifier) { asset in
-                    let isSelected = selectedIDs.contains(asset.localIdentifier)
-                    Button {
-                        if isSelecting {
-                            toggleSelection(asset)
-                        } else {
-                            selectedAsset = IdentifiableAsset(asset)
-                        }
-                    } label: {
-                        MemoryTile(
-                            asset: asset,
-                            isSelecting: isSelecting,
-                            isSelected: isSelected
-                        )
-                    }
-                    .buttonStyle(PressableButtonStyle(scale: 0.94))
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(accessibilityLabel(for: asset))
-                    .accessibilityValue(isSelecting ? (isSelected ? "Selected" : "Not selected") : "")
-                    .accessibilityAddTraits(isSelected ? .isSelected : [])
-                }
-            }
-            .padding(.horizontal, TCMetrics.screenPadding)
+            MemoryGridBody(
+                items: group.assets.map { MergedMemoryItem(asset: $0, year: group.year, yearsAgo: group.yearsAgo) },
+                allAssets: allAssets,
+                isSelecting: isSelecting,
+                showYearBadges: false,
+                selectedIDs: $selectedIDs
+            )
         }
+    }
+}
+
+/// One flattened, year-tagged entry in a memory grid — every year's assets
+/// carry this in the grouped grid too, not only the merged one, so both
+/// grids are built from the same shape and share `MemoryGridBody`.
+struct MergedMemoryItem: Identifiable {
+    let asset: PHAsset
+    let year: Int
+    let yearsAgo: Int
+    var id: String { asset.localIdentifier }
+}
+
+/// The tap/select/open grid shared by the grouped view (one per year, no
+/// badges) and the merged view (one for everything, with badges). Pulled out
+/// after the two started as separate, nearly-identical types: any fix to
+/// selection or to how `FullScreenPhotoView` gets presented had to be made
+/// twice, and it is exactly the kind of duplication that drifts unnoticed.
+struct MemoryGridBody: View {
+    let items: [MergedMemoryItem]
+    let allAssets: [PHAsset]
+    let isSelecting: Bool
+    let showYearBadges: Bool
+    @Binding var selectedIDs: Set<String>
+    @State private var selectedAsset: IdentifiableAsset? = nil
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 108, maximum: 180), spacing: TCMetrics.gridSpacing)
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: TCMetrics.gridSpacing) {
+            ForEach(items) { item in
+                let isSelected = selectedIDs.contains(item.asset.localIdentifier)
+                Button {
+                    if isSelecting {
+                        toggleSelection(item.asset)
+                    } else {
+                        selectedAsset = IdentifiableAsset(item.asset)
+                    }
+                } label: {
+                    MemoryTile(
+                        asset: item.asset,
+                        isSelecting: isSelecting,
+                        isSelected: isSelected,
+                        yearBadge: showYearBadges ? (item.yearsAgo == 1 ? "1y" : "\(item.yearsAgo)y") : nil
+                    )
+                }
+                .buttonStyle(PressableButtonStyle(scale: 0.94))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(accessibilityLabel(for: item))
+                .accessibilityValue(isSelecting ? (isSelected ? "Selected" : "Not selected") : "")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, TCMetrics.screenPadding)
         .fullScreenCover(item: $selectedAsset) { wrapper in
             FullScreenPhotoView(asset: wrapper.asset, allAssets: allAssets)
         }
@@ -453,9 +520,9 @@ struct YearSection: View {
         UISelectionFeedbackGenerator().selectionChanged()
     }
 
-    private func accessibilityLabel(for asset: PHAsset) -> String {
-        let type = asset.mediaType == .video ? "Video" : "Photo"
-        guard let date = asset.creationDate else { return "\(type) from \(group.year)" }
+    private func accessibilityLabel(for item: MergedMemoryItem) -> String {
+        let type = item.asset.mediaType == .video ? "Video" : "Photo"
+        guard let date = item.asset.creationDate else { return "\(type) from \(item.year)" }
         return "\(type), \(date.formatted(date: .long, time: .omitted))"
     }
 }
@@ -504,6 +571,9 @@ struct MemoryTile: View {
     let asset: PHAsset
     let isSelecting: Bool
     let isSelected: Bool
+    /// Only set in the merged grid, where there is no year header left to
+    /// carry this context. `nil` in the grouped grid leaves tiles unchanged.
+    var yearBadge: String? = nil
 
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: TCMetrics.thumbnailRadius, style: .continuous)
@@ -514,6 +584,18 @@ struct MemoryTile: View {
             .overlay(alignment: .bottomLeading) {
                 if asset.mediaType == .video {
                     VideoDurationBadge(duration: asset.duration)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if let yearBadge {
+                    Text(yearBadge)
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.55), in: Capsule())
+                        .padding(6)
+                        .allowsHitTesting(false)
                 }
             }
             .clipShape(shape)
@@ -652,10 +734,12 @@ struct FilterEmptyState: View {
 struct MemoryControlsBar: View {
     let dateString: String
     let selectedFilter: MemoryFilter
+    let gridLayoutMode: GridLayoutMode
     let isSelecting: Bool
     let selectedCount: Int
     let yearGroups: [YearGroup]
     let onSelectFilter: (MemoryFilter) -> Void
+    let onToggleGridLayoutMode: () -> Void
     let onToggleSelecting: () -> Void
     let onOpenSettings: () -> Void
     let onJumpToYear: (YearGroup) -> Void
@@ -710,7 +794,13 @@ struct MemoryControlsBar: View {
                             )
                         }
 
-                        if yearGroups.count > 1 {
+                        GridLayoutModeChip(mode: gridLayoutMode, action: onToggleGridLayoutMode)
+
+                        // No year sections exist to scroll to once the grid
+                        // is merged, so the menu simply isn't offered rather
+                        // than trying to approximate "jump to year" against a
+                        // flat list.
+                        if gridLayoutMode == .grouped, yearGroups.count > 1 {
                             Menu {
                                 ForEach(yearGroups) { group in
                                     Button {
@@ -775,6 +865,38 @@ private extension View {
     @ViewBuilder
     func filterChipStyle(isSelected: Bool) -> some View {
         self.tcGlassCapsuleStyle(isProminent: isSelected)
+    }
+}
+
+/// Grouped is every competitor's default and stays the app's default: year
+/// headers are what make a library with a decade of history navigable.
+/// Merged exists for the opposite moment — a day with a handful of photos
+/// spread across a few years, where the headers add more scrolling than
+/// context and a single glanceable grid reads faster.
+enum GridLayoutMode: String {
+    case grouped
+    case merged
+}
+
+struct GridLayoutModeChip: View {
+    let mode: GridLayoutMode
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(
+                mode == .grouped ? "By Year" : "All Together",
+                systemImage: mode == .grouped ? "calendar" : "square.grid.3x3"
+            )
+            .font(.footnote.weight(.semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .frame(height: 38)
+        }
+        .buttonBorderShape(.capsule)
+        .tcGlassCapsuleStyle(isProminent: false)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityLabel(mode == .grouped ? "Switch to a merged, all-together grid" : "Switch to grouping by year")
     }
 }
 

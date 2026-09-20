@@ -72,7 +72,11 @@ nonisolated enum MemoryLibrary {
         )
     }
 
-    static func yearGroups(on date: Date, calendar: Calendar = .current) -> [YearGroup] {
+    static func yearGroups(
+        on date: Date,
+        calendar: Calendar = .current,
+        exclusions: MemoryExclusions.Context = .current()
+    ) -> [YearGroup] {
         let currentYear = calendar.component(.year, from: date)
         let ranges = anniversaryRanges(on: date, calendar: calendar)
         guard !ranges.isEmpty else { return [] }
@@ -88,7 +92,8 @@ nonisolated enum MemoryLibrary {
                   let creationDate = asset.creationDate,
                   let matchingYear = ranges.first(where: {
                       creationDate >= $0.start && creationDate < $0.end
-                  })?.year else {
+                  })?.year,
+                  !exclusions.excludes(asset) else {
                 return
             }
             assetsByYear[matchingYear, default: []].append(asset)
@@ -111,7 +116,11 @@ nonisolated enum MemoryLibrary {
     /// `PHFetchResult.count` answers from the fetch itself and never
     /// materialises a row. The media-type filter moves into the predicate so
     /// the result stays identical to what `yearGroups` would have counted.
-    static func count(on date: Date, calendar: Calendar = .current) -> Int {
+    static func count(
+        on date: Date,
+        calendar: Calendar = .current,
+        exclusions: MemoryExclusions.Context = .current()
+    ) -> Int {
         let ranges = anniversaryRanges(on: date, calendar: calendar)
         guard !ranges.isEmpty else { return 0 }
 
@@ -120,7 +129,25 @@ nonisolated enum MemoryLibrary {
             datePredicate(for: ranges),
             mediaTypePredicate()
         ])
-        return PHAsset.fetchAssets(with: fetchOptions).count
+        let result = PHAsset.fetchAssets(with: fetchOptions)
+
+        // No exclusions is the common case, and it keeps the fast path this
+        // was written for: `.count` answers straight from the fetch without
+        // materialising a `PHAsset` for anything. Once an exclusion exists,
+        // answering correctly needs to look at each candidate, but the set
+        // that survives the date predicate is small — a handful of photos
+        // taken on one calendar date across however many years back — so
+        // this is nowhere near the per-day full-library walk that made
+        // `count(on:)` a "scan storm" before.
+        guard !exclusions.isEmpty else { return result.count }
+
+        var count = 0
+        result.enumerateObjects { asset, _, _ in
+            if !exclusions.excludes(asset) {
+                count += 1
+            }
+        }
+        return count
     }
 
 }

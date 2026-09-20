@@ -15,13 +15,15 @@ let package = Package(
             name: "TimeCapsuleCore",
             path: "AtticShared",
             exclude: [
-                "MemoryLibrary.swift"
+                "MemoryLibrary.swift",
+                "MemoryExclusions.swift"
             ],
             sources: [
                 "AtticDefaults.swift",
                 "GalleryStateLogic.swift",
                 "MemoryWindow.swift",
                 "NotificationPlan.swift",
+                "PhotoEXIF.swift",
                 "RecapPlan.swift"
             ]
         ),

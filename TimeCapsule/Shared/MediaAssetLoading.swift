@@ -205,6 +205,19 @@ private nonisolated final class VideoExportSessionState: @unchecked Sendable {
 // need only `nonisolated`, because a synchronous call really does run on
 // whatever thread invoked it.
 
+/// Resolves the current "feature less often" exclusions off the main actor.
+///
+/// Cheap for a lone excluded photo or place, but album exclusion enumerates
+/// every member of that album via `PHAsset.fetchAssets(in:)` — see
+/// `MemoryExclusions.excludedAlbumMemberIdentifiers()`. `@concurrent` for the
+/// same reason as the loaders below: this is called from a SwiftUI action,
+/// and a plain `nonisolated async` would still run on the main actor under
+/// this target's isolation rules.
+@concurrent
+nonisolated func resolvedExclusionContext() async -> MemoryExclusions.Context {
+    MemoryExclusions.Context.current()
+}
+
 @concurrent
 nonisolated func loadImage(
     from asset: PHAsset,

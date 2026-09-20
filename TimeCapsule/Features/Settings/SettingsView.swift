@@ -166,6 +166,19 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        ManageExclusionsView()
+                    } label: {
+                        SettingsRowLabel(
+                            symbol: "eye.slash",
+                            tint: .gray,
+                            title: "Featured Less Often",
+                            subtitle: "Photos, albums, and places you've hidden"
+                        )
+                    }
+                }
+
+                Section {
                     SettingsRowLabel(
                         symbol: "trash",
                         tint: .red,
@@ -321,7 +334,9 @@ private struct ProLockedRow: View {
     }
 }
 
-private struct SettingsRowLabel: View {
+/// Not `private`: `ManageExclusionsView` reuses it for the same tinted-tile
+/// row treatment rather than duplicating it.
+struct SettingsRowLabel: View {
     let symbol: String
     let tint: Color
     let title: String
