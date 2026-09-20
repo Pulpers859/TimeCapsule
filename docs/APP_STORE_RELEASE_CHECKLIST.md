@@ -233,6 +233,16 @@ verified only by the CI build.
       years, confirm the year badges read correctly and the tap order into
       the pager matches what "By Year" would have opened to for the same
       photo.
+- [ ] **Recap crossfades**, specifically. The transitions were compositing
+      the two slides so their weights summed to 0.75 at the midpoint — every
+      transition dipped about 25% dark for half a second. It is now an
+      additive blend. Watch a recap made from two similarly-framed photos,
+      where the overlap is largest, and confirm the transitions hold their
+      brightness instead of pulsing.
+- [ ] **Widget with a large album excluded.** Exclude an album with
+      thousands of photos, then confirm the widget still refreshes at the day
+      boundary rather than freezing on a stale photo. This was a real
+      jetsam risk before the album lookup was bounded to the queried dates.
 
 ---
 

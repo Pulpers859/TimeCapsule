@@ -27,6 +27,16 @@ nonisolated enum MemoryExclusions {
     /// place still counts as "here again".
     static let placeRadiusMeters: CLLocationDistance = 400
 
+    /// How close two *stored* places must be to count as the same entry.
+    ///
+    /// Deliberately far tighter than `placeRadiusMeters`. Using the match
+    /// radius here left a gap: a second place 390m from the first was
+    /// rejected as "already covered", but photos 390m beyond *it* sit 780m
+    /// from the only stored centre and keep appearing — the user asked twice
+    /// and the place still shows up. At 40m this only ever collapses genuine
+    /// re-taps on the same spot.
+    private static let placeDuplicateMeters: CLLocationDistance = 40
+
     struct ExcludedAlbum: Codable, Equatable, Sendable {
         let id: String
         let label: String
@@ -38,25 +48,32 @@ nonisolated enum MemoryExclusions {
         let label: String
     }
 
-    /// A single fetch of every exclusion, taken up front so a caller looping
-    /// over many days or many assets — `NotificationManager` schedules 60 of
-    /// them — pays the cost of resolving album membership once rather than
-    /// once per day. See `MemoryLibrary.count(on:)`, which is exactly the
-    /// call site this was built for.
+    /// Every exclusion resolved once, so a caller testing many assets does
+    /// not re-read defaults or re-query albums per asset.
     ///
-    /// `Sendable` because it crosses into `Task.detached` bodies (through
-    /// `MemoryLibrary`'s default parameter) — plain value types made of
-    /// `String`/`Double` collections, so the conformance costs nothing.
+    /// Normally built by `MemoryLibrary` itself, scoped to the dates it is
+    /// about to fetch. A caller that already holds the assets it wants to
+    /// test — the full-screen viewer filtering what is on screen — builds an
+    /// unscoped one instead, off the main actor.
+    ///
+    /// `Sendable` because it crosses into detached task bodies — plain value
+    /// types made of `String`/`Double` collections, so the conformance costs
+    /// nothing.
     struct Context: Sendable {
         let assetIDs: Set<String>
         let places: [ExcludedPlace]
         let albumMemberIDs: Set<String>
 
-        static func current() -> Context {
+        /// `predicate` bounds the album-membership lookup to the assets the
+        /// caller is actually asking about — see
+        /// `excludedAlbumMemberIdentifiers(matching:)` for why that matters.
+        /// Passing nil resolves membership across the whole album, which is
+        /// only appropriate off the main actor in the app itself.
+        static func current(matching predicate: NSPredicate? = nil) -> Context {
             Context(
                 assetIDs: excludedAssetIDs,
                 places: excludedPlaces,
-                albumMemberIDs: excludedAlbumMemberIdentifiers()
+                albumMemberIDs: excludedAlbumMemberIdentifiers(matching: predicate)
             )
         }
 
@@ -122,13 +139,26 @@ nonisolated enum MemoryExclusions {
         excludedAlbums.removeAll { $0.id == id }
     }
 
+    /// Rejects coordinates that cannot be stored or matched. A photo's GPS
+    /// metadata is not guaranteed sane, and `kCLLocationCoordinate2DInvalid`
+    /// is literally (NaN, NaN) — which `JSONEncoder` refuses to encode.
     static func excludePlace(near coordinate: CLLocationCoordinate2D, label: String) {
+        guard coordinate.latitude.isFinite,
+              coordinate.longitude.isFinite,
+              CLLocationCoordinate2DIsValid(coordinate) else { return }
+
         var places = excludedPlaces
         let target = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        let alreadyCovered = places.contains { place in
-            CLLocation(latitude: place.latitude, longitude: place.longitude).distance(from: target) < placeRadiusMeters
+        // Only collapses a re-tap on the same spot. Using the *match* radius
+        // here left a hole: a place 390m from an existing centre was rejected
+        // as already covered, while photos 390m the other side of it sit
+        // 780m from that centre and kept appearing — the user excluded the
+        // place twice and it still showed up.
+        let isDuplicate = places.contains { place in
+            CLLocation(latitude: place.latitude, longitude: place.longitude)
+                .distance(from: target) < placeDuplicateMeters
         }
-        guard !alreadyCovered else { return }
+        guard !isDuplicate else { return }
         places.append(ExcludedPlace(latitude: coordinate.latitude, longitude: coordinate.longitude, label: label))
         excludedPlaces = places
     }
@@ -137,20 +167,38 @@ nonisolated enum MemoryExclusions {
         excludedPlaces.removeAll { $0 == place }
     }
 
-    /// Every asset identifier belonging to a currently-excluded album.
+    /// Asset identifiers belonging to a currently-excluded album, optionally
+    /// narrowed to the assets a caller actually cares about.
     ///
-    /// Re-fetched rather than cached across app launches: albums are few and
-    /// small, so the fetch is cheap, and caching membership would mean either
-    /// a photo added to an excluded album keeps showing up, or wiring a
-    /// PHPhotoLibrary change observer just to invalidate a few dozen strings.
-    static func excludedAlbumMemberIdentifiers() -> Set<String> {
+    /// Re-resolved rather than cached: albums change, and caching membership
+    /// would mean either a photo added to an excluded album keeps showing up,
+    /// or wiring a PHPhotoLibrary change observer just to invalidate a set of
+    /// strings.
+    ///
+    /// `matching` is what keeps that affordable. Unbounded, this materialises
+    /// a `PHAsset` for every member of every excluded album — exclude a
+    /// 10,000-photo album and that is 10,000 objects plus a set of their
+    /// identifiers, rebuilt on every gallery fetch, every notification
+    /// schedule, and every widget timeline. The widget is the one that
+    /// actually breaks: it runs in an extension with a jetsam limit small
+    /// enough that this can kill it mid-timeline, and a killed timeline never
+    /// installs its next reload, so the home screen silently freezes on a
+    /// stale photo with nothing connecting it to the album the user excluded.
+    ///
+    /// Callers that know the date range they are querying pass the same
+    /// predicate here, which turns the walk into one small indexed query per
+    /// excluded album instead of a full enumeration.
+    static func excludedAlbumMemberIdentifiers(matching predicate: NSPredicate? = nil) -> Set<String> {
         let ids = excludedAlbums.map(\.id)
         guard !ids.isEmpty else { return [] }
 
         let collections = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: ids, options: nil)
+        let options = PHFetchOptions()
+        options.predicate = predicate
+
         var members: Set<String> = []
         collections.enumerateObjects { collection, _, _ in
-            PHAsset.fetchAssets(in: collection, options: nil).enumerateObjects { asset, _, _ in
+            PHAsset.fetchAssets(in: collection, options: options).enumerateObjects { asset, _, _ in
                 members.insert(asset.localIdentifier)
             }
         }
@@ -163,7 +211,17 @@ nonisolated enum MemoryExclusions {
         return decoded
     }
 
+    /// Leaves the stored list untouched if encoding fails, rather than
+    /// clearing it.
+    ///
+    /// `set(nil, forKey:)` *removes* a key, so passing `try?` straight in
+    /// meant one unencodable entry deleted every exclusion the user had ever
+    /// made. That was reachable: `JSONEncoder` throws on a non-finite Double
+    /// by default, and a place is stored as a raw latitude/longitude pair
+    /// taken from a photo's own metadata. Failing to add one place is a
+    /// tolerable outcome; silently un-hiding all of them is not.
     private static func encode<T: Codable>(_ value: [T], key: String) {
-        AtticDefaults.shared.set(try? JSONEncoder().encode(value), forKey: key)
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        AtticDefaults.shared.set(data, forKey: key)
     }
 }

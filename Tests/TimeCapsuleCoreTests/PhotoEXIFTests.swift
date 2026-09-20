@@ -35,6 +35,17 @@ final class PhotoEXIFTests: XCTestCase {
         XCTAssertEqual(exif?.cameraModel, "Canon EOS R5")
     }
 
+    func testCorporateSuffixInMakeStillCountsAsAMatch() {
+        // Nikon's real EXIF. Testing the whole make against the model finds
+        // no overlap and yields "NIKON CORPORATION NIKON D850"; only the
+        // first word of the make is a fair comparison.
+        let exif = PhotoEXIF(
+            make: "NIKON CORPORATION", model: "NIKON D850", lensModel: nil,
+            fNumber: nil, exposureTime: nil, iso: nil, focalLength35mm: nil
+        )
+        XCTAssertEqual(exif?.cameraModel, "NIKON D850")
+    }
+
     func testMakeIsPrependedWhenModelDoesNotIncludeIt() {
         // Apple's own EXIF: Make "Apple", Model "iPhone 15 Pro" — no overlap,
         // so both belong in the display string.

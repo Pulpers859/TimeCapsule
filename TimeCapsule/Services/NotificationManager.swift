@@ -127,19 +127,27 @@ final class NotificationManager: NSObject {
         }()
         let dayWindow = MemoryWindow.dayWindow
         let countTask = Task.detached(priority: .utility) { () -> [(NotificationSlot, Int)]? in
-            // Resolved once for the whole pass rather than once per slot: a
-            // schedule covers 60 days, and re-fetching excluded albums' full
-            // contents 60 times over would reintroduce exactly the kind of
-            // repeated-work storm `count(on:)` was rewritten to avoid.
-            let exclusions = MemoryExclusions.Context.current()
             var requests: [(NotificationSlot, Int)] = []
             for slot in slots {
                 guard !Task.isCancelled else { return nil }
+                // Counted on the *logical* date this notification will fire
+                // on, not its calendar date. `NotificationPlan` anchors slots
+                // to midnight, while the gallery and the widget both resolve
+                // "today" through `MemoryWindow.logicalDate`. With a 6am day
+                // start and a 5am reminder the two disagreed by a full day:
+                // the notification promised day D's memories and the app it
+                // opened showed day D-1's. No effect at the default day start
+                // of midnight, where `logicalDate` is the identity.
+                let target = MemoryWindow.logicalDate(for: slot.fireDate, calendar: calendar)
                 requests.append((
                     slot,
-                    canAccessPhotos
-                        ? MemoryLibrary.count(on: slot.targetDate, calendar: calendar, exclusions: exclusions)
-                        : 0
+                    // Each day resolves its own exclusions. They used to be
+                    // resolved once for the whole pass, because resolving
+                    // them walked every excluded album in full; now that the
+                    // album lookup is bounded by the day being counted, a
+                    // per-day resolve is both cheaper than the old shared one
+                    // and correct for the day in question.
+                    canAccessPhotos ? MemoryLibrary.count(on: target, calendar: calendar) : 0
                 ))
             }
             return requests

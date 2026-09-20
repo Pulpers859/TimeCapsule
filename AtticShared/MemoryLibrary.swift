@@ -75,16 +75,22 @@ nonisolated enum MemoryLibrary {
     static func yearGroups(
         on date: Date,
         calendar: Calendar = .current,
-        exclusions: MemoryExclusions.Context = .current()
+        exclusions: MemoryExclusions.Context? = nil
     ) -> [YearGroup] {
         let currentYear = calendar.component(.year, from: date)
         let ranges = anniversaryRanges(on: date, calendar: calendar)
         guard !ranges.isEmpty else { return [] }
 
+        let dates = datePredicate(for: ranges)
         let fetchOptions = PHFetchOptions()
-        fetchOptions.predicate = datePredicate(for: ranges)
+        fetchOptions.predicate = dates
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
 
+        // Resolved here, rather than as a default argument, so the album
+        // half of it can be bounded by the very same date predicate this
+        // fetch uses. Excluding a large album otherwise costs a full walk of
+        // that album on every call — which is what kills the widget.
+        let exclusions = exclusions ?? .current(matching: dates)
         let result = PHAsset.fetchAssets(with: fetchOptions)
         var assetsByYear: [Int: [PHAsset]] = [:]
         result.enumerateObjects { asset, _, _ in
@@ -119,17 +125,19 @@ nonisolated enum MemoryLibrary {
     static func count(
         on date: Date,
         calendar: Calendar = .current,
-        exclusions: MemoryExclusions.Context = .current()
+        exclusions: MemoryExclusions.Context? = nil
     ) -> Int {
         let ranges = anniversaryRanges(on: date, calendar: calendar)
         guard !ranges.isEmpty else { return 0 }
 
+        let dates = datePredicate(for: ranges)
         let fetchOptions = PHFetchOptions()
         fetchOptions.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-            datePredicate(for: ranges),
+            dates,
             mediaTypePredicate()
         ])
         let result = PHAsset.fetchAssets(with: fetchOptions)
+        let exclusions = exclusions ?? .current(matching: dates)
 
         // No exclusions is the common case, and it keeps the fast path this
         // was written for: `.count` answers straight from the fetch without

@@ -63,8 +63,12 @@ struct TimeCapsuleView: View {
             group.assets.map { MergedMemoryItem(asset: $0, year: group.year, yearsAgo: group.yearsAgo) }
         }
     }
+    /// Asked of the exporter rather than counted here, so the button appears
+    /// exactly when a recap can actually be made. Counting every image
+    /// locally while the exporter drops screenshots meant a day holding one
+    /// photo and one screenshot showed the button and then failed.
     private var recapEligiblePhotoCount: Int {
-        allFilteredAssets.reduce(0) { $0 + ($1.mediaType == .image ? 1 : 0) }
+        MemoryRecapExporter.candidates(from: allFilteredAssets).count
     }
     private var visibleIdentifierSignature: [String] {
         allFilteredAssets.map(\.localIdentifier)
@@ -235,7 +239,7 @@ struct TimeCapsuleView: View {
             return
         }
         guard recapProgress == nil else { return }
-        let photos = allFilteredAssets.filter { $0.mediaType == .image }
+        let photos = MemoryRecapExporter.candidates(from: allFilteredAssets)
         guard photos.count >= 2 else {
             recapError = "A recap needs at least 2 photos from this day."
             return

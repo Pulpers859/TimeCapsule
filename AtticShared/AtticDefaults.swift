@@ -24,6 +24,12 @@ nonisolated enum AtticDefaults {
     /// that disagrees with the app is a worse outcome than one that agrees,
     /// and a better one than a crash — but it is silent, which is why
     /// provisioning the group is called out on the release checklist.
+    ///
+    /// The stakes went up when "Feature Less Often" started living here too.
+    /// An unprovisioned group means the widget reads an empty exclusion list
+    /// and will happily put a photo the user explicitly hid on their home or
+    /// lock screen. The memory window merely disagreeing is a bug; that one
+    /// breaks a promise the app made, in the most visible place it could.
     /// `nonisolated(unsafe)` because `UserDefaults` is not `Sendable`, which
     /// makes a static one an error under the Swift 6 language mode the package
     /// builds in. It is the right annotation rather than a silencer:

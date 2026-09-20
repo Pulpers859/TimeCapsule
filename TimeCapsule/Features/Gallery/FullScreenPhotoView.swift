@@ -950,8 +950,10 @@ struct MemoryInfoSheet: View {
             onExcludePhoto()
             exclusionConfirmation = "Won't feature this photo again"
         case .place:
-            onExcludePlace(asset.location?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0), locationName ?? "This location")
-            exclusionConfirmation = "Won't feature this place as often"
+            if let coordinate = asset.location?.coordinate {
+                onExcludePlace(coordinate, Self.placeLabel(for: coordinate, resolvedName: locationName))
+                exclusionConfirmation = "Won't feature this place as often"
+            }
         case .album(let collection):
             onExcludeAlbum(collection)
             exclusionConfirmation = "Won't feature this album as often"
@@ -961,6 +963,22 @@ struct MemoryInfoSheet: View {
             try? await Task.sleep(for: .milliseconds(900))
             dismiss()
         }
+    }
+
+    /// The name this place is remembered by in Settings.
+    ///
+    /// The resolved name is preferred, but it arrives asynchronously and
+    /// `PlaceNameLookup` deliberately returns nothing when offline or rate
+    /// limited — while this row is tappable immediately. Falling back to a
+    /// fixed string meant two exclusions in two different cities both showed
+    /// up as "This location", indistinguishable and never repaired.
+    /// Coordinates are not pretty, but they identify the place.
+    private static func placeLabel(
+        for coordinate: CLLocationCoordinate2D,
+        resolvedName: String?
+    ) -> String {
+        if let resolvedName, !resolvedName.isEmpty { return resolvedName }
+        return String(format: "%.3f, %.3f", coordinate.latitude, coordinate.longitude)
     }
 
     /// EXIF is genuinely useless once formatting fails on every field, which

@@ -36,11 +36,20 @@ nonisolated struct PhotoEXIF: Equatable, Sendable {
         // Pro", so combining them is correct and expected ("Apple iPhone 15
         // Pro"). Some manufacturers duplicate the make into Model instead
         // (Model "Canon EOS R5" alongside Make "Canon"); prepending
-        // unconditionally there would print "Canon Canon EOS R5". Only
-        // combine when the model doesn't already say the make.
+        // unconditionally there would print "Canon Canon EOS R5".
+        //
+        // The overlap test is on the make's *first word*, not the whole
+        // string, because makes routinely carry a corporate suffix the model
+        // does not repeat: Nikon writes Make "NIKON CORPORATION" with Model
+        // "NIKON D850". Testing the whole make there finds no overlap and
+        // prints "NIKON CORPORATION NIKON D850" — the exact duplication this
+        // branch exists to prevent.
         let cameraModel: String?
-        if let trimmedModel, let trimmedMake, !trimmedModel.localizedCaseInsensitiveContains(trimmedMake) {
-            cameraModel = "\(trimmedMake) \(trimmedModel)"
+        if let trimmedModel, let trimmedMake {
+            let makeToken = trimmedMake.split(separator: " ").first.map(String.init) ?? trimmedMake
+            cameraModel = trimmedModel.localizedCaseInsensitiveContains(makeToken)
+                ? trimmedModel
+                : "\(trimmedMake) \(trimmedModel)"
         } else {
             cameraModel = trimmedModel ?? trimmedMake
         }

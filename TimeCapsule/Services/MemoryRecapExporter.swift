@@ -81,6 +81,10 @@ nonisolated enum MemoryRecapExporter {
             // screen reads as a rendering fault, not as production value.
             slides.append(Slide(url: url, zoomFrom: 1, zoomTo: 1, focusX: 0.5, focusY: 0.5))
         }
+        // The title card is a slide but not a memory, and it may or may not
+        // have rendered, so the photo count has to be measured rather than
+        // assumed. See the guard below.
+        let titleSlideCount = slides.count
         for (index, asset) in photos.enumerated() {
             guard !Task.isCancelled else { return nil }
             // Alternating the direction keeps consecutive slides from all
@@ -97,7 +101,15 @@ nonisolated enum MemoryRecapExporter {
             }
             onProgress(0.45 * Double(index + 1) / Double(photos.count))
         }
-        guard slides.count > 1, !Task.isCancelled else { return nil }
+        // Two actual photographs, not two slides. `slides.count > 1` was
+        // satisfied by the title card plus a single photo, which is not a
+        // recap — and it was reachable without the caller doing anything
+        // wrong: the UI counts every image, while `candidates` drops
+        // screenshots, so a day holding one photo and one screenshot passed
+        // the caller's "at least 2 photos" check and arrived here with one
+        // usable image. A photo failing to load (an iCloud original with no
+        // connection) lands in the same place.
+        guard slides.count - titleSlideCount >= 2, !Task.isCancelled else { return nil }
 
         let finalSlides = slides
         let encodingTask = Task.detached(priority: .userInitiated) {
@@ -121,7 +133,12 @@ nonisolated enum MemoryRecapExporter {
     ///
     /// The fallback matters. If a day holds nothing but screenshots, showing
     /// them is still better than reporting that the recap failed.
-    private static func candidates(from assets: [PHAsset]) -> [PHAsset] {
+    ///
+    /// Not private: the gallery decides whether to offer the recap button at
+    /// all, and it has to count the same things this does. Counting every
+    /// image there while dropping screenshots here is how a day with one
+    /// photo and one screenshot got offered a recap it could not make.
+    static func candidates(from assets: [PHAsset]) -> [PHAsset] {
         let images = assets.filter { $0.mediaType == .image }
         let photographs = images.filter { !$0.mediaSubtypes.contains(.photoScreenshot) }
         return photographs.isEmpty ? images : photographs
@@ -381,6 +398,12 @@ nonisolated enum MemoryRecapExporter {
         var time = CMTime.zero
         var appended = 0
         let totalAppends = slides.count * holdFrames + max(slides.count - 1, 0) * fadeFrames
+        // Reported per whole percent, not per frame. Motion took this loop
+        // from ~180 appends to ~1700, and every report is a hop to the main
+        // queue that writes `recapProgress` and so re-evaluates the gallery's
+        // whole body — a thousand-odd full re-renders during an export, to
+        // move a progress ring that has a hundred distinguishable positions.
+        var lastReportedPercent = -1
 
         // Budgets are counted in polls, not wall-clock time. A `Date()` deadline
         // measures how long the *clock* ran, and the clock keeps running while
@@ -411,7 +434,12 @@ nonisolated enum MemoryRecapExporter {
                 guard !Task.isCancelled else { return false }
                 let ok = adaptor.append(buffer, withPresentationTime: presentationTime)
                 appended += 1
-                onProgress(Double(appended) / Double(totalAppends))
+                let progress = Double(appended) / Double(totalAppends)
+                let percent = Int(progress * 100)
+                if percent != lastReportedPercent {
+                    lastReportedPercent = percent
+                    onProgress(progress)
+                }
                 return ok
             }
         }
@@ -444,14 +472,19 @@ nonisolated enum MemoryRecapExporter {
 
             if var outgoing = previous {
                 for step in 0..<fadeFrames {
-                    // A true dissolve: the outgoing slide fades out as the
-                    // incoming one fades in. Holding the outgoing slide at
-                    // full opacity and simply covering it would be wrong here,
-                    // because a slide is now the photo's own rectangle rather
-                    // than a full-frame letterboxed composite — a portrait
-                    // photo does not cover the landscape one behind it, so its
-                    // edges would still be on screen at the end of the fade
-                    // and then vanish in one frame.
+                    // The outgoing slide fades out as the incoming one fades
+                    // in. Holding the outgoing slide at full opacity and
+                    // simply covering it would be wrong here, because a slide
+                    // is now the photo's own rectangle rather than a
+                    // full-frame letterboxed composite — a portrait photo does
+                    // not cover the landscape one behind it, so its edges
+                    // would still be on screen at the end of the fade and then
+                    // vanish in one frame.
+                    //
+                    // These two alphas summing to 1 is only half of what makes
+                    // the result a dissolve; the other half is the additive
+                    // blend mode in `pixelBuffer(layers:pool:)`, without which
+                    // the overlap darkens. The reasoning is written out there.
                     //
                     // Reaching exactly 1.0 and 0.0 on the last fade frame is
                     // what makes the handoff to the next solo frame invisible.
@@ -564,6 +597,24 @@ nonisolated enum MemoryRecapExporter {
         context.setFillColor(UIColor.black.cgColor)
         context.fill(CGRect(origin: .zero, size: renderSize))
         context.interpolationQuality = .medium
+
+        // Additive, not source-over, and this is what actually makes the
+        // crossfade a dissolve.
+        //
+        // Source-over composites each layer *against what is already there*,
+        // so drawing the incoming slide at alpha p on top of an outgoing one
+        // already at (1-p) yields p·B + (1-p)²·A: the outgoing slide is
+        // attenuated a second time. The two weights then sum to
+        // p + (1-p)², which is 1.0 at both ends of the fade but only 0.75 in
+        // the middle — every transition dipped ~25% dark, for half a second,
+        // thirty times a recap.
+        //
+        // The frame is cleared to black and a fade's alphas sum to exactly 1,
+        // so adding the layers instead gives (1-p)·A + p·B — a true dissolve
+        // where the slides overlap, a clean fade to black where only one of
+        // them covers the pixel, and no clamping anywhere. A hold frame is a
+        // single layer at alpha 1 added to black, which is unchanged.
+        context.setBlendMode(.plusLighter)
 
         for layer in layers where layer.alpha > 0.001 {
             context.setAlpha(layer.alpha)

@@ -70,8 +70,17 @@ private nonisolated final class MetadataRequestState: @unchecked Sendable {
 /// no aperture, no ISO, no lens. Getting at it means asking for the original
 /// bytes and reading their EXIF/TIFF blocks with ImageIO.
 ///
+/// Deliberately never goes to the network, and so is best-effort: for a photo
+/// whose original still lives in iCloud, the camera section simply does not
+/// appear. That is the right trade. The viewer displays photos through
+/// `requestImage`, which is satisfied by a *resized rendition*, while this
+/// needs the whole original file — so allowing the network here would pull
+/// down a full-size original (tens of megabytes for a RAW) over whatever
+/// connection the user happens to be on, silently, every time they tapped
+/// the info button. Some missing metadata rows are cheaper than that.
+///
 /// `@concurrent`: see the isolation note atop `MediaAssetLoading.swift`. This
-/// runs from a SwiftUI `.task`, and decoding a multi-megabyte image's
+/// runs from a SwiftUI `.task`, and parsing a multi-megabyte image's
 /// metadata off the main actor is the whole point.
 @concurrent
 nonisolated func photoEXIF(for asset: PHAsset) async -> PhotoEXIF? {
@@ -82,9 +91,16 @@ nonisolated func photoEXIF(for asset: PHAsset) async -> PhotoEXIF? {
             guard state.setContinuation(continuation) else { return }
 
             let options = PHImageRequestOptions()
-            options.isNetworkAccessAllowed = true
+            options.isNetworkAccessAllowed = false
             options.isSynchronous = false
             options.version = .current
+            // One callback, not an opportunistic degraded-then-final pair.
+            // The `isDegraded` guard below returns without resuming, so a
+            // degraded result that was never followed by a final one would
+            // leave the continuation waiting until the sheet closed and
+            // cancellation resumed it — the same visible outcome as no EXIF,
+            // but by accident rather than by decision.
+            options.deliveryMode = .highQualityFormat
 
             let requestID = PHImageManager.default().requestImageDataAndOrientation(
                 for: asset,

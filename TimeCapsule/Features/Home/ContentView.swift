@@ -290,9 +290,23 @@ struct LimitedLibraryBanner: View {
 
 struct EmptyStateView: View {
     let onOpenSettings: () -> Void
+    /// Resolved on appear rather than read in `message`, which would decode
+    /// the stored exclusion lists again on every render of this view.
+    @State private var hasExclusions = false
 
+    /// Says "nothing was captured" only when that is actually true.
+    ///
+    /// With an exclusion active it can easily be false: excluding one album
+    /// can empty a whole day, and then telling the user nothing exists — and
+    /// offering to widen the memory range, which will not bring any of it
+    /// back — sends them looking for a problem in the wrong place. The
+    /// hidden memories are recoverable, but only from a Settings screen they
+    /// have no reason to think of unless something points at it.
     private var message: String {
-        MemoryWindow.dayWindow == 0
+        if hasExclusions {
+            return "Nothing is showing for this date. Some memories may be hidden by Featured Less Often, which you can review in Settings."
+        }
+        return MemoryWindow.dayWindow == 0
             ? "Nothing was captured on this date in previous years. Widening the memory range will look at nearby days too."
             : "Nothing turned up in the current memory range. Try widening it, or check back tomorrow."
     }
@@ -304,7 +318,7 @@ struct EmptyStateView: View {
             message: message
         ) {
             Button(action: onOpenSettings) {
-                Text("Adjust Memory Range")
+                Text(hasExclusions ? "Open Settings" : "Adjust Memory Range")
                     .font(.headline)
                     .frame(minWidth: 220)
                     .frame(height: 50)
@@ -312,5 +326,6 @@ struct EmptyStateView: View {
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.capsule)
         }
+        .onAppear { hasExclusions = MemoryExclusions.hasAnyExclusions }
     }
 }
