@@ -95,9 +95,16 @@ nonisolated struct PhotoEXIF: Equatable, Sendable {
     /// 1/1.5 came out as "1/2 s" — a third faster than the shot actually
     /// was. Handheld low-light and night-mode frames land in that band
     /// routinely, and Apple's own Photos shows "1/1.3" there.
+    /// Between a half second and a second the fraction is abandoned. A
+    /// denominator between 1 and 2 reads as "1/1.2 s", which is a strange way
+    /// to say 0.8 seconds, and its last digit depends on how the formatter
+    /// breaks an exact tie — 1/0.8 is exactly 1.25, and `%.1f` rounds that to
+    /// even, giving 1.2 rather than the 1.3 you would write by hand. Cameras
+    /// mark this band in decimal seconds (0.8"), which is both clearer and
+    /// not sensitive to any of that.
     var shutterSpeedDisplay: String? {
         guard let exposureTime else { return nil }
-        if exposureTime >= 1 {
+        if exposureTime > 0.5 {
             return Self.trimmedNumber(exposureTime) + " s"
         }
         return "1/" + Self.trimmedNumber(1 / exposureTime) + " s"

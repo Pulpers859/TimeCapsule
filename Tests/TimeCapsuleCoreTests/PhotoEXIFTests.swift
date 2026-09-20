@@ -80,7 +80,7 @@ final class PhotoEXIFTests: XCTestCase {
         XCTAssertEqual(exif?.apertureDisplay, "\u{0192}/1.8")
     }
 
-    func testShutterSpeedUnderOneSecondIsAFraction() {
+    func testFastExposuresAreAFraction() {
         let exif = PhotoEXIF(
             make: nil, model: nil, lensModel: nil,
             fNumber: nil, exposureTime: 1.0 / 125.0, iso: nil, focalLength35mm: nil
@@ -88,21 +88,34 @@ final class PhotoEXIFTests: XCTestCase {
         XCTAssertEqual(exif?.shutterSpeedDisplay, "1/125 s")
     }
 
-    func testSubSecondExposuresNeedingAFractionalDenominatorKeepOne() {
-        // 0.8s is 1/1.25. Rounding the denominator printed "1/1 s" — a whole
-        // different exposure. Apple's Photos shows 1/1.3 here.
-        let slow = PhotoEXIF(
+    // Every exposure asserted below is chosen to avoid an exact decimal tie,
+    // because `%.1f` resolves those to even rather than away from zero —
+    // 1/0.8 is exactly 1.25 and formats as "1.2", not "1.3". A test written
+    // from what you would round by hand fails against what printf does.
+    func testHalfToOneSecondExposuresReadAsDecimalSeconds() {
+        // 0.8s as a fraction would be the unreadable "1/1.2 s".
+        let exif = PhotoEXIF(
             make: nil, model: nil, lensModel: nil,
             fNumber: nil, exposureTime: 0.8, iso: nil, focalLength35mm: nil
         )
-        XCTAssertEqual(slow?.shutterSpeedDisplay, "1/1.3 s")
+        XCTAssertEqual(exif?.shutterSpeedDisplay, "0.8 s")
+    }
 
-        // 1/2.5 used to round to "1/3 s".
-        let quick = PhotoEXIF(
+    func testFasterExposuresKeepAFractionalDenominatorWhenTheyNeedOne() {
+        // 1/2.5 used to round to "1/3 s" — a sixth faster than the shot was.
+        let exif = PhotoEXIF(
             make: nil, model: nil, lensModel: nil,
             fNumber: nil, exposureTime: 0.4, iso: nil, focalLength35mm: nil
         )
-        XCTAssertEqual(quick?.shutterSpeedDisplay, "1/2.5 s")
+        XCTAssertEqual(exif?.shutterSpeedDisplay, "1/2.5 s")
+    }
+
+    func testHalfASecondIsStillAFraction() {
+        let exif = PhotoEXIF(
+            make: nil, model: nil, lensModel: nil,
+            fNumber: nil, exposureTime: 0.5, iso: nil, focalLength35mm: nil
+        )
+        XCTAssertEqual(exif?.shutterSpeedDisplay, "1/2 s")
     }
 
     func testWholeDenominatorsStayWhole() {
@@ -142,7 +155,7 @@ final class PhotoEXIFTests: XCTestCase {
         ))
     }
 
-    func testShutterSpeedOfOneSecondOrLongerIsNotAFraction() {
+    func testLongExposuresAreWholeSeconds() {
         let exif = PhotoEXIF(
             make: nil, model: nil, lensModel: nil,
             fNumber: nil, exposureTime: 2, iso: nil, focalLength35mm: nil
