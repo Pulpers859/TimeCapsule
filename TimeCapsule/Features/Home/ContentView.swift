@@ -62,6 +62,10 @@ struct ContentView: View {
             await model.refreshAuthorizationAndMemories()
         }
         .sheet(isPresented: $showSettings) {
+            // Inherits `purchaseStore` from the environment, which sheets do
+            // on every OS this app supports. Deliberately not re-injected:
+            // this view does not otherwise need the store, and adding a
+            // property purely to hand it onward buys nothing.
             SettingsView()
         }
         .onChange(of: scenePhase) { _, newPhase in

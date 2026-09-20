@@ -138,6 +138,16 @@ private nonisolated func parsedEXIF(from data: Data?) -> PhotoEXIF? {
         // NSNumber bridging to Int is value-preserving, so a file whose
         // 35mm-equivalent arrives fractional fails an `as? Int` outright and
         // the row silently disappears.
-        focalLength35mm: (exif?[kCGImagePropertyExifFocalLenIn35mmFilm] as? Double).map { Int($0.rounded()) }
+        //
+        // Bounded before the conversion for the same reason every other
+        // measurement is: `as? Double` accepts infinity from a malformed
+        // rational, and `Int(_:)` traps on it. Reading as Double to stop a
+        // row vanishing reintroduced exactly the crash that bounding the
+        // other fields had just removed.
+        focalLength35mm: (exif?[kCGImagePropertyExifFocalLenIn35mmFilm] as? Double)
+            .flatMap { value in
+                guard value.isFinite, (1...10_000).contains(value) else { return nil }
+                return Int(value.rounded())
+            }
     )
 }

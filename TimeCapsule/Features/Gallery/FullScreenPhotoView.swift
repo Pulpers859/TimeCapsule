@@ -620,8 +620,15 @@ struct FullScreenPhotoView: View {
                     withAnimation {
                         visibleAssets.removeAll { $0.localIdentifier == identifier }
                         isCurrentAssetZoomed = false
+                        isVideoScrubbing = false
                         if let nextIndex {
-                            currentIndex = nextIndex
+                            // Clamped, because `nextIndex` was computed from
+                            // the list as it stood before this delete was
+                            // confirmed. An exclusion landing in that window
+                            // removes further items, and an index past the
+                            // end leaves `pageWindow` empty — a black screen
+                            // with no way out.
+                            currentIndex = min(max(nextIndex, 0), max(visibleAssets.count - 1, 0))
                         }
                     }
                     locationName = nil

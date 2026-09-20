@@ -72,12 +72,32 @@ final class PurchaseStore: ObservableObject {
             }
         }
 
-        let hadEntitlement = isUnlocked
+        // Compared against the last *observed* entitlement, which outlives the
+        // process, not against `isUnlocked`, which does not.
+        //
+        // This is not mirroring the entitlement — `currentEntitlements` is
+        // still the only thing that authorizes anything, and this flag is
+        // never read to decide whether Pro is on. It exists solely so a
+        // true -> false transition can be noticed when the two observations
+        // fall in different launches, which is the normal case: Apple
+        // processes a refund hours or days later, almost certainly while the
+        // app is not running. Comparing against the in-memory value meant
+        // that launch saw false -> false, skipped the reset, and left a
+        // refunded user's widened memory range and late day start in place
+        // permanently — behind pickers that had re-locked, so they could not
+        // even put them back.
+        let defaults = AtticDefaults.shared
+        let hadEntitlement = defaults.bool(forKey: Self.lastObservedEntitlementKey)
         isUnlocked = unlocked
+        defaults.set(unlocked, forKey: Self.lastObservedEntitlementKey)
         if hadEntitlement && !unlocked {
             releaseProSettings()
         }
     }
+
+    /// Remembers only what the last entitlement check saw. Absent on a fresh
+    /// install, which reads as `false` and so correctly resets nothing.
+    private static let lastObservedEntitlementKey = "Attic.lastObservedProEntitlement"
 
     /// Returns the settings Pro unlocks to their free defaults.
     ///
@@ -93,8 +113,9 @@ final class PurchaseStore: ObservableObject {
     /// `nonisolated` and is read from a detached task in the notification
     /// scheduler; it has no access to this store and should not grow one.
     ///
-    /// Reached only on a true -> false transition, so a first launch (which
-    /// starts at false) never wipes anything.
+    /// Reached only on a true -> false transition against the last *stored*
+    /// observation, so a fresh install never wipes anything while a refund
+    /// processed between launches still does.
     private func releaseProSettings() {
         // The shared suite, because these are the two keys the widget reads.
         let defaults = AtticDefaults.shared

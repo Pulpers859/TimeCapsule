@@ -21,6 +21,22 @@ nonisolated struct YearGroup: Identifiable {
     var label: String {
         yearsAgo == 1 ? "1 Year Ago" : "\(yearsAgo) Years Ago"
     }
+
+    /// Narrows the group, keeping the year it is measured against. `nil` when
+    /// nothing survives, so a caller can drop the group entirely.
+    ///
+    /// Exists so filtering cannot quietly lose `referenceYear`. Rebuilding a
+    /// group with `YearGroup(year:assets:)` falls back to the *wall-clock*
+    /// year, and these groups are built against the **logical** year, which
+    /// differs whenever a late day start is set and the clock has passed
+    /// midnight. On New Year's morning that shifted every label by a year —
+    /// the grid said "2 Years Ago" over a photo the viewer called "1 year
+    /// ago", on the one night of the year people photograph most.
+    func filtered(_ isIncluded: (PHAsset) -> Bool) -> YearGroup? {
+        let kept = assets.filter(isIncluded)
+        guard !kept.isEmpty else { return nil }
+        return YearGroup(year: year, assets: kept, referenceYear: referenceYear)
+    }
 }
 
 nonisolated enum MemoryLibrary {

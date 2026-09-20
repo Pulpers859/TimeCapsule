@@ -43,11 +43,7 @@ struct TimeCapsuleView: View {
         nonmutating set { gridLayoutModeRawValue = newValue.rawValue }
     }
     private var filteredYearGroups: [YearGroup] {
-        yearGroups.compactMap { group in
-            let filteredAssets = group.assets.filter(matchesCurrentFilters)
-            guard !filteredAssets.isEmpty else { return nil }
-            return YearGroup(year: group.year, assets: filteredAssets)
-        }
+        yearGroups.compactMap { $0.filtered(matchesCurrentFilters) }
     }
     private var totalFilteredCount: Int {
         filteredYearGroups.reduce(0) { $0 + $1.assets.count }

@@ -266,7 +266,10 @@ nonisolated func albumsContaining(_ asset: PHAsset) async -> [PHAssetCollection]
 @concurrent
 nonisolated func dayIsEmptyOnlyBecauseOfExclusions() async -> Bool {
     let date = MemoryWindow.logicalDate(for: Date())
-    return MemoryLibrary.count(on: date, exclusions: .none) > 0
+    // Spelled out, not `.none` — see `Context.unfiltered`. Written as `.none`
+    // this silently passed `nil`, which made `count` apply the very
+    // exclusions it was being asked to ignore, so this always answered false.
+    return MemoryLibrary.count(on: date, exclusions: MemoryExclusions.Context.unfiltered) > 0
 }
 
 @concurrent

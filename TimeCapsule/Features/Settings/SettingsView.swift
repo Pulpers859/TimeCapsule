@@ -4,6 +4,7 @@ import UIKit
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(NotificationPreferences.notificationsEnabledKey)
     private var notificationsEnabled = NotificationPreferences.defaultNotificationsEnabled
     @AppStorage(NotificationPreferences.notificationHourKey)
@@ -257,6 +258,15 @@ struct SettingsView: View {
         }
         .onChange(of: dayStartHour) { _, _ in
             NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
+        }
+        // Re-read on return from iPhone Settings. The denied banner offers a
+        // button that sends the user there to turn notifications on, and this
+        // sheet stays presented the whole time — so `.task` never runs again
+        // and the warning, plus the button that led there, stayed on screen
+        // after the user had already done what it asked.
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            Task { await loadNotificationSettings() }
         }
     }
 

@@ -72,7 +72,16 @@ nonisolated enum MemoryExclusions {
         /// user's exclusions are applied, which is the only way to tell "this
         /// day is empty because nothing was taken" from "this day is empty
         /// because it was hidden".
-        static let none = Context(assetIDs: [], places: [], albumMemberIDs: [])
+        ///
+        /// Deliberately not named `none`. Every parameter that takes a
+        /// `Context` takes it as an optional, and in that position `.none`
+        /// resolves to `Optional.none` — plain `nil` — because the exact type
+        /// match beats promoting a `Context` into an optional. It compiles,
+        /// it type-checks, and it silently means the opposite: `nil` makes
+        /// the callee build the real context and apply every exclusion. There
+        /// is no warning either, since this is a `static let` rather than an
+        /// enum case. That mistake shipped once already.
+        static let unfiltered = Context(assetIDs: [], places: [], albumMemberIDs: [])
 
         var isEmpty: Bool {
             assetIDs.isEmpty && places.isEmpty && albumMemberIDs.isEmpty
