@@ -54,8 +54,16 @@ nonisolated struct PhotoEXIF: Equatable, Sendable {
             cameraModel = trimmedModel ?? trimmedMake
         }
 
-        let sanitizedFNumber = (fNumber ?? 0) > 0 ? fNumber : nil
-        let sanitizedExposure = (exposureTime ?? 0) > 0 ? exposureTime : nil
+        // Bounded, not merely positive. These numbers come from a file on
+        // disk rather than from anything trustworthy: EXIF stores them as
+        // rationals, and a zero denominator arrives here as infinity, which
+        // `> 0` happily accepts and `Int(_:)` then traps on — crashing the
+        // app the moment the info sheet drew. NaN was already excluded, but
+        // only by accident, since every comparison against it is false.
+        // Anything outside what a real camera could have recorded is treated
+        // as absent, which is the same outcome as the tag being missing.
+        let sanitizedFNumber = Self.measurement(fNumber, in: 0.1...1000)
+        let sanitizedExposure = Self.measurement(exposureTime, in: 0.0000001...86_400)
         let sanitizedISO = (iso ?? 0) > 0 ? iso : nil
         let sanitizedFocalLength = (focalLength35mm ?? 0) > 0 ? focalLength35mm : nil
 
@@ -80,13 +88,19 @@ nonisolated struct PhotoEXIF: Equatable, Sendable {
     /// Sub-second exposures read as a shutter-speed fraction — "1/125 s" —
     /// because that is the unit photographers actually think in; a decimal
     /// like "0.008 s" is technically the same number and unreadable as one.
+    ///
+    /// The denominator keeps a decimal place when it needs one. Rounding it
+    /// to a whole number printed real, common exposures as the wrong number
+    /// rather than as no number: 0.8s (1/1.25) came out as "1/1 s", and
+    /// 1/1.5 came out as "1/2 s" — a third faster than the shot actually
+    /// was. Handheld low-light and night-mode frames land in that band
+    /// routinely, and Apple's own Photos shows "1/1.3" there.
     var shutterSpeedDisplay: String? {
         guard let exposureTime else { return nil }
         if exposureTime >= 1 {
             return Self.trimmedNumber(exposureTime) + " s"
         }
-        let denominator = Int((1 / exposureTime).rounded())
-        return "1/\(denominator) s"
+        return "1/" + Self.trimmedNumber(1 / exposureTime) + " s"
     }
 
     var isoDisplay: String? {
@@ -100,13 +114,24 @@ nonisolated struct PhotoEXIF: Equatable, Sendable {
     }
 
     /// Whole numbers read as "8", not "8.0"; everything else keeps one
-    /// decimal place, which is all an aperture or a multi-second exposure
-    /// ever needs.
+    /// decimal place, which is all an aperture, a shutter denominator or a
+    /// multi-second exposure ever needs.
+    ///
+    /// Total by construction: the `Int` conversion — which traps on infinity
+    /// and on anything past `Int64` — is reached only for a finite value well
+    /// inside that range. `String(format:)` renders the rest without
+    /// trapping. Callers already reject out-of-range input; this makes the
+    /// crash impossible rather than merely unreached.
     private static func trimmedNumber(_ value: Double) -> String {
-        if value.rounded() == value {
-            return String(Int(value))
+        guard value.isFinite, abs(value) < 1e15, value.rounded() == value else {
+            return String(format: "%.1f", value)
         }
-        return String(format: "%.1f", value)
+        return String(Int(value))
+    }
+
+    private static func measurement(_ value: Double?, in range: ClosedRange<Double>) -> Double? {
+        guard let value, value.isFinite, range.contains(value) else { return nil }
+        return value
     }
 }
 

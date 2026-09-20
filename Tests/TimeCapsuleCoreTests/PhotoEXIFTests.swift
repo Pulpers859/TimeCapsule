@@ -88,6 +88,60 @@ final class PhotoEXIFTests: XCTestCase {
         XCTAssertEqual(exif?.shutterSpeedDisplay, "1/125 s")
     }
 
+    func testSubSecondExposuresNeedingAFractionalDenominatorKeepOne() {
+        // 0.8s is 1/1.25. Rounding the denominator printed "1/1 s" — a whole
+        // different exposure. Apple's Photos shows 1/1.3 here.
+        let slow = PhotoEXIF(
+            make: nil, model: nil, lensModel: nil,
+            fNumber: nil, exposureTime: 0.8, iso: nil, focalLength35mm: nil
+        )
+        XCTAssertEqual(slow?.shutterSpeedDisplay, "1/1.3 s")
+
+        // 1/2.5 used to round to "1/3 s".
+        let quick = PhotoEXIF(
+            make: nil, model: nil, lensModel: nil,
+            fNumber: nil, exposureTime: 0.4, iso: nil, focalLength35mm: nil
+        )
+        XCTAssertEqual(quick?.shutterSpeedDisplay, "1/2.5 s")
+    }
+
+    func testWholeDenominatorsStayWhole() {
+        let exif = PhotoEXIF(
+            make: nil, model: nil, lensModel: nil,
+            fNumber: nil, exposureTime: 1.0 / 8000.0, iso: nil, focalLength35mm: nil
+        )
+        XCTAssertEqual(exif?.shutterSpeedDisplay, "1/8000 s")
+    }
+
+    func testNonFiniteMeasurementsAreTreatedAsAbsent() {
+        // An EXIF rational with a zero denominator arrives as infinity. This
+        // used to pass the `> 0` check and then trap in `Int(_:)`, crashing
+        // the app as the info sheet drew.
+        let exif = PhotoEXIF(
+            make: "Apple", model: "iPhone 15 Pro", lensModel: nil,
+            fNumber: .infinity, exposureTime: .infinity, iso: nil, focalLength35mm: nil
+        )
+        XCTAssertNil(exif?.apertureDisplay)
+        XCTAssertNil(exif?.shutterSpeedDisplay)
+        XCTAssertEqual(exif?.cameraModel, "Apple iPhone 15 Pro")
+    }
+
+    func testNaNAndAbsurdMeasurementsAreTreatedAsAbsent() {
+        XCTAssertNil(PhotoEXIF(
+            make: nil, model: nil, lensModel: nil,
+            fNumber: .nan, exposureTime: 1e30, iso: nil, focalLength35mm: nil
+        ))
+    }
+
+    func testVanishinglySmallExposureCannotOverflowTheDenominator() {
+        // 1/1e-30 is far past Int64; the reciprocal used to be forced through
+        // `Int(_:)`.
+        XCTAssertNil(PhotoEXIF(
+            make: nil, model: nil, lensModel: nil,
+            fNumber: nil, exposureTime: 1e-30, iso: nil, focalLength35mm: nil
+        ))
+    }
+
     func testShutterSpeedOfOneSecondOrLongerIsNotAFraction() {
         let exif = PhotoEXIF(
             make: nil, model: nil, lensModel: nil,

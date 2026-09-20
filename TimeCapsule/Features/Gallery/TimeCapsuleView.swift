@@ -7,6 +7,8 @@ struct TimeCapsuleView: View {
     let onOpenSettings: () -> Void
     @State private var isSelecting = false
     @State private var selectedIDs: Set<String> = []
+    /// Owned here rather than per year section — see `MemoryGridBody.onOpen`.
+    @State private var selectedAsset: IdentifiableAsset? = nil
     @State private var showDeleteConfirm = false
     @State private var deleteError: String? = nil
     @State private var isDeleting = false
@@ -103,19 +105,19 @@ struct TimeCapsuleView: View {
                                 ForEach(filteredYearGroups) { group in
                                     YearSection(
                                         group: group,
-                                        allAssets: allFilteredAssets,
                                         isSelecting: isSelecting,
-                                        selectedIDs: $selectedIDs
+                                        selectedIDs: $selectedIDs,
+                                        onOpen: { selectedAsset = IdentifiableAsset($0) }
                                     )
                                     .id(sectionID(for: group))
                                 }
                             case .merged:
                                 MemoryGridBody(
                                     items: mergedItems,
-                                    allAssets: allFilteredAssets,
                                     isSelecting: isSelecting,
                                     showYearBadges: true,
-                                    selectedIDs: $selectedIDs
+                                    selectedIDs: $selectedIDs,
+                                    onOpen: { selectedAsset = IdentifiableAsset($0) }
                                 )
                                 .padding(.top, 20)
                             }
@@ -200,6 +202,9 @@ struct TimeCapsuleView: View {
             }
             .onChange(of: visibleIdentifierSignature) { _, _ in
                 pruneSelectionToVisibleItems()
+            }
+            .fullScreenCover(item: $selectedAsset) { wrapper in
+                FullScreenPhotoView(asset: wrapper.asset, allAssets: allFilteredAssets)
             }
             .sheet(isPresented: $showPaywall) {
                 PaywallView().environmentObject(purchaseStore)
@@ -435,9 +440,9 @@ struct MemorySummaryBar: View {
 
 struct YearSection: View {
     let group: YearGroup
-    let allAssets: [PHAsset]
     let isSelecting: Bool
     @Binding var selectedIDs: Set<String>
+    let onOpen: (PHAsset) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -447,10 +452,10 @@ struct YearSection: View {
 
             MemoryGridBody(
                 items: group.assets.map { MergedMemoryItem(asset: $0, year: group.year, yearsAgo: group.yearsAgo) },
-                allAssets: allAssets,
                 isSelecting: isSelecting,
                 showYearBadges: false,
-                selectedIDs: $selectedIDs
+                selectedIDs: $selectedIDs,
+                onOpen: onOpen
             )
         }
     }
@@ -473,11 +478,20 @@ struct MergedMemoryItem: Identifiable {
 /// twice, and it is exactly the kind of duplication that drifts unnoticed.
 struct MemoryGridBody: View {
     let items: [MergedMemoryItem]
-    let allAssets: [PHAsset]
     let isSelecting: Bool
     let showYearBadges: Bool
     @Binding var selectedIDs: Set<String>
-    @State private var selectedAsset: IdentifiableAsset? = nil
+    /// Opening the viewer is the parent's job, not this grid's.
+    ///
+    /// Each year used to present its own `fullScreenCover` from its own
+    /// `@State`. The pager it presented ranges over *every* year, though, so
+    /// emptying the year the user happened to tap in — delete its last photo,
+    /// or exclude an album that covers it — removed that section from the
+    /// gallery's `ForEach` and destroyed the open viewer along with it. The
+    /// viewer vanished mid-swipe instead of re-indexing and staying put, and
+    /// the "All memories removed" state was unreachable. One cover, owned
+    /// above the sections, cannot be torn down by a section disappearing.
+    let onOpen: (PHAsset) -> Void
 
     private let columns = [
         GridItem(.adaptive(minimum: 108, maximum: 180), spacing: TCMetrics.gridSpacing)
@@ -491,7 +505,7 @@ struct MemoryGridBody: View {
                     if isSelecting {
                         toggleSelection(item.asset)
                     } else {
-                        selectedAsset = IdentifiableAsset(item.asset)
+                        onOpen(item.asset)
                     }
                 } label: {
                     MemoryTile(
@@ -509,9 +523,6 @@ struct MemoryGridBody: View {
             }
         }
         .padding(.horizontal, TCMetrics.screenPadding)
-        .fullScreenCover(item: $selectedAsset) { wrapper in
-            FullScreenPhotoView(asset: wrapper.asset, allAssets: allAssets)
-        }
     }
 
     private func toggleSelection(_ asset: PHAsset) {

@@ -148,13 +148,21 @@ struct FullResAssetView: View {
                 }
             } else {
                 didFail = false
+                // Released *before* the load, as both video branches above
+                // do. After it, a page reused for a photo — which happens on
+                // a delete that leaves `currentIndex` unchanged — left the
+                // previous video's player alive and audible for as long as
+                // the replacement took to arrive, which for an iCloud
+                // original is a download. The cancellation guard below
+                // returns early too, so on that path it was never released
+                // here at all.
+                releasePlayer()
                 let loadedImage = await loadImage(
                     from: asset,
                     targetSize: CGSize(width: 2732, height: 2732),
                     contentMode: .aspectFit
                 )
                 guard !Task.isCancelled else { return }
-                releasePlayer()
                 image = loadedImage
                 didFail = loadedImage == nil
             }

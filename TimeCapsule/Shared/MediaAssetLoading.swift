@@ -218,6 +218,57 @@ nonisolated func resolvedExclusionContext() async -> MemoryExclusions.Context {
     MemoryExclusions.Context.current()
 }
 
+/// Albums and smart albums that actually make sense to offer as something to
+/// stop featuring.
+///
+/// The two excluded subtypes are PhotoKit's own catch-alls — "Recents" and
+/// "All Hidden" contain nearly everything, so excluding either would be
+/// indistinguishable from excluding the whole library. "Recently Deleted" is
+/// absent because PhotoKit does not expose it as a fetchable subtype at all;
+/// there is no `.smartAlbumRecentlyDeleted` case, which is moot anyway, since
+/// an asset actually in it would not be on screen to fetch albums for.
+///
+/// `@concurrent` and not a computed property on the view: these are two
+/// synchronous PhotoKit queries, and under this target's default isolation a
+/// `.task` body runs on the main actor, so resolving them inline hitched the
+/// info sheet's presentation on a library with many albums. The result is
+/// cached in `@State` because SwiftUI re-evaluates `body` on every local
+/// state change — the confirmation banner appearing is one — and a computed
+/// property would re-run both fetches for each of those.
+@concurrent
+nonisolated func albumsContaining(_ asset: PHAsset) async -> [PHAssetCollection] {
+    let excludedSubtypes: Set<PHAssetCollectionSubtype> = [
+        .smartAlbumUserLibrary,
+        .smartAlbumAllHidden
+    ]
+    var results: [PHAssetCollection] = []
+    for type: PHAssetCollectionType in [.album, .smartAlbum] {
+        PHAssetCollection.fetchAssetCollectionsContaining(asset, with: type, options: nil)
+            .enumerateObjects { collection, _, _ in
+                guard !excludedSubtypes.contains(collection.assetCollectionSubtype),
+                      let title = collection.localizedTitle, !title.isEmpty else { return }
+                results.append(collection)
+            }
+    }
+    return results
+}
+
+/// Whether today holds memories that only an exclusion is keeping hidden.
+///
+/// Asked so the empty state can tell the two reasons for an empty day apart.
+/// "Has the user ever hidden anything" is not the same question and gives the
+/// wrong answer almost always: hide one photo once and every empty day
+/// afterwards would blame exclusions, including dates where nothing was ever
+/// captured and widening the memory range is the only thing that would help.
+///
+/// Counting with an empty context takes `count(on:)`'s fast path, so this is
+/// one indexed fetch count with nothing materialised.
+@concurrent
+nonisolated func dayIsEmptyOnlyBecauseOfExclusions() async -> Bool {
+    let date = MemoryWindow.logicalDate(for: Date())
+    return MemoryLibrary.count(on: date, exclusions: .none) > 0
+}
+
 @concurrent
 nonisolated func loadImage(
     from asset: PHAsset,

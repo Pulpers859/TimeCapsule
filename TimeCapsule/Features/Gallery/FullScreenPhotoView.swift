@@ -673,25 +673,39 @@ struct FullScreenPhotoView: View {
     /// `NotificationManager` already does this same resolution off the main
     /// actor; doing it inline here on a Button action would freeze the
     /// pager for exactly as long as that album takes to enumerate.
+    /// Everything here is read *after* the await, not captured before it.
+    ///
+    /// Resolving the context is deliberately slow for an album — that is why
+    /// it is off the main actor — and the viewer stays fully interactive
+    /// throughout: the info sheet is drag-dismissible, so the user can be
+    /// back on the pager swiping and deleting long before this lands.
+    /// Filtering a snapshot taken before the await and assigning it back
+    /// wholesale therefore overwrote whatever happened in between. A photo
+    /// deleted during that window reappeared in the pager and in the counter,
+    /// and the index snapped back to wherever the user had been when they
+    /// tapped. Filtering the live array instead cannot resurrect anything,
+    /// because what is already gone is not in it to be re-admitted — which
+    /// also makes two overlapping exclusions safe in either order.
     private func applyExclusionRemoval() {
-        guard currentIndex < visibleAssets.count else { return }
-        let currentIdentifier = visibleAssets[currentIndex].localIdentifier
-        let assetsToFilter = visibleAssets
-
         Task {
             let context = await resolvedExclusionContext()
-            let filtered = assetsToFilter.filter { !context.excludes($0) }
 
             await MainActor.run {
+                let currentIdentifier = visibleAssets.indices.contains(currentIndex)
+                    ? visibleAssets[currentIndex].localIdentifier
+                    : nil
+                let filtered = visibleAssets.filter { !context.excludes($0) }
+
                 withAnimation {
                     visibleAssets = filtered
                     isCurrentAssetZoomed = false
                     if filtered.isEmpty {
                         currentIndex = 0
-                    } else if let index = filtered.firstIndex(where: { $0.localIdentifier == currentIdentifier }) {
+                    } else if let currentIdentifier,
+                              let index = filtered.firstIndex(where: { $0.localIdentifier == currentIdentifier }) {
                         currentIndex = index
                     } else {
-                        currentIndex = min(currentIndex, filtered.count - 1)
+                        currentIndex = min(max(currentIndex, 0), filtered.count - 1)
                     }
                 }
                 locationName = nil
@@ -904,7 +918,7 @@ struct MemoryInfoSheet: View {
         .background(Color(.systemGroupedBackground))
         .task(id: asset.localIdentifier) {
             exif = nil
-            containingAlbums = Self.containingAlbums(for: asset)
+            containingAlbums = await albumsContaining(asset)
             guard asset.mediaType == .image else { return }
             exif = await photoEXIF(for: asset)
         }
@@ -984,30 +998,34 @@ struct MemoryInfoSheet: View {
     /// EXIF is genuinely useless once formatting fails on every field, which
     /// is common for screenshots and downloaded images — no camera made
     /// them — so the section only appears when there is something to say.
+    /// Built as a list first, then drawn with separators *between* entries.
+    ///
+    /// Each row used to decide for itself whether to draw a leading divider
+    /// by naming the rows above it, and the later ones simply drew one
+    /// unconditionally — so a photo carrying an exposure time but no camera,
+    /// lens or aperture (a re-exported or partly stripped file) opened the
+    /// card with a divider across the top and nothing above it. Deriving the
+    /// separators from the list makes that unrepresentable.
+    ///
+    /// "Focal Length (35 mm)" says which focal length it is. The value comes
+    /// from the 35mm-equivalent EXIF tag, so a 50mm lens on an APS-C body
+    /// reads 75 — correct, and baffling under a bare "Focal Length".
     private func cameraSection(_ exif: PhotoEXIF) -> some View {
-        VStack(spacing: 0) {
-            if let cameraModel = exif.cameraModel {
-                infoRow(label: "Camera", value: cameraModel, icon: "camera")
-            }
-            if let lensModel = exif.lensModel {
-                if exif.cameraModel != nil { Divider().padding(.leading, 40) }
-                infoRow(label: "Lens", value: lensModel, icon: "camera.aperture")
-            }
-            if let apertureDisplay = exif.apertureDisplay {
-                if exif.cameraModel != nil || exif.lensModel != nil { Divider().padding(.leading, 40) }
-                infoRow(label: "Aperture", value: apertureDisplay, icon: "camera.aperture")
-            }
-            if let shutterSpeedDisplay = exif.shutterSpeedDisplay {
-                Divider().padding(.leading, 40)
-                infoRow(label: "Shutter Speed", value: shutterSpeedDisplay, icon: "timer")
-            }
-            if let isoDisplay = exif.isoDisplay {
-                Divider().padding(.leading, 40)
-                infoRow(label: "ISO", value: isoDisplay, icon: "sun.max")
-            }
-            if let focalLengthDisplay = exif.focalLengthDisplay {
-                Divider().padding(.leading, 40)
-                infoRow(label: "Focal Length", value: focalLengthDisplay, icon: "camera.macro")
+        let rows: [(label: String, value: String, icon: String)] = [
+            exif.cameraModel.map { (label: "Camera", value: $0, icon: "camera") },
+            exif.lensModel.map { (label: "Lens", value: $0, icon: "camera.aperture") },
+            exif.apertureDisplay.map { (label: "Aperture", value: $0, icon: "camera.aperture") },
+            exif.shutterSpeedDisplay.map { (label: "Shutter Speed", value: $0, icon: "timer") },
+            exif.isoDisplay.map { (label: "ISO", value: $0, icon: "sun.max") },
+            exif.focalLengthDisplay.map { (label: "Focal Length (35 mm)", value: $0, icon: "camera.macro") }
+        ].compactMap { $0 }
+
+        return VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                if index > 0 {
+                    Divider().padding(.leading, 40)
+                }
+                infoRow(label: row.label, value: row.value, icon: row.icon)
             }
         }
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -1092,36 +1110,6 @@ struct MemoryInfoSheet: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .contentShape(Rectangle())
-    }
-
-    /// Albums and smart albums that actually make sense to offer. The two
-    /// excluded subtypes are PhotoKit's own catch-alls — "Recents" and "All
-    /// Hidden" contain nearly everything, so excluding either would be
-    /// indistinguishable from excluding the whole library. "Recently
-    /// Deleted" isn't in this list because PhotoKit doesn't expose it as a
-    /// fetchable subtype at all — there is no `.smartAlbumRecentlyDeleted`
-    /// case — which is moot anyway, since an asset that is actually in
-    /// Recently Deleted wouldn't be showing on screen to fetch albums for.
-    ///
-    /// Resolved once per asset into `@State` rather than as a computed
-    /// property: SwiftUI re-evaluates `body` on every local state change —
-    /// the confirmation banner appearing is one — and a computed property
-    /// here would re-run two PhotoKit fetches on each of those for no reason.
-    private static func containingAlbums(for asset: PHAsset) -> [PHAssetCollection] {
-        let excludedSubtypes: Set<PHAssetCollectionSubtype> = [
-            .smartAlbumUserLibrary,
-            .smartAlbumAllHidden
-        ]
-        var results: [PHAssetCollection] = []
-        for type: PHAssetCollectionType in [.album, .smartAlbum] {
-            PHAssetCollection.fetchAssetCollectionsContaining(asset, with: type, options: nil)
-                .enumerateObjects { collection, _, _ in
-                    guard !excludedSubtypes.contains(collection.assetCollectionSubtype),
-                          let title = collection.localizedTitle, !title.isEmpty else { return }
-                    results.append(collection)
-                }
-        }
-        return results
     }
 
     /// "Take me to this one in Photos so I can edit it."

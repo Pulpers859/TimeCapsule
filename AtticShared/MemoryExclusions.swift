@@ -27,15 +27,6 @@ nonisolated enum MemoryExclusions {
     /// place still counts as "here again".
     static let placeRadiusMeters: CLLocationDistance = 400
 
-    /// How close two *stored* places must be to count as the same entry.
-    ///
-    /// Deliberately far tighter than `placeRadiusMeters`. Using the match
-    /// radius here left a gap: a second place 390m from the first was
-    /// rejected as "already covered", but photos 390m beyond *it* sit 780m
-    /// from the only stored centre and keep appearing — the user asked twice
-    /// and the place still shows up. At 40m this only ever collapses genuine
-    /// re-taps on the same spot.
-    private static let placeDuplicateMeters: CLLocationDistance = 40
 
     struct ExcludedAlbum: Codable, Equatable, Sendable {
         let id: String
@@ -77,6 +68,12 @@ nonisolated enum MemoryExclusions {
             )
         }
 
+        /// Excludes nothing. Lets a caller ask what a day holds *before* the
+        /// user's exclusions are applied, which is the only way to tell "this
+        /// day is empty because nothing was taken" from "this day is empty
+        /// because it was hidden".
+        static let none = Context(assetIDs: [], places: [], albumMemberIDs: [])
+
         var isEmpty: Bool {
             assetIDs.isEmpty && places.isEmpty && albumMemberIDs.isEmpty
         }
@@ -106,10 +103,6 @@ nonisolated enum MemoryExclusions {
     static var excludedAssetIDs: Set<String> {
         get { Set(AtticDefaults.shared.stringArray(forKey: assetsKey) ?? []) }
         set { AtticDefaults.shared.set(Array(newValue), forKey: assetsKey) }
-    }
-
-    static var hasAnyExclusions: Bool {
-        !excludedAlbums.isEmpty || !excludedPlaces.isEmpty || !excludedAssetIDs.isEmpty
     }
 
     static func excludeAsset(_ asset: PHAsset) {
@@ -149,14 +142,18 @@ nonisolated enum MemoryExclusions {
 
         var places = excludedPlaces
         let target = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        // Only collapses a re-tap on the same spot. Using the *match* radius
-        // here left a hole: a place 390m from an existing centre was rejected
-        // as already covered, while photos 390m the other side of it sit
-        // 780m from that centre and kept appearing — the user excluded the
-        // place twice and it still showed up.
+        // Deduplicated at the same radius that matching uses, deliberately.
+        //
+        // A tighter radius looks like it closes a coverage gap — a second
+        // centre just inside the first one's radius would extend the hidden
+        // area outward — but that gap cannot be reached: a photo within
+        // `placeRadiusMeters` of an existing centre is already excluded, so
+        // it is not in the grid or the pager for anyone to open and exclude
+        // again. All a tighter radius really does is let GPS drift at one
+        // venue pile up several identical-looking rows in Settings.
         let isDuplicate = places.contains { place in
             CLLocation(latitude: place.latitude, longitude: place.longitude)
-                .distance(from: target) < placeDuplicateMeters
+                .distance(from: target) < placeRadiusMeters
         }
         guard !isDuplicate else { return }
         places.append(ExcludedPlace(latitude: coordinate.latitude, longitude: coordinate.longitude, label: label))

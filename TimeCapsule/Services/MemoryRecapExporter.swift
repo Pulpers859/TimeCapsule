@@ -486,6 +486,15 @@ nonisolated enum MemoryRecapExporter {
                     // blend mode in `pixelBuffer(layers:pool:)`, without which
                     // the overlap darkens. The reasoning is written out there.
                     //
+                    // That pairing is load-bearing in both directions: because
+                    // the blend adds, these two alphas MUST keep summing to
+                    // exactly 1. Easing `progress` here — an inviting change,
+                    // since every other motion value in this file is eased —
+                    // would push the sum above 1 through the middle of the
+                    // fade and blow the overlap out to white, which is a
+                    // louder failure than the darkening this replaced. Ease
+                    // the zoom, never the crossfade.
+                    //
                     // Reaching exactly 1.0 and 0.0 on the last fade frame is
                     // what makes the handoff to the next solo frame invisible.
                     let progress = CGFloat(step + 1) / CGFloat(fadeFrames)
