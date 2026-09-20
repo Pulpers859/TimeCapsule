@@ -1076,11 +1076,14 @@ struct MemoryInfoSheet: View {
         .contentShape(Rectangle())
     }
 
-    /// Albums and smart albums that actually make sense to offer. The three
+    /// Albums and smart albums that actually make sense to offer. The two
     /// excluded subtypes are PhotoKit's own catch-alls — "Recents" and "All
-    /// Hidden" contain nearly everything, so excluding them would be
-    /// indistinguishable from excluding the whole library, and "Recently
-    /// Deleted" cannot contain a memory that is still showing on screen.
+    /// Hidden" contain nearly everything, so excluding either would be
+    /// indistinguishable from excluding the whole library. "Recently
+    /// Deleted" isn't in this list because PhotoKit doesn't expose it as a
+    /// fetchable subtype at all — there is no `.smartAlbumRecentlyDeleted`
+    /// case — which is moot anyway, since an asset that is actually in
+    /// Recently Deleted wouldn't be showing on screen to fetch albums for.
     ///
     /// Resolved once per asset into `@State` rather than as a computed
     /// property: SwiftUI re-evaluates `body` on every local state change —
@@ -1089,7 +1092,6 @@ struct MemoryInfoSheet: View {
     private static func containingAlbums(for asset: PHAsset) -> [PHAssetCollection] {
         let excludedSubtypes: Set<PHAssetCollectionSubtype> = [
             .smartAlbumUserLibrary,
-            .smartAlbumRecentlyDeleted,
             .smartAlbumAllHidden
         ]
         var results: [PHAssetCollection] = []

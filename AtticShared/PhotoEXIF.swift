@@ -31,10 +31,13 @@ nonisolated struct PhotoEXIF: Equatable, Sendable {
         let trimmedModel = model?.trimmingCharacters(in: .whitespaces).nilIfEmpty
         let trimmedLens = lensModel?.trimmingCharacters(in: .whitespaces).nilIfEmpty
 
-        // TIFF's Make/Model are separate fields, but most cameras' Model
-        // already reads as the full name ("iPhone 15 Pro"), so prefixing the
-        // make unconditionally would print "Apple iPhone 15 Pro". Only
-        // combine them when the model doesn't already say the make.
+        // TIFF's Make/Model are separate fields, and most cameras keep them
+        // that way — Apple's own EXIF has Make "Apple", Model "iPhone 15
+        // Pro", so combining them is correct and expected ("Apple iPhone 15
+        // Pro"). Some manufacturers duplicate the make into Model instead
+        // (Model "Canon EOS R5" alongside Make "Canon"); prepending
+        // unconditionally there would print "Canon Canon EOS R5". Only
+        // combine when the model doesn't already say the make.
         let cameraModel: String?
         if let trimmedModel, let trimmedMake, !trimmedModel.localizedCaseInsensitiveContains(trimmedMake) {
             cameraModel = "\(trimmedMake) \(trimmedModel)"

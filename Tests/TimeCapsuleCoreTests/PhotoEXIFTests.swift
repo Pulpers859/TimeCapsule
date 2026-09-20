@@ -27,19 +27,22 @@ final class PhotoEXIFTests: XCTestCase {
     }
 
     func testModelAlreadyContainingMakeIsNotDuplicated() {
+        // Some manufacturers fold the make into Model themselves.
+        let exif = PhotoEXIF(
+            make: "Canon", model: "Canon EOS R5", lensModel: nil,
+            fNumber: nil, exposureTime: nil, iso: nil, focalLength35mm: nil
+        )
+        XCTAssertEqual(exif?.cameraModel, "Canon EOS R5")
+    }
+
+    func testMakeIsPrependedWhenModelDoesNotIncludeIt() {
+        // Apple's own EXIF: Make "Apple", Model "iPhone 15 Pro" — no overlap,
+        // so both belong in the display string.
         let exif = PhotoEXIF(
             make: "Apple", model: "iPhone 15 Pro", lensModel: nil,
             fNumber: nil, exposureTime: nil, iso: nil, focalLength35mm: nil
         )
-        XCTAssertEqual(exif?.cameraModel, "iPhone 15 Pro")
-    }
-
-    func testMakeIsPrependedWhenModelDoesNotIncludeIt() {
-        let exif = PhotoEXIF(
-            make: "Canon", model: "EOS R5", lensModel: nil,
-            fNumber: nil, exposureTime: nil, iso: nil, focalLength35mm: nil
-        )
-        XCTAssertEqual(exif?.cameraModel, "Canon EOS R5")
+        XCTAssertEqual(exif?.cameraModel, "Apple iPhone 15 Pro")
     }
 
     func testMakeAloneIsUsedWhenModelIsMissing() {
