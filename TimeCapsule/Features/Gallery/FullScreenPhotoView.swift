@@ -821,6 +821,14 @@ struct MemoryInfoSheet: View {
     @State private var exclusionConfirmation: String? = nil
     @State private var pendingAction: PendingExclusion? = nil
     @State private var containingAlbums: [PHAssetCollection] = []
+    /// Collapsed at rest. Six rows of camera settings pushed the map and
+    /// "Feature Less Often" below the fold on every photo, for information
+    /// most people want once and not every time.
+    ///
+    /// Nothing resets this on a swipe because nothing has to: the sheet is
+    /// presented with `.sheet(item:)` and blocks the pager while it is up, so
+    /// each memory gets a freshly built view with this back at false.
+    @State private var showsCameraDetails = false
 
     private enum HandoffState {
         case idle
@@ -1047,11 +1055,43 @@ struct MemoryInfoSheet: View {
         ].compactMap { $0 }
 
         return VStack(spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                if index > 0 {
-                    Divider().padding(.leading, 40)
+            Button {
+                withAnimation(.snappy(duration: 0.22)) {
+                    showsCameraDetails.toggle()
                 }
-                infoRow(label: row.label, value: row.value, icon: row.icon)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "camera.aperture")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 28, alignment: .center)
+                    Text("Camera Details")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 12)
+                    Text("\(rows.count)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(showsCameraDetails ? 90 : 0))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Camera details")
+            .accessibilityValue(showsCameraDetails ? "Expanded" : "Collapsed")
+            .accessibilityHint(showsCameraDetails ? "Double tap to hide" : "Double tap to show")
+
+            if showsCameraDetails {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    Divider().padding(.leading, 40)
+                    infoRow(label: row.label, value: row.value, icon: row.icon)
+                }
             }
         }
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
