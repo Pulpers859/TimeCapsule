@@ -271,44 +271,50 @@ struct MemoryWidgetView: View {
     private var home: some View {
         switch entry.content {
         case .memory(let image, let yearsAgo):
-            ZStack(alignment: .bottomLeading) {
-                Color.black
-                if let image {
-                    Self.photo(image)
-                } else {
-                    // A memory whose photo could not be loaded locally. The
-                    // widget never goes to the network, so an iCloud-only
-                    // original with no cached rendition lands here — and a
-                    // plain black tile captioned "3 Years Ago" reads as a
-                    // broken widget rather than as a photo it cannot reach.
-                    // Also covers the placeholder entry, which WidgetKit
-                    // redacts anyway.
-                    Image(systemName: "photo")
-                        .font(.system(size: 22, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.25))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The labels are the widget's *content*; everything visual is its
+            // container background. That split is not cosmetic. Since iOS 17
+            // a widget insets its content by a system margin, so a photo drawn
+            // as content stops short of the rounded edge and leaves a black
+            // ring around itself. Only the container background is allowed to
+            // reach the corners, while the same margin keeps the text off them
+            // — which is where text belongs anyway.
+            VStack(alignment: .leading, spacing: 1) {
+                Text(Self.label(yearsAgo: yearsAgo))
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                if entry.totalCount > 1 {
+                    Text("\(entry.totalCount) memories")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
                 }
-                // A gradient rather than a solid scrim: the label has to stay
-                // legible over a bright sky and a dark room alike.
-                LinearGradient(
-                    colors: [.black.opacity(0.65), .black.opacity(0.1), .clear],
-                    startPoint: .bottom,
-                    endPoint: .center
-                )
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(Self.label(yearsAgo: yearsAgo))
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                    if entry.totalCount > 1 {
-                        Text("\(entry.totalCount) memories")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 2)
-                .padding(.bottom, 1)
             }
-            .containerBackground(.black, for: .widget)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .containerBackground(for: .widget) {
+                ZStack {
+                    Color.black
+                    if let image {
+                        Self.photo(image)
+                    } else {
+                        // A memory whose photo could not be loaded locally.
+                        // The widget never goes to the network, so an
+                        // iCloud-only original with no cached rendition lands
+                        // here — and a plain black tile captioned "3 Years
+                        // Ago" reads as a broken widget rather than as a photo
+                        // it cannot reach. Also covers the placeholder entry,
+                        // which WidgetKit redacts anyway.
+                        Image(systemName: "photo")
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundStyle(.white.opacity(0.25))
+                    }
+                    // A gradient rather than a solid scrim: the label has to
+                    // stay legible over a bright sky and a dark room alike.
+                    LinearGradient(
+                        colors: [.black.opacity(0.75), .black.opacity(0.15), .clear],
+                        startPoint: .bottom,
+                        endPoint: .center
+                    )
+                }
+            }
 
         case .empty:
             centred(
