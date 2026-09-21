@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        The widget needs its own manifest. A privacy manifest describes the
+        binary it ships in, and an app extension is a separate binary: the
+        app's manifest lives under TimeCapsule/, which is synchronized to the
+        app target only, so AtticWidget.appex was shipping without one at all
+        while its compiled sources call a required-reason API. That is
+        refused at upload with ITMS-91053, not at review.
+
+        The declaration is deliberately minimal. Every required-reason API
+        family was checked against this target's entire compiled source set —
+        AtticWidget/ plus AtticShared/ — and UserDefaults is the only one
+        present. There is no file-timestamp use here: MediaAssetLoading.swift
+        belongs to the app target and the widget never compiles it.
+
+        1C8F.1 is the designed access: AtticDefaults reads the App Group
+        suite the app shares with this extension. CA92.1 is included because
+        the same type falls back to `UserDefaults.standard` when the App
+        Group is not provisioned, which is a reachable path rather than a
+        hypothetical one — the release checklist treats provisioning that
+        group as an outstanding step.
+    -->
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>1C8F.1</string>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+    <key>NSPrivacyTracking</key>
+    <false/>
+</dict>
+</plist>

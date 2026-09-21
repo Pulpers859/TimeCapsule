@@ -102,6 +102,20 @@ nonisolated enum PhotosEditHandoff {
         } catch {
             throw HandoffError.writeFailed(error.localizedDescription)
         }
+
+        // Confirmed against the album rather than inferred from the write
+        // succeeding.
+        //
+        // `PHAssetCollectionChangeRequest(for:)` returns nil when the album is
+        // no longer writable — deleted, or otherwise changed, between the
+        // fetch above and this block — and the optional chain then makes the
+        // whole change a no-op that `performChanges` still reports as a
+        // success. The user was told to open Attic Edits and find their
+        // photo there, and it was not in it. Asking the album what it
+        // actually contains is the only answer that cannot be wrong.
+        guard contains(asset, in: album) else {
+            throw HandoffError.albumUnavailable
+        }
         return .addedToAlbum
     }
 

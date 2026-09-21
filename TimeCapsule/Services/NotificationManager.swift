@@ -59,6 +59,18 @@ final class NotificationManager: NSObject {
             return
         }
 
+        // A pass already running is left alone unless the caller forces one.
+        //
+        // On a cold launch `init()` starts a pass, and the first `.active`
+        // transition arrives long before it finishes. The daily guard below
+        // cannot see it, because the timestamp it reads is only written when
+        // a pass *completes* — so every launch cancelled its own scheduling
+        // mid-flight and started again. A user who backgrounded within a few
+        // seconds could lose both passes and keep stale notification bodies
+        // indefinitely. A forced refresh still supersedes, because that means
+        // the counts themselves have changed.
+        if !force, schedulingTask != nil { return }
+
         let lastRefresh = preferences.object(forKey: NotificationPreferences.lastNotificationRefreshKey) as? Date
         guard force || lastRefresh.map({ !Calendar.current.isDateInToday($0) }) ?? true else { return }
         replaceSchedulingTask(requestAuthorization: false)
@@ -92,6 +104,20 @@ final class NotificationManager: NSObject {
     }
 
     private func schedule(requestAuthorization: Bool, generation requestedGeneration: Int) async {
+        // Released on every exit, not just the successful one.
+        //
+        // `refreshScheduleIfNeeded` now treats a non-nil task as "a pass is
+        // running" and declines to start another, so a handle left installed
+        // by an early return — unauthorized, cancelled, superseded — would
+        // block every future unforced pass for the life of the process. Only
+        // the generation that still owns the handle clears it, so a pass that
+        // has already been replaced cannot clear its successor's.
+        defer {
+            if requestedGeneration == generation {
+                schedulingTask = nil
+            }
+        }
+
         guard isCurrent(requestedGeneration) else { return }
         let center = UNUserNotificationCenter.current()
 
@@ -106,8 +132,24 @@ final class NotificationManager: NSObject {
         } else {
             let settings = await center.notificationSettings()
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
-                notificationsEnabled = false
-                cancelAndRemoveScheduledNotifications()
+                // Deliberately leaves `notificationsEnabled` alone.
+                //
+                // That flag is the user's stated preference; this is a system
+                // condition they can reverse at any moment from iOS Settings.
+                // Clearing it meant revoking permission there silently turned
+                // the in-app reminder off for good: re-granting permission
+                // restored nothing, and the banner that would have explained
+                // it had gone too, because authorization was no longer denied.
+                // Settings simply looked normal with reminders quietly off.
+                //
+                // Nothing is removed either. Pending requests cannot be
+                // delivered while unauthorized, and leaving them means
+                // re-granting permission resumes reminders immediately rather
+                // than waiting for the next scheduling pass.
+                //
+                // The branch above is different on purpose: there the user has
+                // just been asked and has declined, so recording that in the
+                // toggle is honest rather than destructive.
                 return
             }
         }
@@ -194,7 +236,6 @@ final class NotificationManager: NSObject {
                 center.removePendingNotificationRequests(withIdentifiers: staleIDs)
             }
             preferences.set(Date(), forKey: NotificationPreferences.lastNotificationRefreshKey)
-            schedulingTask = nil
         } catch {}
     }
 

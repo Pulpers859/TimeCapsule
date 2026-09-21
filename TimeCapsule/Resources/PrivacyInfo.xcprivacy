@@ -4,12 +4,27 @@
 <dict>
     <key>NSPrivacyAccessedAPITypes</key>
     <array>
+        <!--
+            Two reasons, because the app makes two different kinds of
+            UserDefaults access and each needs declaring.
+
+            CA92.1 covers information accessible only to the app itself:
+            NotificationManager's `UserDefaults.standard`, and the @AppStorage
+            in SettingsView that has no explicit store.
+
+            1C8F.1 covers the App Group suite in AtticDefaults, which the
+            widget extension reads too. CA92.1 does not permit information
+            reachable from outside the app, so declaring only CA92.1
+            under-declares that half — and declaring only 1C8F.1 would
+            under-declare the other. Both belong here.
+        -->
         <dict>
             <key>NSPrivacyAccessedAPIType</key>
             <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
             <key>NSPrivacyAccessedAPITypeReasons</key>
             <array>
                 <string>CA92.1</string>
+                <string>1C8F.1</string>
             </array>
         </dict>
         <!--
