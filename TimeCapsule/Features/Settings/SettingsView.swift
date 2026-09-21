@@ -107,6 +107,29 @@ struct SettingsView: View {
                             subtitle: "Keep an evening that ran past midnight together"
                         ) { showPaywall = true }
                     }
+
+                    // Only ever appears when the App Group is missing, which
+                    // on a correctly signed build it is not. Without it the
+                    // failure is silent and reads as the widget being wrong:
+                    // it falls back to a private store, so it shows the
+                    // free-tier memory window and an empty exclusion list
+                    // while the app shows the real ones. That surfaced as the
+                    // widget reporting one memory fewer than the app would
+                    // let you page through, with no way to tell why.
+                    if !AtticDefaults.isAppGroupAvailable {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Widget can't read these settings")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("It will show its own defaults, so its memory count can differ from the app's. This needs the app's App Group, which a re-signed build usually drops.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
                 } header: {
                     Text("Memories")
                 } footer: {

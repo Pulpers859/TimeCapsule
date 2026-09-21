@@ -41,8 +41,40 @@ nonisolated enum AtticDefaults {
     /// `MemoryWindow` is nonisolated and is read from a detached task in the
     /// notification scheduler and from the widget's own process, none of which
     /// are on the main actor.
-    nonisolated(unsafe) static let shared: UserDefaults =
-        UserDefaults(suiteName: appGroupIdentifier) ?? .standard
+    nonisolated(unsafe) static let shared: UserDefaults = {
+        guard isAppGroupAvailable, let suite = UserDefaults(suiteName: appGroupIdentifier) else {
+            return .standard
+        }
+        return suite
+    }()
+
+    /// Whether the App Group is actually provisioned for this process.
+    ///
+    /// `UserDefaults(suiteName:)` is not a test for it. It hands back a store
+    /// for a suite the process has no entitlement to reach, so the nil-check
+    /// this used to rely on passed in exactly the case it was meant to catch,
+    /// and the app and the widget each read a private store while appearing
+    /// to share one. Asking for the group's container directory is the check
+    /// that actually fails without the entitlement.
+    ///
+    /// Worth surfacing rather than only tolerating: when this is false the
+    /// widget silently renders the free-tier memory window and an empty
+    /// exclusion list, which reads to the user as the widget disagreeing with
+    /// the app for no reason.
+    ///
+    /// Compiled out off-Apple. App Groups are an Apple sandbox concept, and
+    /// `containerURL(forSecurityApplicationGroupIdentifier:)` is not part of
+    /// the Foundation the package builds against on Windows, where this file
+    /// is compiled for the shared logic tests.
+    static var isAppGroupAvailable: Bool {
+        #if canImport(Darwin)
+        return FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        ) != nil
+        #else
+        return false
+        #endif
+    }
 
     /// The last Pro entitlement `PurchaseStore` observed.
     ///
