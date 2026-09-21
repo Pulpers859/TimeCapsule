@@ -1,0 +1,141 @@
+name: Build Sideload IPA
+
+# Manual, not on every push. This produces the file you upload to Signulous,
+# and you only want it when you actually intend to install something.
+on:
+  workflow_dispatch:
+    inputs:
+      unlock_pro:
+        description: 'Compile with Pro unlocked (no App Store product exists for a sideloaded build)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sideload-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Select and verify toolchain
+        shell: bash
+        run: |
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
+            | grep -viE 'beta|release[_-]?candidate|_rc[0-9]*(\.app)?$' \
+            | sort -V | tail -1)
+          if [[ -z "$newest" ]]; then
+            echo 'No Xcode found on the runner.' >&2
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$newest/Contents/Developer" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$newest/Contents/Developer"
+          xcodebuild -version
+
+      # Built unsigned on purpose.
+      #
+      # Signulous re-signs whatever it is given with its own certificate, so
+      # signing here would only be thrown away — and signing properly would
+      # need an Apple Developer account, which is the thing this route exists
+      # to avoid. `CODE_SIGNING_ALLOWED=NO` is what makes that possible
+      # without one.
+      - name: Archive
+        shell: bash
+        run: |
+          set -o pipefail
+          extra=""
+          if [[ "${{ inputs.unlock_pro }}" == "true" ]]; then
+            extra="ATTIC_EXTRA_SWIFT_FLAGS=ATTIC_SIDELOAD"
+            echo 'Building with Pro unlocked.'
+          else
+            echo 'Building with Pro locked; the paywall will report no product.'
+          fi
+          xcodebuild archive \
+            -project 'TimeCapsule.xcodeproj' \
+            -scheme 'TimeCapsule' \
+            -configuration 'Release' \
+            -destination 'generic/platform=iOS' \
+            -archivePath 'build/Attic.xcarchive' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            $extra 2>&1 | tee archive.log
+          status=${PIPESTATUS[0]}
+          if [[ "$status" -ne 0 ]]; then exit "$status"; fi
+
+      # An .ipa is a zip with the .app inside a folder called Payload. That
+      # is the whole format; there is no Apple tool needed to make one.
+      - name: Package IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="build/Attic.xcarchive/Products/Applications/TimeCapsule.app"
+          if [[ ! -d "$app" ]]; then
+            echo "No .app in the archive at $app" >&2
+            ls -R build/Attic.xcarchive/Products >&2 || true
+            exit 1
+          fi
+
+          # Checked rather than assumed: a missing widget still produces a
+          # perfectly valid .ipa, and you would only find out when the widget
+          # was not on your home screen.
+          if [[ ! -d "$app/PlugIns/AtticWidget.appex" ]]; then
+            echo 'AtticWidget.appex is not embedded in the app.' >&2
+            ls -R "$app/PlugIns" >&2 || true
+            exit 1
+          fi
+          echo "Widget embedded: yes"
+
+          mkdir -p out/Payload
+          cp -R "$app" out/Payload/
+          (cd out && zip -qry "Attic.ipa" Payload)
+          rm -rf out/Payload
+
+          size=$(du -h out/Attic.ipa | cut -f1)
+          echo "Built out/Attic.ipa ($size)"
+          echo "IPA_SIZE=$size" >> "$GITHUB_ENV"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Attic-ipa
+          path: 'out/Attic.ipa'
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: How to install this
+        shell: bash
+        run: |
+          cat <<'NOTE'
+          ============================================================
+          Attic.ipa is attached to this run, under "Artifacts".
+
+            1. Download it and unzip the download (GitHub wraps artifacts
+               in a zip; you want the .ipa inside).
+            2. Upload the .ipa to Signulous and sign it.
+            3. Install from Signulous onto your iPhone.
+
+          Known limits of a sideloaded build:
+            - The widget may not share settings with the app if the App
+              Group does not survive re-signing. If the widget shows a
+              photo you hid, that is why.
+            - Purchases cannot work. Pro was compiled in directly if you
+              left the unlock option on.
+          ============================================================
+          NOTE
+
+      - name: Upload archive log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sideload-archive-log
+          path: 'archive.log'
+          if-no-files-found: warn
+          retention-days: 7
