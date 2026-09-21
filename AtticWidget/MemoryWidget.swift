@@ -132,11 +132,15 @@ nonisolated struct MemoryProvider: TimelineProvider {
 
         let now = Date()
         let span = Self.nextDayBoundary(after: now).timeIntervalSince(now)
+        // `nil` for the accessory families, which draw no photo.
         let pixelSize = Self.thumbnailSize(for: family)
 
         var entries: [MemoryEntry] = []
         for (offset, pick) in picks.enumerated() {
-            let image = await Self.thumbnail(for: pick.asset, size: pixelSize)
+            var image: UIImage?
+            if let pixelSize {
+                image = await Self.thumbnail(for: pick.asset, size: pixelSize)
+            }
             let stride = span * Double(offset) / Double(max(picks.count, 1))
             entries.append(
                 MemoryEntry(
@@ -180,24 +184,60 @@ nonisolated struct MemoryProvider: TimelineProvider {
             ?? date.addingTimeInterval(60 * 60)
     }
 
-    private static func thumbnailSize(for family: WidgetFamily) -> CGFloat {
+    /// The longest edge, in pixels, worth asking Photos for — or `nil` for a
+    /// family that shows no photo at all.
+    ///
+    /// These are pixels, not points, because that is what `targetSize` means.
+    /// A `.systemMedium` tile is roughly 338 x 158 points, so on a 3x screen
+    /// its widest edge is a bit over 1000 pixels; the old 600 was under half
+    /// of that and every photo was being stretched to fit. `.systemSmall` is
+    /// about 158 points square, so 512 covers it with a little headroom.
+    ///
+    /// The accessory families return `nil`. Neither of them draws the image —
+    /// they are a count and a line of text — so the previous 200-pixel
+    /// request was decoded and thrown away on every timeline refresh, inside
+    /// the one process that has a memory limit worth respecting.
+    private static func thumbnailSize(for family: WidgetFamily) -> CGFloat? {
         switch family {
-        case .systemMedium: 600
-        case .accessoryCircular, .accessoryRectangular: 200
-        default: 400
+        case .systemMedium: 1024
+        case .accessoryCircular, .accessoryRectangular: nil
+        default: 512
         }
     }
 
-    /// A widget extension is held to a much smaller memory budget than the
-    /// app, so this asks for a modest thumbnail and never goes to the network:
-    /// an iCloud round trip would blow the widget's time budget and the
-    /// placeholder is a better outcome than a blank slot.
+    /// The photo, as sharp as can be had without going to the network.
+    ///
+    /// Asked for at `.aspectFit`, not `.aspectFill`: the widget now shows the
+    /// whole frame, so a request that crops to a square would throw away the
+    /// very parts the fit exists to keep.
+    ///
+    /// Quality is requested first and a fast rendition is the fallback rather
+    /// than the default. `.fastFormat` returns whatever is already cached,
+    /// which for a large photo is often a couple of hundred pixels — fine as
+    /// a grid thumbnail, visibly soft blown up to fill a home screen tile.
+    /// But it is also all that exists locally for an asset whose original
+    /// lives in iCloud, and a widget must not go to the network: the round
+    /// trip would blow its time budget. So a soft photo beats an empty tile,
+    /// and it is only ever reached when the sharp one is genuinely absent.
+    ///
+    /// Neither delivery mode calls the result handler more than once, which
+    /// is what makes resuming a continuation from it safe. `.opportunistic`
+    /// is the mode that calls back twice, and using it here would crash.
     private static func thumbnail(for asset: PHAsset, size: CGFloat) async -> UIImage? {
+        if let image = await requestImage(for: asset, size: size, delivery: .highQualityFormat) {
+            return image
+        }
+        return await requestImage(for: asset, size: size, delivery: .fastFormat)
+    }
+
+    private static func requestImage(
+        for asset: PHAsset,
+        size: CGFloat,
+        delivery: PHImageRequestOptionsDeliveryMode
+    ) async -> UIImage? {
         let options = PHImageRequestOptions()
-        // `.fastFormat` calls the result handler exactly once, which is what
-        // makes resuming the continuation here safe.
-        options.deliveryMode = .fastFormat
-        options.resizeMode = .fast
+        options.deliveryMode = delivery
+        options.resizeMode = .exact
         options.isNetworkAccessAllowed = false
         options.isSynchronous = false
 
@@ -205,7 +245,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
             PHImageManager.default().requestImage(
                 for: asset,
                 targetSize: CGSize(width: size, height: size),
-                contentMode: .aspectFill,
+                contentMode: .aspectFit,
                 options: options
             ) { image, _ in
                 continuation.resume(returning: image)
