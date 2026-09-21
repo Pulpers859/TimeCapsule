@@ -128,6 +128,17 @@ The agent should confirm:
   - Delete behavior can succeed in one surface but fail to refresh the gallery or notification schedule everywhere else
   - `SettingsView` and `NotificationManager` both depend on `NotificationPreferences`; edits should keep the shared defaults and keys authoritative
   - `FullScreenPhotoView.swift` is a regression-prone surface for swipe, zoom, scrub, player cleanup, and delete/share edge cases
+  - Added after seven independent audit rounds, six of which found defects introduced by the previous round's own fixes. These are not hypotheticals; each one shipped at least once:
+    - Exclusion resolution has two costs that pull apart: `MemoryExclusions.Context.current()` with no argument leaves the album lookup **unbounded**, which is a jetsam kill inside the widget extension. Callers that need one context for several queries on the same date must use `MemoryLibrary.exclusionContext(on:)`, which keeps the date bound. Resolving once and resolving bounded are separate properties and it is easy to fix one while losing the other.
+    - PhotoKit raises an **uncatchable** Objective-C exception for a predicate or sort descriptor on a fetch inside a cloud shared album or My Photo Stream. Any bound added to an album fetch must skip those subtypes.
+    - A `Context` parameter is optional at every call site, so `.none` resolves to `Optional.none` — plain `nil` — and silently means "apply every exclusion". The safe member is named `unfiltered` for that reason. Never write `.none` for one.
+    - `UNUserNotificationCenter.requestAuthorization` returns `false` immediately, with no prompt, when status is already `.denied`. Treating that as a decline destroys the user's stated preference. Check for `.notDetermined` before asking.
+    - Never reset a stored user setting on a *reading* of the Pro entitlement. An unverified transaction is indistinguishable from an absent one, so gate Pro behaviour at the point of use and leave stored values alone.
+    - `.task(id:)` captures the view struct as it was when the task started, so any `let` read after an `await` is a stale value. Decide playback and similar state in an `onChange`, whose closure SwiftUI rebuilds each update.
+    - Anything that blocks video playback must also hide the playback controls. `isPreparingShare` and `isDeleting` present no modal, and the controls carry no `.disabled`.
+    - Screens built as a centred `VStack` with collapsing `Spacer`s and a fixed-height button become unusable at large accessibility text sizes. The permission and empty-state screens are the ones that matter, because their buttons are the only way forward.
+    - A SwiftUI accessibility modifier on a container propagates to every element inside it, which silently relabels sibling controls.
+    - Two tests in this repo have asserted values that were reasoned about rather than verified, and both failed CI. Verify a formatter's expected output against a reference implementation before committing it.
 - Important evidence/product constraints:
   - The live source of truth includes a verified `TimeCapsule.xcodeproj` at the repo root and the runtime app target under `TimeCapsule/`
   - Before bootstrap on 2026-05-19, no Git repo existed in the original OneDrive project folder
