@@ -52,28 +52,27 @@ struct FullScreenPhotoView: View {
     private var currentAssetIdentifier: String? {
         visibleAssets.indices.contains(currentIndex) ? visibleAssets[currentIndex].localIdentifier : nil
     }
-    /// Every state that puts something modal on screen.
+    /// What is currently over the viewer.
     ///
-    /// `shareError` and `deleteError` were missing, and both present an
-    /// alert. Worse, each is set in the *same* synchronous main-actor block
-    /// that clears the flag which was blocking playback — `isPreparingShare`
-    /// at one line and `shareError` a few lines later, `isDeleting` and
-    /// `deleteError` likewise — so SwiftUI coalesces them into one update in
-    /// which the block goes away. The pause therefore lifted and the video
-    /// started playing, audibly, underneath "Couldn't Share".
-    ///
-    /// That coalescing is the same behaviour the share hand-off relies on to
-    /// avoid flickering the controls back for a frame; it only works in our
-    /// favour while every modal state is listed here.
-    private var isPlaybackBlocked: Bool {
-        showDeleteConfirm
-            || infoAsset != nil
-            || shareItem != nil
-            || isPreparingShare
-            || isDeleting
-            || shareError != nil
-            || deleteError != nil
+    /// `ViewerOverlays` has no default values, so adding a case to it breaks
+    /// this line until it is filled in. That is deliberate: this rule was
+    /// previously a hand-maintained `||` chain, and twice a new modal was
+    /// added without being added to the chain — the second time leaving a
+    /// video playing audibly underneath "Couldn't Share". A comment claiming
+    /// the list was complete is what stood in for a check, and it was wrong.
+    private var overlays: ViewerOverlays {
+        ViewerOverlays(
+            deleteConfirmation: showDeleteConfirm,
+            shareSheet: shareItem != nil,
+            deleteFailureAlert: deleteError != nil,
+            shareFailureAlert: shareError != nil,
+            infoSheet: infoAsset != nil,
+            preparingShare: isPreparingShare,
+            deleting: isDeleting
+        )
     }
+
+    private var isPlaybackBlocked: Bool { overlays.blocksPlayback }
 
     init(asset: PHAsset, allAssets: [PHAsset]) {
         self.asset = asset
