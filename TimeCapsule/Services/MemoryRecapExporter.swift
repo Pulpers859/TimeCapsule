@@ -48,6 +48,18 @@ nonisolated enum MemoryRecapExporter {
 
     /// Returns a temporary .mp4 URL, or nil on failure. `onProgress` is
     /// called with 0...1 and may arrive on any queue.
+    /// `@concurrent`, for the reason this file already documents for
+    /// `stageSlide` and then did not apply here.
+    ///
+    /// The enum is `nonisolated`, but under this target's
+    /// `NonisolatedNonsendingByDefault` a `nonisolated async` function runs
+    /// on its *caller's* executor — and the only caller is a bare `Task {}`
+    /// in a `@MainActor` view. So the title card's full-size
+    /// `UIGraphicsImageRenderer` pass, its JPEG encode, the candidate
+    /// filtering, and the recursive temp-directory delete in the `defer` were
+    /// all running on the main thread, blocking exactly as the progress
+    /// overlay was meant to animate in.
+    @concurrent
     static func export(
         assets: [PHAsset],
         title: String,

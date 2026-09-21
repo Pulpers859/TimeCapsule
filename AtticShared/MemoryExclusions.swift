@@ -55,6 +55,20 @@ nonisolated enum MemoryExclusions {
         let places: [ExcludedPlace]
         let albumMemberIDs: Set<String>
 
+        /// `places` as `CLLocation`s, built once when the context is.
+        ///
+        /// `excludes` is called for every asset surviving the date predicate,
+        /// and it was constructing a fresh `CLLocation` for the asset *and
+        /// for every stored place* on each call. A notification reschedule
+        /// counts sixty days, so one delete on an eight-hundred-memory day
+        /// with ten excluded places was on the order of half a million
+        /// allocations and as many geodesic distance computations. The
+        /// coordinates never change between calls.
+        ///
+        /// `CLLocation` is immutable and documented thread-safe, so holding
+        /// them does not weaken this type's `Sendable` conformance.
+        private let placeLocations: [CLLocation]
+
         /// `predicate` bounds the album-membership lookup to the assets the
         /// caller is actually asking about — see
         /// `excludedAlbumMemberIdentifiers(matching:)` for why that matters.
@@ -66,6 +80,15 @@ nonisolated enum MemoryExclusions {
                 places: excludedPlaces,
                 albumMemberIDs: excludedAlbumMemberIdentifiers(matching: predicate)
             )
+        }
+
+        init(assetIDs: Set<String>, places: [ExcludedPlace], albumMemberIDs: Set<String>) {
+            self.assetIDs = assetIDs
+            self.places = places
+            self.albumMemberIDs = albumMemberIDs
+            self.placeLocations = places.map {
+                CLLocation(latitude: $0.latitude, longitude: $0.longitude)
+            }
         }
 
         /// Excludes nothing. Lets a caller ask what a day holds *before* the
@@ -90,12 +113,9 @@ nonisolated enum MemoryExclusions {
         func excludes(_ asset: PHAsset) -> Bool {
             if assetIDs.contains(asset.localIdentifier) { return true }
             if albumMemberIDs.contains(asset.localIdentifier) { return true }
-            guard let coordinate = asset.location?.coordinate, !places.isEmpty else { return false }
+            guard let coordinate = asset.location?.coordinate, !placeLocations.isEmpty else { return false }
             let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            return places.contains { place in
-                location.distance(from: CLLocation(latitude: place.latitude, longitude: place.longitude))
-                    < placeRadiusMeters
-            }
+            return placeLocations.contains { location.distance(from: $0) < placeRadiusMeters }
         }
     }
 

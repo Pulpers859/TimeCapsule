@@ -228,7 +228,7 @@ struct FullScreenPhotoView: View {
                                 .monospacedDigit()
                                 .contentTransition(.numericText())
                                 .padding(.horizontal, 16)
-                                .frame(height: 44)
+                                .frame(minHeight: 44)
                                 .tcGlass(in: Capsule())
 
                             HStack {

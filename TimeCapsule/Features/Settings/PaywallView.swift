@@ -106,7 +106,7 @@ struct PaywallView: View {
             Label("Pro is unlocked", systemImage: "checkmark.seal.fill")
                 .font(.headline)
                 .foregroundStyle(.green)
-                .frame(height: 52)
+                .frame(minHeight: 52)
         } else if let product = store.product {
             Button {
                 Task { await store.purchase() }
@@ -122,7 +122,7 @@ struct PaywallView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 52)
+                .frame(minHeight: 52)
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.capsule)
@@ -142,7 +142,7 @@ struct PaywallView: View {
                 .padding(.top, 12)
         } else if store.isLoadingProduct {
             ProgressView()
-                .frame(height: 52)
+                .frame(minHeight: 52)
         } else {
             VStack(spacing: 12) {
                 Text("The Pro upgrade isn't available right now.")

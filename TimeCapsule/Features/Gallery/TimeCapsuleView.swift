@@ -171,7 +171,7 @@ struct TimeCapsuleView: View {
                             }
                         }
                         .frame(maxWidth: .infinity)
-                        .frame(height: 52)
+                        .frame(minHeight: 52)
                     }
                     .tcGlassCapsuleStyle(isProminent: true, tint: .red)
                     .buttonBorderShape(.capsule)
@@ -737,7 +737,7 @@ struct FilterEmptyState: View {
                 Text("Show All Memories")
                     .font(.subheadline.weight(.semibold))
                     .frame(minWidth: 190)
-                    .frame(height: 46)
+                    .frame(minHeight: 46)
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.capsule)

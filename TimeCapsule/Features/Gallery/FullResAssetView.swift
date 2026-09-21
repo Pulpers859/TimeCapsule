@@ -124,6 +124,11 @@ struct FullResAssetView: View {
                         } else {
                             ProgressView()
                                 .tint(.white)
+                                // The video spinner, not just the photo one.
+                                // This is the slower of the two: it covers a
+                                // full `AVPlayerItem` download for an iCloud
+                                // original.
+                                .accessibilityLabel("Loading \(spokenMediaLabel)")
                         }
                     }
                     .background(Color.black)
@@ -134,6 +139,7 @@ struct FullResAssetView: View {
                         PhotoZoomScrollView(
                             image: image,
                             accessibilityDescription: spokenMediaLabel,
+                            isCurrentMemory: isCurrent,
                             onZoomStateChange: onZoomStateChange,
                             onSingleTap: onToggleChrome
                         )

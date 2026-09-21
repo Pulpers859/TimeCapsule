@@ -18,6 +18,13 @@
 			remoteGlobalIDString = AA0000000000000000000004;
 			remoteInfo = AtticWidget;
 		};
+		BB000000000000000000000E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 01B025DF2F69E12100A0AF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 01B025E62F69E12100A0AF65;
+			remoteInfo = TimeCapsule;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -37,6 +44,7 @@
 /* Begin PBXFileReference section */
 		01B025E72F69E12100A0AF65 /* TimeCapsule.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TimeCapsule.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000003 /* AtticWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AtticWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB0000000000000000000003 /* AtticTests.xctest */ = {isa = PBXFileReference; explicitFileType = "wrapper.cfbundle"; includeInIndex = 0; path = AtticTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -53,6 +61,11 @@
 		01B025E92F69E12100A0AF65 /* TimeCapsule */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = TimeCapsule;
+			sourceTree = "<group>";
+		};
+		BB0000000000000000000001 /* AtticTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AtticTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -72,6 +85,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BB0000000000000000000006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -81,6 +101,7 @@
 				AA0000000000000000000001 /* AtticShared */,
 				AA0000000000000000000002 /* AtticWidget */,
 				01B025E92F69E12100A0AF65 /* TimeCapsule */,
+				BB0000000000000000000001 /* AtticTests */,
 				01B025E82F69E12100A0AF65 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +111,7 @@
 			children = (
 				01B025E72F69E12100A0AF65 /* TimeCapsule.app */,
 				AA0000000000000000000003 /* AtticWidget.appex */,
+				BB0000000000000000000003 /* AtticTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -145,6 +167,29 @@
 			productReference = AA0000000000000000000003 /* AtticWidget.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		BB0000000000000000000004 /* AtticTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BB0000000000000000000008 /* Build configuration list for PBXNativeTarget "AtticTests" */;
+			buildPhases = (
+				BB0000000000000000000005 /* Sources */,
+				BB0000000000000000000006 /* Frameworks */,
+				BB0000000000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BB000000000000000000000D /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				BB0000000000000000000001 /* AtticTests */,
+			);
+			name = AtticTests;
+			packageProductDependencies = (
+			);
+			productName = AtticTests;
+			productReference = BB0000000000000000000003 /* AtticTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -161,6 +206,10 @@
 					};
 					AA0000000000000000000004 = {
 						CreatedOnToolsVersion = 26.1;
+					};
+					BB0000000000000000000004 = {
+						CreatedOnToolsVersion = 26.1;
+						TestTargetID = 01B025E62F69E12100A0AF65;
 					};
 				};
 			};
@@ -180,6 +229,7 @@
 			targets = (
 				01B025E62F69E12100A0AF65 /* TimeCapsule */,
 				AA0000000000000000000004 /* AtticWidget */,
+				BB0000000000000000000004 /* AtticTests */,
 			);
 		};
 /* End PBXProject section */
@@ -193,6 +243,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		01B025E52F69E12100A0AF65 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BB0000000000000000000007 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -216,6 +273,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BB0000000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -223,6 +287,11 @@
 			isa = PBXTargetDependency;
 			target = AA0000000000000000000004 /* AtticWidget */;
 			targetProxy = AA000000000000000000000E /* PBXContainerItemProxy */;
+		};
+		BB000000000000000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 01B025E62F69E12100A0AF65 /* TimeCapsule */;
+			targetProxy = BB000000000000000000000E /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -473,6 +542,48 @@
 			};
 			name = Release;
 		};
+		BB0000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R4L58G49L2;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Patrick-App.TimeCapsule.AtticTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TimeCapsule.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TimeCapsule";
+			};
+			name = Debug;
+		};
+		BB000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R4L58G49L2;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Patrick-App.TimeCapsule.AtticTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TimeCapsule.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TimeCapsule";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -499,6 +610,15 @@
 			buildConfigurations = (
 				AA0000000000000000000009 /* Debug */,
 				AA000000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BB0000000000000000000008 /* Build configuration list for PBXNativeTarget "AtticTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB0000000000000000000009 /* Debug */,
+				BB000000000000000000000A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

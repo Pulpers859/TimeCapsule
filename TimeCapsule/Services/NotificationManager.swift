@@ -292,8 +292,18 @@ final class NotificationManager: NSObject {
                 content.title = "Attic"
                 content.body = NotificationPlan.body(memoryCount: count, dayWindow: dayWindow)
                 content.sound = .default
+                // `.era` included, so the year is never ambiguous.
+                //
+                // Under the Japanese calendar `.year` is era-relative — 8,
+                // not 2026 — and these components go straight to
+                // `UNCalendarNotificationTrigger`. ICU almost certainly
+                // defaults an unset era to the current one and resolves it
+                // correctly, but "almost certainly" is the wrong standard for
+                // sixty reminders whose alternative is firing in Meiji 8.
+                // Requesting the era costs nothing and removes the
+                // assumption.
                 let components = calendar.dateComponents(
-                    [.year, .month, .day, .hour, .minute],
+                    [.era, .year, .month, .day, .hour, .minute],
                     from: slot.fireDate
                 )
                 let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)

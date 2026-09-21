@@ -13,6 +13,9 @@ struct PhotoZoomScrollView: UIViewRepresentable {
     /// date string and could not be told apart. Labelling the media view
     /// itself is what keeps those three intact.
     let accessibilityDescription: String
+    /// Mirrors the video branch's `.accessibilityValue`, so VoiceOver can
+    /// tell the focused page apart from its neighbours either side.
+    let isCurrentMemory: Bool
     let onZoomStateChange: (Bool) -> Void
     let onSingleTap: () -> Void
 
@@ -23,7 +26,10 @@ struct PhotoZoomScrollView: UIViewRepresentable {
             onSingleTap: onSingleTap
         )
         scrollView.display(image: image)
-        scrollView.applyAccessibility(description: accessibilityDescription)
+        scrollView.applyAccessibility(
+            description: accessibilityDescription,
+            isCurrentMemory: isCurrentMemory
+        )
         return scrollView
     }
 
@@ -33,7 +39,10 @@ struct PhotoZoomScrollView: UIViewRepresentable {
             onSingleTap: onSingleTap
         )
         uiView.display(image: image)
-        uiView.applyAccessibility(description: accessibilityDescription)
+        uiView.applyAccessibility(
+            description: accessibilityDescription,
+            isCurrentMemory: isCurrentMemory
+        )
     }
 }
 
@@ -93,10 +102,13 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
     /// The pager itself was already done properly, with named
     /// `accessibilityAction`s for previous and next memory; zoom and chrome
     /// just never got the same treatment.
-    func applyAccessibility(description: String) {
+    func applyAccessibility(description: String, isCurrentMemory: Bool) {
         isAccessibilityElement = true
         accessibilityTraits = .image
         accessibilityLabel = description
+        // Photos are the dominant case in a photo-memories app, and only the
+        // video branch got this back when the container label was moved.
+        accessibilityValue = isCurrentMemory ? "Current memory" : ""
         accessibilityHint = "Double tap to show or hide the controls."
         refreshZoomAction()
     }

@@ -1,4 +1,4 @@
-name: Xcode Build
+name: Xcode Build and Test
 
 on:
   push:
@@ -57,7 +57,39 @@ jobs:
             echo "This project requires the iOS 26 SDK or newer; runner has ${sdk:-none}." >&2
             exit 1
           fi
-      - name: Run Xcode build
+      # `test`, not `build`, and on a real booted simulator.
+      #
+      # Until now this job only proved the app compiled. Nothing in CI ever
+      # ran a line of it: the SwiftPM jobs cover seven pure-Foundation files
+      # in AtticShared and zero files from TimeCapsule/ or AtticWidget/. That
+      # is why repeated audit rounds kept finding defects in framework
+      # behaviour rather than in logic -- SwiftUI update coalescing, task
+      # capture semantics, PhotoKit exceptions, layout at accessibility text
+      # sizes. None of those are visible to a compiler; all are visible to a
+      # simulator.
+      - name: Pick a simulator
+        shell: bash
+        run: |
+          set -o pipefail
+          # Taken from what the image actually has, rather than pinned to a
+          # device name. Names come and go with each Xcode release, and a
+          # stale one fails as "destination not found" rather than as
+          # anything that says what to do about it.
+          id=$(xcrun simctl list devices available \
+            | sed -n '/-- iOS /,/^-- /p' \
+            | grep iPhone \
+            | tail -1 \
+            | grep -oE '[0-9A-Fa-f-]{36}' \
+            | head -1)
+          if [[ -z "$id" ]]; then
+            echo 'No available iOS iPhone simulator on this runner.' >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "Using simulator $id"
+          echo "SIMULATOR_ID=$id" >> "$GITHUB_ENV"
+
+      - name: Run Xcode tests
         shell: bash
         run: |
           set -o pipefail
@@ -65,16 +97,21 @@ jobs:
             -project 'TimeCapsule.xcodeproj'
             -scheme 'TimeCapsule'
             -configuration 'Debug'
-            -sdk 'iphonesimulator'
-            -destination 'generic/platform=iOS Simulator'
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID"
             -derivedDataPath 'DerivedData'
             -resultBundlePath 'xcode-result.xcresult'
             CODE_SIGNING_ALLOWED=NO
-            build
+            test
           )
           xcodebuild "${args[@]}" 2>&1 | tee xcode.log
           xcode_status=${PIPESTATUS[0]}
           if [[ "$xcode_status" -ne 0 ]]; then exit "$xcode_status"; fi
+          # A test action that executes zero tests still exits 0, so the run
+          # is only evidence if something actually ran.
+          if ! grep -qE 'Executed [0-9]+ test|Test Suite .* passed' xcode.log; then
+            echo 'xcodebuild test reported no executed tests.' >&2
+            exit 1
+          fi
           # Both manifests, named individually.
           #
           # `-print -quit` stopped at the first match anywhere under Products,

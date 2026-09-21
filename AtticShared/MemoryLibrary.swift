@@ -5,12 +5,49 @@ nonisolated struct YearGroup: Identifiable {
     let id: Int
     let year: Int
     let assets: [PHAsset]
+    /// The year written the way the reader's own calendar writes it.
+    ///
+    /// `year` is a proleptic Gregorian number, because that is the only way
+    /// the anniversary arithmetic survives an era boundary — see
+    /// `MemoryWindow.anniversaryCalendar`. Printing it raw would show 2025 to
+    /// someone on the Buddhist calendar, where every other date in the app
+    /// reads 2568.
+    ///
+    /// Derived from the group's own anniversary instant rather than from a
+    /// fixed anchor. A previous version formatted 1 July of the Gregorian
+    /// year, reasoning that era boundaries fall mid-year — true for Japanese
+    /// eras, and irrelevant for the two calendars whose *year* boundary is
+    /// not 1 January. Under the Hebrew calendar, every anniversary from
+    /// September to December sat in the next Hebrew year than 1 July did, so
+    /// all twenty headers were off by one while the photo's own date line,
+    /// two taps away, disagreed with them. Formatting a date the group
+    /// actually contains cannot drift from the group's contents.
+    ///
+    /// Stored, not computed: it was being read inside a `map` over every
+    /// asset, so it built a `Calendar` and ran a `FormatStyle` once per
+    /// photo, per body evaluation.
+    let displayYear: String
     private let referenceYear: Int
 
-    init(year: Int, assets: [PHAsset], referenceYear: Int = Calendar.current.component(.year, from: Date())) {
+    init(
+        year: Int,
+        assets: [PHAsset],
+        anniversary: Date,
+        referenceYear: Int = MemoryWindow.anniversaryCalendar().component(.year, from: Date())
+    ) {
         self.id = year
         self.year = year
         self.assets = assets
+        self.displayYear = anniversary.formatted(.dateTime.year())
+        self.referenceYear = referenceYear
+    }
+
+    /// Used only by `filtered`, which already holds a rendered label.
+    private init(year: Int, assets: [PHAsset], displayYear: String, referenceYear: Int) {
+        self.id = year
+        self.year = year
+        self.assets = assets
+        self.displayYear = displayYear
         self.referenceYear = referenceYear
     }
 
@@ -22,28 +59,7 @@ nonisolated struct YearGroup: Identifiable {
         yearsAgo == 1 ? "1 Year Ago" : "\(yearsAgo) Years Ago"
     }
 
-    /// The year written the way the reader's own calendar writes it.
-    ///
-    /// `year` is a proleptic Gregorian number because that is the only way
-    /// the anniversary arithmetic works across eras — see
-    /// `MemoryWindow.anniversaryCalendar`. Printing it with `String(year)`
-    /// would therefore show 2025 to someone whose phone is set to the
-    /// Buddhist calendar, where every other date in the app reads 2568, and
-    /// would ignore their numbering system besides.
-    ///
-    /// Anchored mid-year on purpose: era boundaries fall on a date, not on
-    /// 1 January, so 1 July lands unambiguously inside the era that owns
-    /// most of the year.
-    var displayYear: String {
-        var gregorian = Calendar(identifier: .gregorian)
-        gregorian.timeZone = .current
-        guard let anchor = gregorian.date(
-            from: DateComponents(year: year, month: 7, day: 1, hour: 12)
-        ) else {
-            return String(year)
-        }
-        return anchor.formatted(.dateTime.year())
-    }
+
 
     /// Narrows the group, keeping the year it is measured against. `nil` when
     /// nothing survives, so a caller can drop the group entirely.
@@ -58,12 +74,12 @@ nonisolated struct YearGroup: Identifiable {
     func filtered(_ isIncluded: (PHAsset) -> Bool) -> YearGroup? {
         let kept = assets.filter(isIncluded)
         guard !kept.isEmpty else { return nil }
-        return YearGroup(year: year, assets: kept, referenceYear: referenceYear)
+        return YearGroup(year: year, assets: kept, displayYear: displayYear, referenceYear: referenceYear)
     }
 }
 
 nonisolated enum MemoryLibrary {
-    private typealias AnniversaryRange = (year: Int, start: Date, end: Date)
+    private typealias AnniversaryRange = (year: Int, start: Date, end: Date, anniversary: Date)
 
     /// The anniversary windows the gallery and the notification count both read.
     ///
@@ -84,7 +100,13 @@ nonisolated enum MemoryLibrary {
             guard let range = MemoryWindow.range(for: date, anniversaryYear: year, calendar: calendar) else {
                 return nil
             }
-            return (year, range.start, range.end)
+            // The anniversary itself, not the widened window's start, which
+            // with a day window can fall in the previous year. Carried so a
+            // group can be labelled with a date its own photos share.
+            let anniversary = MemoryWindow.range(
+                for: date, anniversaryYear: year, dayWindow: 0, calendar: calendar
+            )?.start ?? range.start
+            return (year, range.start, range.end, anniversary)
         }
     }
 
@@ -190,7 +212,12 @@ nonisolated enum MemoryLibrary {
 
         return ranges.compactMap { item in
             guard let assets = assetsByYear[item.year], !assets.isEmpty else { return nil }
-            return YearGroup(year: item.year, assets: assets, referenceYear: currentYear)
+            return YearGroup(
+                year: item.year,
+                assets: assets,
+                anniversary: item.anniversary,
+                referenceYear: currentYear
+            )
         }
     }
 
