@@ -183,6 +183,30 @@ final class PlayerProgressObserver {
         }
     }
 
+    /// A safety net, not a substitute for `detach()`.
+    ///
+    /// `-[AVPlayer dealloc]` raises `NSInternalInconsistencyException` if a
+    /// periodic time observer is still registered, so the one teardown path
+    /// being `onDisappear` makes the whole class depend on SwiftUI always
+    /// calling it. I could not find a path where it is skipped — every route
+    /// that drops a page also runs `releasePlayer()` — but "I could not find
+    /// one" is a weak guarantee against a crash-on-dealloc API, and both the
+    /// observer and the player are `@State` on the same view, so they die
+    /// together whenever that view dies.
+    ///
+    /// Deliberately not a call to `detach()`: that invokes the change
+    /// callbacks, which must not run from `deinit`, and it is an isolated
+    /// method this nonisolated context cannot call. Unregistering is all
+    /// that is needed here.
+    deinit {
+        if let player, let timeObserverToken {
+            player.removeTimeObserver(timeObserverToken)
+        }
+        if let playbackEndObserver {
+            NotificationCenter.default.removeObserver(playbackEndObserver)
+        }
+    }
+
     func detach() {
         if let player, let timeObserverToken {
             player.removeTimeObserver(timeObserverToken)

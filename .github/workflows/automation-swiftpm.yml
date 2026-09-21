@@ -23,6 +23,23 @@ jobs:
         working-directory: '.'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # Package.swift declares swift-tools-version 6.2. The Windows twin pins
+      # its toolchain explicitly; this one takes whatever `macos-latest`
+      # currently ships, so it at least states the requirement it depends on
+      # rather than failing obscurely if the image rolls back.
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          swift --version
+          version=$(swift --version 2>&1 | sed -n 's/.*Swift version \([0-9][0-9.]*\).*/\1/p' | head -1)
+          echo "Detected Swift ${version:-unknown}"
+          major=${version%%.*}
+          rest=${version#*.}
+          minor=${rest%%.*}
+          if [[ -z "$major" ]] || (( major < 6 )) || (( major == 6 && minor < 2 )); then
+            echo "Package.swift requires Swift 6.2 or newer; runner has ${version:-unknown}." >&2
+            exit 1
+          fi
       - name: Run Swift tests
         shell: pwsh
         run: |

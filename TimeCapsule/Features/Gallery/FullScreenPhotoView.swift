@@ -106,7 +106,8 @@ struct FullScreenPhotoView: View {
                         ForEach(pageWindow, id: \.self) { index in
                             FullResAssetView(
                                 asset: visibleAssets[index],
-                                isActive: index == currentIndex && !isPlaybackBlocked,
+                                isCurrent: index == currentIndex,
+                                isPlaybackAllowed: !isPlaybackBlocked,
                                 shouldRender: abs(index - currentIndex) <= 1,
                                 showControls: showChrome,
                                 onToggleChrome: {

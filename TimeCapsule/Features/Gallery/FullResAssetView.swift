@@ -5,7 +5,19 @@ import UIKit
 
 struct FullResAssetView: View {
     let asset: PHAsset
-    let isActive: Bool
+    /// This is the page the pager is focused on: it owns a loaded player and
+    /// is the only one that may hold one.
+    let isCurrent: Bool
+    /// Whether playback may run *right now*. Deliberately separate from
+    /// `isCurrent`, and deliberately absent from `mediaTaskID`.
+    ///
+    /// The two used to be one flag, and anything that blocks playback —
+    /// opening the info sheet, tapping Share, starting a delete — therefore
+    /// changed the task identity and tore the player down. Dismissing the
+    /// sheet built a new one and played it from the beginning, so tapping
+    /// the ℹ︎ button three and a half minutes into a video and closing it
+    /// again lost the position, in two taps, every time.
+    let isPlaybackAllowed: Bool
     let shouldRender: Bool
     let showControls: Bool
     let onToggleChrome: () -> Void
@@ -22,7 +34,7 @@ struct FullResAssetView: View {
     @State private var didFail = false
 
     private var mediaTaskID: String {
-        "\(asset.localIdentifier)|render:\(shouldRender)|active:\(isActive)"
+        "\(asset.localIdentifier)|render:\(shouldRender)|current:\(isCurrent)"
     }
 
     var body: some View {
@@ -34,7 +46,7 @@ struct FullResAssetView: View {
                             PlainVideoPlayerView(player: player)
                                 .background(Color.black)
 
-                            if showControls && isActive {
+                            if showControls && isCurrent {
                                 VideoPlaybackControls(
                                     currentTime: isScrubbing ? scrubPosition : currentTime,
                                     duration: duration,
@@ -115,7 +127,7 @@ struct FullResAssetView: View {
 
             if asset.mediaType == .video {
                 didFail = false
-                if isActive {
+                if isCurrent {
                     image = nil
                     let loadedPlayer = await loadPlayer(from: asset)
                     guard !Task.isCancelled else {
@@ -131,10 +143,13 @@ struct FullResAssetView: View {
                         onDurationChange: { duration = $0 },
                         onPlayingChange: { isPlaying = $0 }
                     )
-                    if loadedPlayer != nil {
+                    // Only actually starts if nothing is blocking it. A
+                    // player loaded while the info sheet is open sits ready
+                    // at its start instead of playing underneath it.
+                    if loadedPlayer != nil, isPlaybackAllowed {
                         VideoAudioSession.begin()
+                        loadedPlayer?.play()
                     }
-                    loadedPlayer?.play()
                 } else {
                     releasePlayer()
                     let preview = await loadImage(
@@ -167,17 +182,23 @@ struct FullResAssetView: View {
                 didFail = loadedImage == nil
             }
         }
-        .onChange(of: isActive) { _, active in
-            if active {
-                if let player {
-                    VideoAudioSession.begin()
-                    player.play()
-                }
+        .onChange(of: isCurrent) { _, current in
+            // Leaving the focused page is the only thing that releases the
+            // player. Blocking playback no longer does.
+            guard !current else { return }
+            releasePlayer()
+            resetPlaybackState()
+            onScrubbingChanged(false)
+            onZoomStateChange(false)
+        }
+        .onChange(of: isPlaybackAllowed) { _, allowed in
+            // Pause and resume in place, keeping the player and its position.
+            guard isCurrent, let player else { return }
+            if allowed {
+                VideoAudioSession.begin()
+                player.play()
             } else {
-                releasePlayer()
-                resetPlaybackState()
-                onScrubbingChanged(false)
-                onZoomStateChange(false)
+                player.pause()
             }
         }
         .onDisappear {
@@ -188,7 +209,7 @@ struct FullResAssetView: View {
             resetPlaybackState()
         }
         .accessibilityLabel(mediaAccessibilityLabel)
-        .accessibilityValue(isActive ? "Current memory" : "")
+        .accessibilityValue(isCurrent ? "Current memory" : "")
     }
 
     private func releasePlayer() {

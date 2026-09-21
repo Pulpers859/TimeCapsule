@@ -19,16 +19,62 @@ actor PlaceNameLookup {
     /// spot resolves once instead of once per frame.
     private var resolved: [String: String?] = [:]
 
+    /// Lookups that have been started but not answered yet, keyed the same
+    /// way as the cache.
+    ///
+    /// Being an actor serialises *execution*, not a whole method: the
+    /// `await` below suspends this actor, so a second call for the same
+    /// coordinate arriving during that window saw an empty cache and issued
+    /// its own `CLGeocoder` request. Each request also builds a fresh
+    /// geocoder, which defeats `CLGeocoder`'s own one-request-at-a-time
+    /// cancellation, and reverse geocoding is rate limited — so concurrent
+    /// callers made throttling more likely, and a throttled result is
+    /// deliberately not cached, which produced retries that made it worse
+    /// again.
+    ///
+    /// Today the only caller is the full-screen viewer, which debounces and
+    /// cancels on every swipe, so the window is effectively closed. That is
+    /// a property of the caller, not of this type, and this is a
+    /// `static let shared` singleton that invites a second one.
+    private var inFlight: [String: Task<LookupOutcome, Never>] = [:]
+
+    /// The cache never evicted, and is keyed at ~11m, so a day of walking
+    /// around a city with geotagged photos added an entry per square visited
+    /// for the life of the process. Entries are tiny, so a generous cap
+    /// cleared wholesale beats the bookkeeping an LRU would need.
+    private static let maxCachedPlaces = 512
+
     func placeName(for coordinate: CLLocationCoordinate2D) async -> String? {
         let key = Self.cacheKey(for: coordinate)
         if let cached = resolved[key] {
             return cached
         }
 
-        switch await Self.reverseGeocodedPlaceName(for: coordinate) {
+        let task: Task<LookupOutcome, Never>
+        let isOwner: Bool
+        if let existing = inFlight[key] {
+            task = existing
+            isOwner = false
+        } else {
+            task = Task { await Self.reverseGeocodedPlaceName(for: coordinate) }
+            inFlight[key] = task
+            isOwner = true
+        }
+
+        let outcome = await task.value
+        // Only the call that started it clears it, so a late waiter cannot
+        // remove an entry a newer lookup has since installed.
+        if isOwner {
+            inFlight[key] = nil
+        }
+
+        switch outcome {
         case .answered(let name):
             // The service gave a verdict, including "there is no name here".
             // That verdict will not change, so it is worth remembering.
+            if resolved.count >= Self.maxCachedPlaces {
+                resolved.removeAll(keepingCapacity: true)
+            }
             resolved[key] = name
             return name
         case .unavailable:

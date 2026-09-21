@@ -23,6 +23,33 @@ jobs:
         working-directory: '.'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # `macos-latest` is a label GitHub rolls forward on its own schedule,
+      # and this build hard-requires the iOS 26 SDK: DesignSystem.swift uses
+      # GlassEffectContainer and .glassEffect, PlaceNameLookup.swift uses
+      # MKReverseGeocodingRequest. The Windows job already pins its
+      # toolchain; these macOS jobs pinned nothing, so the only compiler that
+      # ever sees TimeCapsule/ and AtticWidget/ could change with no commit.
+      # Selecting the newest installed Xcode makes that explicit, and the SDK
+      # assertion turns a runner rollback into one clear line instead of a
+      # wall of unresolved-symbol errors.
+      - name: Select and verify toolchain
+        shell: bash
+        run: |
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [[ -z "$newest" ]]; then
+            echo 'No Xcode found on the runner.' >&2
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$newest/Contents/Developer" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$newest/Contents/Developer"
+          xcodebuild -version
+          sdk=$(xcodebuild -showsdks | sed -n 's/.*-sdk iphonesimulator\([0-9][0-9.]*\).*/\1/p' | sort -V | tail -1)
+          echo "Newest iOS simulator SDK: ${sdk:-none}"
+          major=${sdk%%.*}
+          if [[ -z "$major" || "$major" -lt 26 ]]; then
+            echo "This project requires the iOS 26 SDK or newer; runner has ${sdk:-none}." >&2
+            exit 1
+          fi
       - name: Run Xcode build
         shell: bash
         run: |

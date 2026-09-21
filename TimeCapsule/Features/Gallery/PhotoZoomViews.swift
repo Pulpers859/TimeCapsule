@@ -31,6 +31,12 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
     private var configuredBoundsSize: CGSize = .zero
     private var onZoomStateChange: ((Bool) -> Void)?
     private var onSingleTap: (() -> Void)?
+    /// The last value handed to `onZoomStateChange`, so an unchanged one is
+    /// never handed over again. `nil` until the first report.
+    private var lastReportedZoomState: Bool?
+    /// True only while `display(image:)` drives a synchronous layout, which
+    /// happens inside SwiftUI's update pass.
+    private var isApplyingImage = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -73,8 +79,39 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         currentImageIdentifier = identifier
         imageView.image = image
         configuredBoundsSize = .zero
+        // `layoutIfNeeded` runs `layoutSubviews` *synchronously*, and
+        // `configuredBoundsSize = .zero` above guarantees it takes the
+        // re-fit branch, which reports a zoom state. This method is reached
+        // from `updateUIView`, so without the flag that report writes the
+        // presenting view's `@State` from inside SwiftUI's update pass.
+        isApplyingImage = true
         setNeedsLayout()
         layoutIfNeeded()
+        isApplyingImage = false
+    }
+
+    /// Reports a zoom state only when it actually changed.
+    ///
+    /// `scrollViewDidZoom` fires once per display frame while a pinch is in
+    /// progress and while the zoom bounce settles, and it used to call
+    /// straight out on every one of them. The value it writes is a `@State`
+    /// on the presenting view, so a pinch invalidated and re-evaluated the
+    /// whole full-screen body — the `GeometryReader`, the three-page
+    /// `ForEach` and all the chrome — sixty to a hundred and twenty times a
+    /// second, to hand it the same boolean it already held. The pager's drag
+    /// path had this fixed by windowing the `ForEach`; the pinch path kept it.
+    private func reportZoomState(_ isZoomed: Bool) {
+        guard lastReportedZoomState != isZoomed else { return }
+        lastReportedZoomState = isZoomed
+        guard let onZoomStateChange else { return }
+
+        guard isApplyingImage else {
+            onZoomStateChange(isZoomed)
+            return
+        }
+        // Reached from inside a SwiftUI update pass — see `display(image:)`.
+        // One hop puts the state write after that pass instead of during it.
+        DispatchQueue.main.async { onZoomStateChange(isZoomed) }
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -83,7 +120,7 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         centerImage()
-        onZoomStateChange?(zoomScale > minimumZoomScale + 0.01)
+        reportZoomState(zoomScale > minimumZoomScale + 0.01)
     }
 
     private func configure() {
@@ -125,7 +162,7 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         contentSize = fittedSize
         contentOffset = .zero
         centerImage()
-        onZoomStateChange?(false)
+        reportZoomState(false)
     }
 
     private func aspectFitSize(for imageSize: CGSize, in containerSize: CGSize) -> CGSize {
@@ -183,7 +220,7 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
     @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
         if zoomScale > minimumZoomScale + 0.01 {
             setZoomScale(minimumZoomScale, animated: true)
-            onZoomStateChange?(false)
+            reportZoomState(false)
             return
         }
 
