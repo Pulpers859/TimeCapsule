@@ -3,6 +3,16 @@ import UIKit
 
 struct PhotoZoomScrollView: UIViewRepresentable {
     let image: UIImage
+    /// Spoken description of the memory this view is showing.
+    ///
+    /// Set on the `UIView` directly rather than with SwiftUI's
+    /// `.accessibilityLabel` on the representable. In the video branch the
+    /// enclosing view's label was being applied to a container, which
+    /// SwiftUI propagates to every contained element — so the play/pause
+    /// button, the 10-second skip and the scrubber all announced the same
+    /// date string and could not be told apart. Labelling the media view
+    /// itself is what keeps those three intact.
+    let accessibilityDescription: String
     let onZoomStateChange: (Bool) -> Void
     let onSingleTap: () -> Void
 
@@ -13,6 +23,7 @@ struct PhotoZoomScrollView: UIViewRepresentable {
             onSingleTap: onSingleTap
         )
         scrollView.display(image: image)
+        scrollView.applyAccessibility(description: accessibilityDescription)
         return scrollView
     }
 
@@ -22,6 +33,7 @@ struct PhotoZoomScrollView: UIViewRepresentable {
             onSingleTap: onSingleTap
         )
         uiView.display(image: image)
+        uiView.applyAccessibility(description: accessibilityDescription)
     }
 }
 
@@ -62,6 +74,56 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         } else {
             centerImage()
         }
+    }
+
+    /// Makes the photo something VoiceOver can find and operate.
+    ///
+    /// Neither this scroll view nor its `UIImageView` was an accessibility
+    /// element, and a `UIImageView` is not one by default, so swiping
+    /// through the viewer with VoiceOver announced nothing at all about the
+    /// photo on screen. Worse, the single tap that toggles the chrome and
+    /// the double tap that zooms are `UITapGestureRecognizer`s on a
+    /// non-element view: VoiceOver's own double tap is "activate", which
+    /// needs an element with an activate action, so there was no way to
+    /// zoom a photo or to bring the chrome back once it was hidden.
+    ///
+    /// The pager itself was already done properly, with named
+    /// `accessibilityAction`s for previous and next memory; zoom and chrome
+    /// just never got the same treatment.
+    func applyAccessibility(description: String) {
+        isAccessibilityElement = true
+        accessibilityTraits = .image
+        accessibilityLabel = description
+        accessibilityHint = "Double tap to show or hide the controls."
+        accessibilityCustomActions = [
+            UIAccessibilityCustomAction(
+                name: isZoomedIn ? "Zoom out" : "Zoom in",
+                target: self,
+                selector: #selector(accessibilityToggleZoom)
+            )
+        ]
+    }
+
+    /// VoiceOver's activate gesture maps onto the single tap, which is the
+    /// chrome toggle — the same thing a sighted user's tap does.
+    override func accessibilityActivate() -> Bool {
+        onSingleTap?()
+        return true
+    }
+
+    @objc private func accessibilityToggleZoom() -> Bool {
+        if isZoomedIn {
+            setZoomScale(minimumZoomScale, animated: true)
+            reportZoomState(false)
+        } else {
+            let target = min(maximumZoomScale, 2.5)
+            zoom(to: zoomRect(for: target, centeredAt: CGPoint(x: imageView.bounds.midX, y: imageView.bounds.midY)), animated: true)
+        }
+        return true
+    }
+
+    private var isZoomedIn: Bool {
+        zoomScale > minimumZoomScale + 0.01
     }
 
     func updateCallbacks(
@@ -120,7 +182,7 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         centerImage()
-        reportZoomState(zoomScale > minimumZoomScale + 0.01)
+        reportZoomState(isZoomedIn)
     }
 
     private func configure() {
@@ -218,7 +280,7 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
     }
 
     @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-        if zoomScale > minimumZoomScale + 0.01 {
+        if isZoomedIn {
             setZoomScale(minimumZoomScale, animated: true)
             reportZoomState(false)
             return

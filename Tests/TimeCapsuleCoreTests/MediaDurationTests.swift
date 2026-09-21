@@ -37,6 +37,38 @@ final class MediaDurationTests: XCTestCase {
         XCTAssertEqual(MediaDuration.formatted(.greatestFiniteMagnitude), "0:00")
     }
 
+    // MARK: - Spoken form, for accessibility labels
+
+    /// "1:05" is read aloud by VoiceOver as "one colon zero five", so any
+    /// duration going into an accessibility label needs words instead.
+    func testSpokenDurationUsesWords() {
+        XCTAssertEqual(MediaDuration.spokenDuration(1), "1 second")
+        XCTAssertEqual(MediaDuration.spokenDuration(42), "42 seconds")
+        XCTAssertEqual(MediaDuration.spokenDuration(60), "1 minute")
+        XCTAssertEqual(MediaDuration.spokenDuration(61), "1 minute 1 second")
+        XCTAssertEqual(MediaDuration.spokenDuration(90), "1 minute 30 seconds")
+        XCTAssertEqual(MediaDuration.spokenDuration(3600), "1 hour")
+        XCTAssertEqual(MediaDuration.spokenDuration(3661), "1 hour 1 minute 1 second")
+        XCTAssertEqual(MediaDuration.spokenDuration(4500), "1 hour 15 minutes")
+        XCTAssertEqual(MediaDuration.spokenDuration(86_399), "23 hours 59 minutes 59 seconds")
+    }
+
+    /// A whole number of minutes drops the seconds, but a sub-minute
+    /// duration still says them — otherwise a 42-second clip would announce
+    /// nothing at all.
+    func testSpokenDurationOmitsZeroSecondsOnlyWhenSomethingElseIsSaid() {
+        XCTAssertEqual(MediaDuration.spokenDuration(300), "5 minutes")
+        XCTAssertEqual(MediaDuration.spokenDuration(1), "1 second")
+    }
+
+    func testSpokenDurationRefusesUnusableValues() {
+        XCTAssertEqual(MediaDuration.spokenDuration(0), "no length")
+        XCTAssertEqual(MediaDuration.spokenDuration(0.5), "no length")
+        XCTAssertEqual(MediaDuration.spokenDuration(-5), "no length")
+        XCTAssertEqual(MediaDuration.spokenDuration(.nan), "no length")
+        XCTAssertEqual(MediaDuration.spokenDuration(.infinity), "no length")
+    }
+
     func testZeroAndNegativeAndSubSecondValuesReadAsZero() {
         XCTAssertEqual(MediaDuration.formatted(0), "0:00")
         XCTAssertEqual(MediaDuration.formatted(0.4), "0:00")

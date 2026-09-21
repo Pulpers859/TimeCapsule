@@ -322,6 +322,25 @@ struct EmptyStateScaffold<Actions: View>: View {
     }
 
     var body: some View {
+        // Scrollable for the same reason as the permission screen, and with
+        // higher stakes in one case: this scaffold backs the denied-access
+        // state, whose action button is the deep link into iOS Settings —
+        // the app's only route back to a working state. At large
+        // accessibility text sizes the glyph, title and message overflowed
+        // and pushed that button off-screen, leaving the user with no way
+        // out and nothing to scroll.
+        GeometryReader { proxy in
+            ScrollView {
+                content
+                    .frame(
+                        minWidth: proxy.size.width,
+                        minHeight: proxy.size.height
+                    )
+            }
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
@@ -346,6 +365,6 @@ struct EmptyStateScaffold<Actions: View>: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
     }
 }

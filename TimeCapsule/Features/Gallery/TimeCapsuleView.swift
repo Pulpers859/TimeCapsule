@@ -531,10 +531,21 @@ struct MemoryGridBody: View {
         UISelectionFeedbackGenerator().selectionChanged()
     }
 
+    /// Includes the running time for a video.
+    ///
+    /// The duration badge drawn on the tile is `accessibilityHidden`, which
+    /// is right — read alone it is a stray "0:42" tied to nothing. But
+    /// nothing re-exposed it, so a sighted user could see how long a video
+    /// was before opening it and a VoiceOver user could not.
     private func accessibilityLabel(for item: MergedMemoryItem) -> String {
         let type = item.asset.mediaType == .video ? "Video" : "Photo"
-        guard let date = item.asset.creationDate else { return "\(type) from \(item.year)" }
-        return "\(type), \(date.formatted(date: .long, time: .omitted))"
+        let length = item.asset.mediaType == .video
+            ? ", \(MediaDuration.spokenDuration(item.asset.duration))"
+            : ""
+        guard let date = item.asset.creationDate else {
+            return "\(type) from \(item.year)\(length)"
+        }
+        return "\(type), \(date.formatted(date: .long, time: .omitted))\(length)"
     }
 }
 
@@ -829,7 +840,7 @@ struct MemoryControlsBar: View {
                                 .font(.footnote.weight(.semibold))
                                 .lineLimit(1)
                                 .padding(.horizontal, 14)
-                                .frame(height: 38)
+                                .frame(minHeight: 38)
                                 .tcGlass(in: Capsule())
                             }
                             .buttonStyle(.plain)
@@ -861,7 +872,7 @@ struct FilterChip: View {
                 .font(.footnote.weight(.semibold))
                 .lineLimit(1)
                 .padding(.horizontal, 8)
-                .frame(height: 38)
+                .frame(minHeight: 38)
         }
         .buttonBorderShape(.capsule)
         .filterChipStyle(isSelected: isSelected)
@@ -902,7 +913,7 @@ struct GridLayoutModeChip: View {
             .font(.footnote.weight(.semibold))
             .lineLimit(1)
             .padding(.horizontal, 8)
-            .frame(height: 38)
+            .frame(minHeight: 38)
         }
         .buttonBorderShape(.capsule)
         .tcGlassCapsuleStyle(isProminent: false)
@@ -1017,6 +1028,13 @@ struct RecapExportOverlay: View {
         }
         .transition(.opacity)
         .accessibilityElement(children: .contain)
+        // Without this the gallery underneath stays in the accessibility
+        // tree. The dimming layer swallows touches, so for a sighted user
+        // the grid really is blocked — but VoiceOver swipes straight past
+        // the Cancel button into the memory tiles, and activating one opens
+        // the full-screen viewer over a running export.
+        // `children: .contain` does not imply modality; only this does.
+        .accessibilityAddTraits(.isModal)
         .accessibilityLabel("Creating recap")
         .accessibilityValue("\(Int(progress * 100)) percent")
     }

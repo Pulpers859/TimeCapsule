@@ -8,6 +8,7 @@ struct ManageExclusionsView: View {
     @State private var excludedAlbums: [MemoryExclusions.ExcludedAlbum] = []
     @State private var excludedPlaces: [MemoryExclusions.ExcludedPlace] = []
     @State private var excludedAssetCount = 0
+    @State private var confirmRestoreAllPhotos = false
 
     var body: some View {
         Form {
@@ -63,9 +64,7 @@ struct ManageExclusionsView: View {
             if excludedAssetCount > 0 {
                 Section {
                     Button(role: .destructive) {
-                        MemoryExclusions.excludedAssetIDs = []
-                        reload()
-                        notifyChanged()
+                        confirmRestoreAllPhotos = true
                     } label: {
                         rowLabel(
                             title: excludedAssetCount == 1
@@ -85,6 +84,33 @@ struct ManageExclusionsView: View {
         }
         .navigationTitle("Featured Less Often")
         .navigationBarTitleDisplayMode(.inline)
+        // Confirmed, because this row is a one-tap, irreversible bulk undo.
+        //
+        // Albums and places each need a deliberate swipe-to-delete, and
+        // *creating* one of these exclusions is itself confirmed from the
+        // viewer — yet restoring every individually hidden photo took a
+        // single tap anywhere on the row, including on the descriptive text,
+        // with nothing to undo it. Someone who had hidden dozens of photos
+        // over months and tapped the row expecting it to expand lost all of
+        // them. They are stored as opaque local identifiers with no
+        // thumbnails, so there is nothing to restore them from and no
+        // per-photo alternative to offer.
+        .confirmationDialog(
+            excludedAssetCount == 1
+                ? "Restore 1 hidden photo?"
+                : "Restore all \(excludedAssetCount) hidden photos?",
+            isPresented: $confirmRestoreAllPhotos,
+            titleVisibility: .visible
+        ) {
+            Button("Restore All", role: .destructive) {
+                MemoryExclusions.excludedAssetIDs = []
+                reload()
+                notifyChanged()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They will start appearing as memories again. This can't be undone.")
+        }
         .onAppear(perform: reload)
     }
 

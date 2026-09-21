@@ -52,7 +52,7 @@ struct VideoPlaybackControls: View {
             Text(formattedTime(currentTime))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.primary)
-                .frame(width: 40, alignment: .leading)
+                .frame(minWidth: 40, alignment: .leading)
 
             Slider(
                 value: sliderBinding,
@@ -66,7 +66,7 @@ struct VideoPlaybackControls: View {
             Text(formattedTime(duration))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .trailing)
+                .frame(minWidth: 40, alignment: .trailing)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

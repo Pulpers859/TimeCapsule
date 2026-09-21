@@ -32,6 +32,9 @@ struct FullResAssetView: View {
     @State private var scrubPosition: Double = 0
     @State private var isScrubbing = false
     @State private var didFail = false
+    /// Bumped whenever a newly loaded player is installed, purely so
+    /// `onChange` has something to react to.
+    @State private var playerGeneration = 0
 
     private var mediaTaskID: String {
         "\(asset.localIdentifier)|render:\(shouldRender)|current:\(isCurrent)"
@@ -45,8 +48,27 @@ struct FullResAssetView: View {
                         if let player {
                             PlainVideoPlayerView(player: player)
                                 .background(Color.black)
+                                .accessibilityElement()
+                                .accessibilityLabel(spokenMediaLabel)
 
-                            if showControls && isCurrent {
+                            // `isPlaybackAllowed` as well as `isCurrent`.
+                            //
+                            // Splitting `isActive` in two and gating only on
+                            // `isCurrent` left a live, enabled play button
+                            // during a block that presents no modal of its
+                            // own: `isPreparingShare` and `isDeleting` only
+                            // `.disabled()` the three chrome buttons, and
+                            // these controls have no `.disabled` at all. So
+                            // the user could tap ▶ while a share export ran
+                            // and restart audio the block exists to stop —
+                            // and because `isPlaybackAllowed` is one derived
+                            // flag over five inputs, the hand-off from
+                            // `isPreparingShare` to `shareItem` changes no
+                            // value, fires no `onChange`, and never paused it
+                            // again. The video then played under the share
+                            // sheet. Before the split, being blocked hid
+                            // these controls; it still does.
+                            if showControls && isCurrent && isPlaybackAllowed {
                                 VideoPlaybackControls(
                                     currentTime: isScrubbing ? scrubPosition : currentTime,
                                     duration: duration,
@@ -101,6 +123,7 @@ struct FullResAssetView: View {
                     if let image {
                         PhotoZoomScrollView(
                             image: image,
+                            accessibilityDescription: spokenMediaLabel,
                             onZoomStateChange: onZoomStateChange,
                             onSingleTap: onToggleChrome
                         )
@@ -143,13 +166,24 @@ struct FullResAssetView: View {
                         onDurationChange: { duration = $0 },
                         onPlayingChange: { isPlaying = $0 }
                     )
-                    // Only actually starts if nothing is blocking it. A
-                    // player loaded while the info sheet is open sits ready
-                    // at its start instead of playing underneath it.
-                    if loadedPlayer != nil, isPlaybackAllowed {
-                        VideoAudioSession.begin()
-                        loadedPlayer?.play()
-                    }
+                    // Playback is applied by `.onChange(of: playerGeneration)`
+                    // below, not decided here.
+                    //
+                    // This closure captures the view struct as it was when
+                    // the task *started*, and `isPlaybackAllowed` is a `let`
+                    // on it — so reading it after `await loadPlayer(...)`
+                    // returns a value from before an unbounded wait. An
+                    // iCloud original takes seconds, and tapping ℹ︎ during
+                    // that wait left the stale `true` here to start the
+                    // video underneath the presented info sheet. The mirror
+                    // case was worse: loaded while blocked, the stale
+                    // `false` meant it never auto-played at all and no
+                    // further `onChange` was coming.
+                    //
+                    // Bumping a counter instead moves the decision into an
+                    // `onChange`, whose closure SwiftUI rebuilds every
+                    // update and which therefore reads the live value.
+                    playerGeneration += 1
                 } else {
                     releasePlayer()
                     let preview = await loadImage(
@@ -191,15 +225,17 @@ struct FullResAssetView: View {
             onScrubbingChanged(false)
             onZoomStateChange(false)
         }
-        .onChange(of: isPlaybackAllowed) { _, allowed in
-            // Pause and resume in place, keeping the player and its position.
-            guard isCurrent, let player else { return }
-            if allowed {
-                VideoAudioSession.begin()
-                player.play()
-            } else {
-                player.pause()
-            }
+        .onChange(of: isPlaybackAllowed) { _, _ in
+            applyPlaybackState()
+        }
+        // Fires once a freshly loaded player has been installed, so a player
+        // that arrived while playback was blocked — or while it was allowed
+        // and has since been blocked — lands in the right state. The
+        // previous version only reacted to `isPlaybackAllowed` changing and
+        // bailed out on `player == nil`, so any change that happened during
+        // the load was silently dropped.
+        .onChange(of: playerGeneration) { _, _ in
+            applyPlaybackState()
         }
         .onDisappear {
             onScrubbingChanged(false)
@@ -208,8 +244,22 @@ struct FullResAssetView: View {
             didFail = false
             resetPlaybackState()
         }
-        .accessibilityLabel(mediaAccessibilityLabel)
-        .accessibilityValue(isCurrent ? "Current memory" : "")
+    }
+
+    /// Brings the player in line with the current block state.
+    ///
+    /// Idempotent, and safe to call with no player or on a page that is not
+    /// the focused one. Both triggers route through here so there is one
+    /// definition of "should this be playing right now", evaluated against
+    /// live state rather than anything captured earlier.
+    private func applyPlaybackState() {
+        guard isCurrent, let player else { return }
+        if isPlaybackAllowed {
+            VideoAudioSession.begin()
+            player.play()
+        } else {
+            player.pause()
+        }
     }
 
     private func releasePlayer() {
@@ -232,9 +282,25 @@ struct FullResAssetView: View {
         isScrubbing = false
     }
 
-    private var mediaAccessibilityLabel: String {
+    /// Applied to the media surface itself, never to the enclosing `Group`.
+    ///
+    /// It used to sit on the `Group`, and SwiftUI propagates an accessibility
+    /// modifier on a container down to every element inside it. In the video
+    /// branch that container also holds `VideoPlaybackControls`, so the
+    /// play/pause button, the skip-back button and the scrubber were all
+    /// relabelled with this date string and became indistinguishable. In the
+    /// photo branch there was no element to propagate to at all — a
+    /// `UIImageView` is not one by default — so the photo announced nothing.
+    /// Both branches were wrong, in opposite directions.
+    ///
+    /// The running time is spoken, because "1:05" is read out as
+    /// "one colon zero five".
+    private var spokenMediaLabel: String {
         let type = asset.mediaType == .video ? "Video" : "Photo"
-        guard let date = asset.creationDate else { return type }
-        return "\(type), \(date.formatted(date: .long, time: .shortened))"
+        let length = asset.mediaType == .video
+            ? ", \(MediaDuration.spokenDuration(asset.duration))"
+            : ""
+        guard let date = asset.creationDate else { return type + length }
+        return "\(type), \(date.formatted(date: .long, time: .shortened))\(length)"
     }
 }

@@ -107,6 +107,27 @@ final class PurchaseStore: ObservableObject {
         }
     }
 
+    /// Whether this error means "the user backed out" rather than
+    /// "something went wrong".
+    ///
+    /// Matching `StoreKitError.userCancelled` alone was too narrow to rely
+    /// on: `AppStore.sync()` surfaces a dismissed sign-in sheet through more
+    /// than one type, and anything it does not match now shows a
+    /// "couldn't reach the App Store" alert — so being wrong here turns a
+    /// deliberate cancellation into a false error report. All three forms
+    /// are checked, and the `SKError` one by domain and code so it does not
+    /// depend on a bridged Swift type.
+    private static func isUserCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let storeKitError = error as? StoreKitError,
+           case .userCancelled = storeKitError {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == SKErrorDomain
+            && nsError.code == SKError.Code.paymentCancelled.rawValue
+    }
+
     private func apply(_ result: VerificationResult<Transaction>) async {
         // An unverified transaction is one StoreKit could not prove came from
         // Apple. Finishing it would tell StoreKit we handled it, so it is left
@@ -151,11 +172,17 @@ final class PurchaseStore: ObservableObject {
                 // on its own Unlock button with no error, no unlock and no
                 // explanation, immediately after taking the money.
                 //
-                // Restore is the honest next step: `currentEntitlements` is
-                // read fresh, and the App Store does not charge twice for a
-                // non-consumable.
+                // The message names the likely cause rather than just
+                // sending them to Restore. Restore alone cannot help here:
+                // `refreshEntitlement` filters on the same
+                // `guard case .verified`, and `AppStore.sync()` does not
+                // repair a local signature check — so telling them to tap
+                // it would have produced "No previous purchase was found",
+                // which is both wrong and alarming right after a payment.
+                // A wrong device clock is the usual reason verification
+                // fails, and it is something they can actually fix.
                 guard case .verified = verification else {
-                    purchaseError = "Your purchase went through, but Attic couldn't verify it on this device. Tap Restore Purchase — you won't be charged again."
+                    purchaseError = "Your purchase went through, but Attic couldn't verify it on this device. Check that your date and time are set correctly, then tap Restore Purchase. You won't be charged again."
                     break
                 }
                 await apply(verification)
@@ -196,16 +223,18 @@ final class PurchaseStore: ObservableObject {
             if !isUnlocked {
                 purchaseError = "No previous purchase was found for this Apple Account."
             }
-        } catch StoreKitError.userCancelled {
+        } catch {
+            await refreshEntitlement()
+
             // Dismissing the sign-in sheet is a decision, not a failure, and
             // reporting it back as one would be noise.
-            await refreshEntitlement()
-        } catch {
-            // Everything else is worth saying. This used to be silent for all
-            // of it, so a restore attempted with no network — the ordinary
-            // case, since `AppStore.sync()` is the only part of this flow that
-            // needs one — did nothing at all and looked like a dead button.
-            await refreshEntitlement()
+            guard !Self.isUserCancellation(error) else { return }
+
+            // Everything else is worth saying. This used to be silent for
+            // all of it, so a restore attempted with no network — the
+            // ordinary case, since `AppStore.sync()` is the only part of this
+            // flow that needs one — did nothing at all and looked like a
+            // dead button.
             if !isUnlocked {
                 purchaseError = "Attic couldn't reach the App Store to restore your purchase. Check your connection and try again."
             }

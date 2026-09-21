@@ -39,6 +39,37 @@ nonisolated public enum MediaDuration {
         return "\(minutes):\(twoDigits(remainder))"
     }
 
+    /// The same length, spoken rather than shown.
+    ///
+    /// "1:05" is a timestamp to a reader and nonsense to a screen reader,
+    /// which says "one colon zero five". Anywhere a duration goes into an
+    /// accessibility label it wants words.
+    public static func spokenDuration(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds >= 1, seconds < 86_400 * 365 else {
+            return "no length"
+        }
+
+        let total = Int(seconds.rounded(.down))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let remainder = total % 60
+
+        var parts: [String] = []
+        if hours > 0 {
+            parts.append(hours == 1 ? "1 hour" : "\(hours) hours")
+        }
+        if minutes > 0 {
+            parts.append(minutes == 1 ? "1 minute" : "\(minutes) minutes")
+        }
+        // Dropped only when something larger is already being said, so a
+        // 5-minute-exactly video is "5 minutes" rather than
+        // "5 minutes 0 seconds", while a 42-second one still says seconds.
+        if remainder > 0 || parts.isEmpty {
+            parts.append(remainder == 1 ? "1 second" : "\(remainder) seconds")
+        }
+        return parts.joined(separator: " ")
+    }
+
     /// Built by hand rather than with `String(format: "%02d", …)`.
     ///
     /// `%d` is a 32-bit conversion and `Int` is 64-bit, so every such call

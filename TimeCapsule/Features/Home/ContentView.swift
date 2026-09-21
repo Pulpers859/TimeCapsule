@@ -35,7 +35,11 @@ struct ContentView: View {
                                 if model.isLoading {
                                     SkeletonGalleryView()
                                 } else {
-                                    EmptyStateView(onOpenSettings: { showSettings = true })
+                                    EmptyStateView(
+                                        isLimitedAccess: model.authorizationStatus == .limited,
+                                        onOpenSettings: { showSettings = true },
+                                        onManageAccess: openLimitedLibraryPicker
+                                    )
                                 }
                             } else {
                                 TimeCapsuleView(
@@ -121,6 +125,32 @@ struct PermissionRequestView: View {
     let onRequestAccess: () -> Void
 
     var body: some View {
+        // Scrollable, because this screen is the only way into the app.
+        //
+        // It was a bare VStack with a fixed-height button and two
+        // `Spacer(minLength: 0)`s, and the explanatory text carries
+        // `.fixedSize(horizontal:vertical:)` so it is forbidden from
+        // truncating. At the larger accessibility text sizes the stack's
+        // intrinsic height passes the screen's, the spacers collapse to
+        // nothing, and "Allow Photo Access" is pushed off the bottom edge
+        // with no way to reach it — a first launch that cannot be completed
+        // at all.
+        //
+        // The `minHeight` is what keeps the existing centred layout when the
+        // content does fit: the spacers still divide the slack, and only
+        // once content exceeds the screen does this actually scroll.
+        GeometryReader { proxy in
+            ScrollView {
+                content
+                    .frame(
+                        minWidth: proxy.size.width,
+                        minHeight: proxy.size.height
+                    )
+            }
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
@@ -293,7 +323,12 @@ struct LimitedLibraryBanner: View {
 }
 
 struct EmptyStateView: View {
+    /// Under limited access the app can only ever see the handful of photos
+    /// the user picked, so it has no basis for saying what the library does
+    /// or does not contain.
+    let isLimitedAccess: Bool
     let onOpenSettings: () -> Void
+    let onManageAccess: () -> Void
     /// True only when *this day* actually holds memories that an exclusion is
     /// hiding — not merely that the user has ever hidden anything. The
     /// difference matters: the latter is permanent once set, so it would
@@ -314,9 +349,23 @@ struct EmptyStateView: View {
         if hiddenByExclusions {
             return "Everything from this date is hidden by Featured Less Often. You can bring it back in Settings."
         }
+        if isLimitedAccess {
+            // "Nothing was captured on this date" is a claim the app cannot
+            // make here: it can see only the photos the user selected, so
+            // the honest statement is about the selection. Offering to widen
+            // the memory range was worse than merely unhelpful — that is a
+            // paid feature, and buying it would not have helped, because the
+            // limit is the selection rather than the date window.
+            return "None of the photos you've shared with Attic were taken on this date. Choosing more will give it something to find."
+        }
         return MemoryWindow.dayWindow == 0
             ? "Nothing was captured on this date in previous years. Widening the memory range will look at nearby days too."
             : "Nothing turned up in the current memory range. Try widening it, or check back tomorrow."
+    }
+
+    private var actionTitle: String {
+        if isLimitedAccess { return "Choose More Photos" }
+        return hiddenByExclusions ? "Open Settings" : "Adjust Memory Range"
     }
 
     var body: some View {
@@ -325,11 +374,11 @@ struct EmptyStateView: View {
             title: "No Memories Today",
             message: message
         ) {
-            Button(action: onOpenSettings) {
-                Text(hiddenByExclusions ? "Open Settings" : "Adjust Memory Range")
+            Button(action: isLimitedAccess ? onManageAccess : onOpenSettings) {
+                Text(actionTitle)
                     .font(.headline)
                     .frame(minWidth: 220)
-                    .frame(height: 50)
+                    .frame(minHeight: 50)
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.capsule)
