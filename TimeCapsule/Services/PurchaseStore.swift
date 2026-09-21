@@ -73,12 +73,32 @@ final class PurchaseStore: ObservableObject {
 
     func refreshEntitlement() async {
         var unlocked = false
+
+        #if ATTIC_SIDELOAD
+        // A build that was not installed from the App Store.
+        //
+        // StoreKit has no product to sell here: there is no App Store
+        // Connect record behind a sideloaded copy, so `Product.products(for:)`
+        // comes back empty and `currentEntitlements` never contains anything.
+        // Without this the paywall reads "not available right now" and the
+        // three Pro features — recap videos, the widened memory range and the
+        // late day start — are dead on a build the developer signed for
+        // themselves.
+        //
+        // Set by passing `ATTIC_EXTRA_SWIFT_FLAGS=ATTIC_SIDELOAD` to
+        // xcodebuild. It is absent from every stored build setting, so an
+        // App Store build cannot pick it up by accident, and it grants
+        // nothing at runtime that a receipt check would have granted — the
+        // flag has to be compiled in deliberately.
+        unlocked = true
+        #else
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }
             if transaction.productID == AtticPro.productID {
                 unlocked = true
             }
         }
+        #endif
 
         // Published to the shared suite so the widget and the notification
         // scheduler — neither of which can ask StoreKit — honour the same

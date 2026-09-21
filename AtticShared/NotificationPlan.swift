@@ -62,7 +62,14 @@ nonisolated public enum NotificationPlan {
         case 2...:
             return "You have \(memoryCount) memories from \(dayPhrase) in past years."
         default:
-            return "Check today's memories from \(dayPhrase) in past years."
+            // Says there is nothing, instead of promising something.
+            //
+            // This branch used to read "Check today's memories from this day
+            // in past years" on a day holding none, so the reminder made a
+            // claim the app then contradicted the moment it opened. A
+            // reminder on a quiet day is wanted; a reminder that is wrong is
+            // not.
+            return "Nothing from \(dayPhrase) in past years. Today could be next year's."
         }
     }
 }

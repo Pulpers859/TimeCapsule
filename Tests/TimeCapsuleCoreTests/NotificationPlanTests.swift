@@ -30,4 +30,30 @@ final class NotificationPlanTests: XCTestCase {
         XCTAssertEqual(NotificationPlan.body(memoryCount: 1, dayWindow: 0), "You have 1 memory from this day in a past year.")
         XCTAssertEqual(NotificationPlan.body(memoryCount: 3, dayWindow: 2), "You have 3 memories from around this day in past years.")
     }
+
+    /// The branch that ships a notification about nothing.
+    ///
+    /// It used to say "Check today's memories from this day in past years"
+    /// on a day holding none, so the reminder promised something the app
+    /// contradicted as soon as it opened. A reminder on a quiet day is
+    /// wanted; a wrong one is not. This was also the only branch of `body`
+    /// with no test at all.
+    func testEmptyDayBodySaysThereIsNothingRatherThanPromisingMemories() {
+        for window in [0, 3] {
+            let body = NotificationPlan.body(memoryCount: 0, dayWindow: window)
+            XCTAssertFalse(
+                body.lowercased().contains("check"),
+                "An empty day must not invite the user to check memories that do not exist: \(body)"
+            )
+            XCTAssertTrue(
+                body.lowercased().contains("nothing"),
+                "An empty day should say so plainly: \(body)"
+            )
+        }
+    }
+
+    func testNonEmptyDaysStillStateTheCount() {
+        XCTAssertTrue(NotificationPlan.body(memoryCount: 1, dayWindow: 0).contains("1 memory"))
+        XCTAssertTrue(NotificationPlan.body(memoryCount: 7, dayWindow: 0).contains("7 memories"))
+    }
 }
