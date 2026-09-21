@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+		An explicit file, because generation produces the wrong shape here.
+
+		`INFOPLIST_KEY_NSExtensionPointIdentifier` writes a *top-level*
+		`NSExtensionPointIdentifier`, and an app extension needs it nested
+		inside an `NSExtension` dictionary. installd rejects the bundle:
+
+		    extensionDictionary must be set in placeholder attributes for an
+		    app extension placeholder
+
+		so AtticWidget.appex could not be installed at all, which takes the
+		whole app down with it — the extension is embedded in TimeCapsule.app.
+		Nine audit rounds missed this because CI only ever compiled the app;
+		the first run that actually installed it failed in under three
+		minutes.
+
+		`GENERATE_INFOPLIST_FILE` stays on, so the display name and the photo
+		library usage description are still merged in from build settings.
+		Only the part generation gets wrong lives here.
+	-->
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+</dict>
+</plist>

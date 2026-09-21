@@ -497,8 +497,8 @@
 				DEVELOPMENT_TEAM = R4L58G49L2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/AtticWidget-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Attic";
-				INFOPLIST_KEY_NSExtensionPointIdentifier = "com.apple.widgetkit-extension";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Attic shows photos and videos from this day in past years. From a memory you can also delete it to Recently Deleted, or add it to an Attic Edits album so you can edit it in the Photos app.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -524,8 +524,8 @@
 				DEVELOPMENT_TEAM = R4L58G49L2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/AtticWidget-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Attic";
-				INFOPLIST_KEY_NSExtensionPointIdentifier = "com.apple.widgetkit-extension";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Attic shows photos and videos from this day in past years. From a memory you can also delete it to Recently Deleted, or add it to an Attic Edits album so you can edit it in the Photos app.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
