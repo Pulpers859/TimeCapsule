@@ -207,6 +207,30 @@ final class NotificationManager: NSObject {
         }()
         let dayWindow = MemoryWindow.dayWindow
         let countTask = Task.detached(priority: .utility) { () -> [(NotificationSlot, Int)]? in
+            // Nothing is promised when the library cannot be read at all.
+            //
+            // `notificationsEnabled` and photo authorization are independent
+            // settings, so a user who granted photo access, turned reminders
+            // on, and later revoked photo access in iOS Settings kept getting
+            // a daily "Check today's memories from this day in past years"
+            // from an app that could no longer see a single photo — and
+            // tapping it opened the permission screen. Every count was 0 and
+            // the zero case falls through to that same generic body, so the
+            // notification was indistinguishable from a real one.
+            //
+            // Returning an empty plan withdraws the promises rather than
+            // rewording them: the sixty planned identifiers become the stale
+            // set below and are removed. The preference itself is left alone,
+            // because it is still what the user asked for, and re-granting
+            // access reschedules through
+            // `.timeCapsulePhotoAuthorizationDidChange`, which this class
+            // already observes.
+            //
+            // This is deliberately only about having no access. Whether a day
+            // with genuinely zero memories should still send a nudge is a
+            // product question and is left as it is.
+            guard canAccessPhotos else { return [] }
+
             // Resolved once for the whole pass, not per day.
             //
             // Album membership does not vary by date, so 60 resolutions can
@@ -246,9 +270,7 @@ final class NotificationManager: NSObject {
                 let target = MemoryWindow.logicalDate(for: slot.fireDate, calendar: calendar)
                 requests.append((
                     slot,
-                    canAccessPhotos
-                        ? MemoryLibrary.count(on: target, calendar: calendar, exclusions: exclusions)
-                        : 0
+                    MemoryLibrary.count(on: target, calendar: calendar, exclusions: exclusions)
                 ))
             }
             return requests
