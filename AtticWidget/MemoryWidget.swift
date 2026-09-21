@@ -227,6 +227,46 @@ struct MemoryWidgetView: View {
         }
     }
 
+    /// The photo, whole, over a blurred copy of itself.
+    ///
+    /// A plain `.scaledToFill()` crops to the centre, and a widget is a far
+    /// more extreme aspect ratio than any photo: a standing portrait in a
+    /// `.systemMedium` tile keeps a vertical sliver and throws away the
+    /// subject. Fitting instead would show all of it but band the sides with
+    /// dead black. Scaling one copy to fill as a backdrop and fitting the
+    /// real one on top keeps the tile edge-to-edge while still showing the
+    /// picture the photo actually is.
+    ///
+    /// The explicit `GeometryReader` frame is not decoration. `scaledToFill`
+    /// reports a size larger than the one proposed to it, so inside a `ZStack`
+    /// it grows the stack rather than overflowing it, and what that does to
+    /// the layout differs by family — which is why one size letterboxed while
+    /// another zoomed. Pinning both copies to the measured size and clipping
+    /// makes every family behave the same way.
+    @ViewBuilder
+    private static func photo(_ image: UIImage) -> some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            ZStack {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+                    // `opaque` because a blur otherwise samples past the edge
+                    // and fades the border to transparent, which over the
+                    // black container reads as a vignette.
+                    .blur(radius: 20, opaque: true)
+                    .overlay(Color.black.opacity(0.3))
+
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size.width, height: size.height)
+            }
+        }
+    }
+
     @ViewBuilder
     private var home: some View {
         switch entry.content {
@@ -234,9 +274,7 @@ struct MemoryWidgetView: View {
             ZStack(alignment: .bottomLeading) {
                 Color.black
                 if let image {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
+                    Self.photo(image)
                 } else {
                     // A memory whose photo could not be loaded locally. The
                     // widget never goes to the network, so an iCloud-only
