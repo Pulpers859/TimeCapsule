@@ -43,6 +43,14 @@ nonisolated enum PhotosEditHandoff {
     enum HandoffError: LocalizedError {
         case notAuthorized
         case albumUnavailable
+        /// The album exists, but the memory is not in it after the write.
+        ///
+        /// Distinct from `albumUnavailable` because the message is what the
+        /// user reads: that case says the album "could not be created",
+        /// which is plainly untrue here — the album was found, and it was
+        /// adding to it that did not take. Reusing it told the user
+        /// something false about a failure they might act on.
+        case addFailed
         case writeFailed(String)
 
         var errorDescription: String? {
@@ -51,6 +59,8 @@ nonisolated enum PhotosEditHandoff {
                 return "Attic needs access to your photo library to do this."
             case .albumUnavailable:
                 return "The \(PhotosEditHandoff.albumTitle) album could not be created."
+            case .addFailed:
+                return "This memory couldn't be added to the \(PhotosEditHandoff.albumTitle) album."
             case .writeFailed(let reason):
                 return reason
             }
@@ -114,7 +124,7 @@ nonisolated enum PhotosEditHandoff {
         // photo there, and it was not in it. Asking the album what it
         // actually contains is the only answer that cannot be wrong.
         guard contains(asset, in: album) else {
-            throw HandoffError.albumUnavailable
+            throw HandoffError.addFailed
         }
         return .addedToAlbum
     }

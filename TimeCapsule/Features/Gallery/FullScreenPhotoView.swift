@@ -1251,8 +1251,7 @@ struct MemoryInfoSheet: View {
     }
 
     private func formattedDuration(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
+        MediaDuration.formatted(seconds)
     }
 }
 

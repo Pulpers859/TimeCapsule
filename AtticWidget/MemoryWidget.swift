@@ -96,13 +96,27 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // photo until the app is next backgrounded.
         let queryDate = MemoryWindow.logicalDate(for: Date())
 
-        // Resolved once and handed to both calls. Left to their defaults they
-        // each build their own, which for an excluded cloud shared album —
-        // fetched unbounded, since PhotoKit rejects a predicate inside one —
-        // means two full walks of that album inside the extension. That would
-        // cost more than the per-year cap below saves, in the one process
-        // where the budget actually matters.
-        let exclusions = MemoryExclusions.Context.current()
+        // Resolved once, and resolved *bounded*. Both halves matter and the
+        // previous version only had the first.
+        //
+        // Left to their defaults the two calls below each build their own
+        // context, which for an excluded cloud shared album — fetched
+        // unbounded, since PhotoKit rejects a predicate inside one — is two
+        // full walks of that album inside the extension. Resolving once fixes
+        // that. But it was resolved through
+        // `MemoryExclusions.Context.current()` with no argument, and that
+        // default leaves the album lookup unbounded for *every* excluded
+        // album, not just the cloud-backed ones. So an excluded ordinary
+        // album of ten thousand photos went from two small indexed queries to
+        // one full enumeration of all ten thousand — strictly worse, in the
+        // one process with a jetsam limit, and the exact failure
+        // `excludedAlbumMemberIdentifiers(matching:)` documents as the thing
+        // that kills this extension. Trading the common case for the rare one
+        // is not what that change was for.
+        //
+        // `exclusionContext(on:)` is the same context `yearGroups` and
+        // `count` build privately, date-bounded, resolved once.
+        let exclusions = MemoryLibrary.exclusionContext(on: queryDate)
         let groups = MemoryLibrary.yearGroups(
             on: queryDate,
             exclusions: exclusions,

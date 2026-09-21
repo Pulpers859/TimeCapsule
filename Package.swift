@@ -21,6 +21,7 @@ let package = Package(
             sources: [
                 "AtticDefaults.swift",
                 "GalleryStateLogic.swift",
+                "MediaDuration.swift",
                 "MemoryWindow.swift",
                 "NotificationPlan.swift",
                 "PhotoEXIF.swift",

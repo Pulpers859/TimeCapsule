@@ -74,11 +74,7 @@ struct VideoPlaybackControls: View {
     }
 
     private func formattedTime(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds > 0 else { return "0:00" }
-        let total = Int(seconds.rounded(.down))
-        let minutes = total / 60
-        let remainder = total % 60
-        return String(format: "%d:%02d", minutes, remainder)
+        MediaDuration.formatted(seconds)
     }
 }
 

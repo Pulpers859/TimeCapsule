@@ -133,6 +133,7 @@ struct PaywallView: View {
             }
             .font(.footnote.weight(.semibold))
             .padding(.top, 14)
+            .disabled(store.restoreInFlight)
 
             Text("A one-time payment unlocks these features on every device signed in to your Apple Account.")
                 .font(.footnote)
@@ -156,6 +157,7 @@ struct PaywallView: View {
                     Task { await store.restore() }
                 }
                 .font(.footnote.weight(.semibold))
+                .disabled(store.restoreInFlight)
             }
         }
     }

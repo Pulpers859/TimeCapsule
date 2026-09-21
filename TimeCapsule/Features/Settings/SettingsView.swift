@@ -228,10 +228,37 @@ struct SettingsView: View {
                         Button("Restore Purchase") {
                             Task { await purchaseStore.restore() }
                         }
+                        .disabled(purchaseStore.restoreInFlight)
                     }
                 } header: {
                     Text("Upgrade")
                 }
+            }
+            // The restore button above is reachable from here without ever
+            // opening the paywall, and only the paywall was showing what
+            // happened. So a restore from Settings was silent in every
+            // outcome but success: "No previous purchase was found" was
+            // written into `purchaseError` with nothing bound to display it,
+            // and the button looked dead. Worse, the message *persisted* —
+            // the next time the user opened the paywall, out of nowhere, it
+            // greeted them with an alert about a restore they had attempted
+            // minutes earlier on a different screen.
+            .alert(
+                "Restore Purchase",
+                isPresented: Binding(
+                    // Suppressed while the paywall is up, because it binds an
+                    // alert to this same property. Two presentations driven by
+                    // one flag across a sheet boundary means the one underneath
+                    // tries to present while it is already presenting the
+                    // sheet, and UIKit drops it. The paywall is the more
+                    // specific context, so it wins whenever it is open.
+                    get: { !showPaywall && purchaseStore.purchaseError != nil },
+                    set: { if !$0 { purchaseStore.purchaseError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(purchaseStore.purchaseError ?? "")
             }
             .sheet(isPresented: $showPaywall) {
                 // Passed explicitly rather than relying on the sheet inheriting

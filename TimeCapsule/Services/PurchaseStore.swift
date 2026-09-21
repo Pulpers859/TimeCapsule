@@ -41,6 +41,7 @@ final class PurchaseStore: ObservableObject {
     @Published private(set) var product: Product?
     @Published private(set) var isLoadingProduct = false
     @Published private(set) var purchaseInFlight = false
+    @Published private(set) var restoreInFlight = false
 
     /// Set when a purchase needs the user to go and do something — Ask to Buy
     /// approval, or a banking step — rather than having failed.
@@ -140,6 +141,23 @@ final class PurchaseStore: ObservableObject {
         do {
             switch try await product.purchase() {
             case .success(let verification):
+                // An unverified result here is not the same as one arriving
+                // through `Transaction.updates`, where granting nothing and
+                // saying nothing is right. The user has just tapped Buy and
+                // the App Store has charged them: `.success` means the
+                // purchase went through, and only the local signature check
+                // failed. Falling through to `apply` — which drops an
+                // unverified result on the floor — left the paywall sitting
+                // on its own Unlock button with no error, no unlock and no
+                // explanation, immediately after taking the money.
+                //
+                // Restore is the honest next step: `currentEntitlements` is
+                // read fresh, and the App Store does not charge twice for a
+                // non-consumable.
+                guard case .verified = verification else {
+                    purchaseError = "Your purchase went through, but Attic couldn't verify it on this device. Tap Restore Purchase — you won't be charged again."
+                    break
+                }
                 await apply(verification)
 
             case .pending:
@@ -166,6 +184,10 @@ final class PurchaseStore: ObservableObject {
     /// App Review requires a visible restore control for non-consumables
     /// regardless, and this is it.
     func restore() async {
+        guard !restoreInFlight else { return }
+        restoreInFlight = true
+        defer { restoreInFlight = false }
+
         await refreshEntitlement()
         guard !isUnlocked else { return }
         do {
@@ -174,10 +196,19 @@ final class PurchaseStore: ObservableObject {
             if !isUnlocked {
                 purchaseError = "No previous purchase was found for this Apple Account."
             }
-        } catch {
-            // A cancelled sign-in sheet lands here too, which is not an error
-            // worth interrupting the user over.
+        } catch StoreKitError.userCancelled {
+            // Dismissing the sign-in sheet is a decision, not a failure, and
+            // reporting it back as one would be noise.
             await refreshEntitlement()
+        } catch {
+            // Everything else is worth saying. This used to be silent for all
+            // of it, so a restore attempted with no network — the ordinary
+            // case, since `AppStore.sync()` is the only part of this flow that
+            // needs one — did nothing at all and looked like a dead button.
+            await refreshEntitlement()
+            if !isUnlocked {
+                purchaseError = "Attic couldn't reach the App Store to restore your purchase. Check your connection and try again."
+            }
         }
     }
 }

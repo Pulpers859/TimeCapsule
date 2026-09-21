@@ -88,6 +88,33 @@ nonisolated enum MemoryLibrary {
         )
     }
 
+    /// The exclusion context a fetch on `date` builds for itself.
+    ///
+    /// Exposed for a caller that makes more than one call for the same date
+    /// and wants to resolve exclusions once. Reaching for
+    /// `MemoryExclusions.Context.current()` to do that is the trap: its
+    /// default argument leaves the album lookup *unbounded*, which turns one
+    /// small indexed query per excluded album into a full enumeration of
+    /// every member of it. That is the exact cost
+    /// `excludedAlbumMemberIdentifiers(matching:)` documents as the thing
+    /// that kills the widget extension, so the one caller that most needs to
+    /// resolve once is also the one that can least afford to resolve
+    /// unbounded. This keeps both properties.
+    ///
+    /// The date predicate is the same one `yearGroups` and `count` build, so
+    /// a context from here is indistinguishable from the one either would
+    /// have made privately.
+    static func exclusionContext(
+        on date: Date,
+        calendar: Calendar = .current
+    ) -> MemoryExclusions.Context {
+        let ranges = anniversaryRanges(on: date, calendar: calendar)
+        // No anniversary windows means both fetches return nothing without
+        // consulting exclusions at all, so there is nothing to resolve.
+        guard !ranges.isEmpty else { return .unfiltered }
+        return .current(matching: datePredicate(for: ranges))
+    }
+
     /// - Parameter maxPerYear: caps how many assets each year retains. The
     ///   gallery wants all of them and passes nil; the widget shows at most
     ///   four and passes a small number.

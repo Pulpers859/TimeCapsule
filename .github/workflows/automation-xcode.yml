@@ -41,7 +41,28 @@ jobs:
           xcodebuild "${args[@]}" 2>&1 | tee xcode.log
           xcode_status=${PIPESTATUS[0]}
           if [[ "$xcode_status" -ne 0 ]]; then exit "$xcode_status"; fi
-          find DerivedData/Build/Products -name PrivacyInfo.xcprivacy -print -quit | grep -q .
+          # Both manifests, named individually.
+          #
+          # `-print -quit` stopped at the first match anywhere under Products,
+          # so the app's own manifest satisfied it and the check could not
+          # fail for the case it was added to catch: neither manifest has a
+          # pbxproj entry, both rely on a synchronized folder group
+          # classifying them as resources, and it is the widget's that is
+          # newer and the widget's whose group membership is the open
+          # question. A missing manifest is refused at upload with
+          # ITMS-91053, which is far too late to find out.
+          app_manifest=$(find DerivedData/Build/Products -path '*/TimeCapsule.app/PrivacyInfo.xcprivacy' -print -quit)
+          widget_manifest=$(find DerivedData/Build/Products -path '*/AtticWidget.appex/PrivacyInfo.xcprivacy' -print -quit)
+          if [[ -z "$app_manifest" ]]; then
+            echo 'PrivacyInfo.xcprivacy is missing from TimeCapsule.app' >&2
+            exit 1
+          fi
+          if [[ -z "$widget_manifest" ]]; then
+            echo 'PrivacyInfo.xcprivacy is missing from AtticWidget.appex' >&2
+            exit 1
+          fi
+          echo "Found $app_manifest"
+          echo "Found $widget_manifest"
 
       - name: Upload Xcode diagnostics
         if: failure()

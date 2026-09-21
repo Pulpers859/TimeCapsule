@@ -122,12 +122,50 @@ final class NotificationManager: NSObject {
         let center = UNUserNotificationCenter.current()
 
         if requestAuthorization {
-            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            // The status is read *before* asking, because `!granted` on its
+            // own does not mean the user declined anything.
+            //
+            // iOS prompts once. Every later `requestAuthorization` on an app
+            // whose status is already `.denied` returns false immediately,
+            // with no error and no prompt shown. Treating that as a decline
+            // is what defeated the fix below on every cold launch: `init()`
+            // calls `requestAndSchedule()` unconditionally, and that path
+            // asks. So someone who turned reminders off in iOS Settings kept
+            // the tolerant behaviour only until the app was next launched
+            // from cold, at which point the flag was cleared and the sixty
+            // pending requests removed after all — the exact end state the
+            // tolerant branch exists to prevent, arrived at a few hours
+            // later.
+            //
+            // `notificationsEnabled` defaults to false and is only ever set
+            // by the user turning the toggle on, so reaching here at launch
+            // already implies they were prompted once and granted. A genuine
+            // first prompt only happens from `updatePreferences`, and only
+            // while the status is `.notDetermined`, which is precisely what
+            // this now checks.
+            let existing = await center.notificationSettings()
             guard isCurrent(requestedGeneration) else { return }
-            if !granted {
-                notificationsEnabled = false
-                cancelAndRemoveScheduledNotifications()
-                return
+
+            if existing.authorizationStatus == .notDetermined {
+                let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+                guard isCurrent(requestedGeneration) else { return }
+                if !granted {
+                    // A real decline, to a prompt the user actually saw.
+                    // Recording it in the toggle is honest rather than
+                    // destructive.
+                    notificationsEnabled = false
+                    cancelAndRemoveScheduledNotifications()
+                    return
+                }
+            } else {
+                guard existing.authorizationStatus == .authorized || existing.authorizationStatus == .provisional else {
+                    // Same tolerance as the refresh path below, and for the
+                    // same reason: this is a system condition the user can
+                    // reverse from iOS Settings, not a preference of theirs.
+                    // Settings shows its own banner while authorization is
+                    // denied, which is where that gets explained.
+                    return
+                }
             }
         } else {
             let settings = await center.notificationSettings()
@@ -180,8 +218,19 @@ final class NotificationManager: NSObject {
             // album per reschedule is the same scan storm this method was
             // rewritten to remove, on the album type people most want to
             // exclude, triggered by something as ordinary as deleting one
-            // memory. One unscoped resolve costs less than sixty bounded
-            // ones regardless.
+            // memory.
+            //
+            // The trade is stated honestly rather than claimed away: this
+            // resolve is *unscoped*, so for an excluded ordinary album it
+            // replaces sixty small indexed queries with one full walk. That
+            // is a worse peak for that case, not a better one. It is
+            // accepted here and not in the widget — which bounds its own via
+            // `MemoryLibrary.exclusionContext(on:)` — because this runs in
+            // the app on a detached utility task, where a transient spike
+            // costs latency, while the widget runs in an extension where the
+            // same spike is a jetsam kill that freezes the home screen. The
+            // bound cannot simply be reused here anyway: these are sixty
+            // different days, so there is no single date predicate to pass.
             let exclusions = MemoryExclusions.Context.current()
             var requests: [(NotificationSlot, Int)] = []
             for slot in slots {

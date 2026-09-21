@@ -960,10 +960,7 @@ struct VideoDurationBadge: View {
     }
 
     private var formattedDuration: String {
-        let total = Int(duration)
-        let minutes = total / 60
-        let seconds = total % 60
-        return String(format: "%d:%02d", minutes, seconds)
+        MediaDuration.formatted(duration)
     }
 }
 
