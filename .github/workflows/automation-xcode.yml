@@ -41,7 +41,7 @@ jobs:
           # prerelease one. The bare `Xcode.app` symlink sorts below
           # `Xcode_*` and is ignored either way.
           newest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
-            | grep -viE 'beta|rc[0-9]*\.app$' \
+            | grep -viE 'beta|release[_-]?candidate|_rc[0-9]*(\.app)?$' \
             | sort -V | tail -1)
           if [[ -z "$newest" ]]; then
             echo 'No Xcode found on the runner.' >&2

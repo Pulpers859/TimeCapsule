@@ -58,7 +58,7 @@ struct TimeCapsuleView: View {
     /// one flattening, not two that happen to agree today.
     private var mergedItems: [MergedMemoryItem] {
         filteredYearGroups.flatMap { group in
-            group.assets.map { MergedMemoryItem(asset: $0, year: group.year, yearsAgo: group.yearsAgo) }
+            group.assets.map { MergedMemoryItem(asset: $0, displayYear: group.displayYear, yearsAgo: group.yearsAgo) }
         }
     }
     /// Asked of the exporter rather than counted here, so the button appears
@@ -447,7 +447,7 @@ struct YearSection: View {
                 .padding(.top, 20)
 
             MemoryGridBody(
-                items: group.assets.map { MergedMemoryItem(asset: $0, year: group.year, yearsAgo: group.yearsAgo) },
+                items: group.assets.map { MergedMemoryItem(asset: $0, displayYear: group.displayYear, yearsAgo: group.yearsAgo) },
                 isSelecting: isSelecting,
                 showYearBadges: false,
                 selectedIDs: $selectedIDs,
@@ -462,7 +462,11 @@ struct YearSection: View {
 /// grids are built from the same shape and share `MemoryGridBody`.
 struct MergedMemoryItem: Identifiable {
     let asset: PHAsset
-    let year: Int
+    /// Already rendered through the reader's own calendar, so this is safe to
+    /// show. The raw `YearGroup.year` is a proleptic Gregorian number and
+    /// reads as an era-relative value to anyone not on the Gregorian
+    /// calendar.
+    let displayYear: String
     let yearsAgo: Int
     var id: String { asset.localIdentifier }
 }
@@ -543,7 +547,7 @@ struct MemoryGridBody: View {
             ? ", \(MediaDuration.spokenDuration(item.asset.duration))"
             : ""
         guard let date = item.asset.creationDate else {
-            return "\(type) from \(item.year)\(length)"
+            return "\(type) from \(item.displayYear)\(length)"
         }
         return "\(type), \(date.formatted(date: .long, time: .omitted))\(length)"
     }
@@ -564,7 +568,7 @@ struct YearSectionHeader: View {
         // lines of chrome per section, at 38pt, cost more vertical space than
         // the photos they introduce once a day spans several years.
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(String(group.year))
+            Text(group.displayYear)
                 .font(.system(size: 26, design: .rounded).weight(.bold))
                 .tracking(-0.4)
                 .foregroundStyle(.primary)
@@ -788,7 +792,7 @@ struct MemoryControlsBar: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .padding(.horizontal, 16)
-                        .frame(height: TCMetrics.controlHeight)
+                        .frame(minHeight: TCMetrics.controlHeight)
                         .tcGlass(in: Capsule())
                         .accessibilityAddTraits(.isHeader)
 
@@ -799,7 +803,7 @@ struct MemoryControlsBar: View {
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(1)
                             .padding(.horizontal, 6)
-                            .frame(height: TCMetrics.controlHeight)
+                            .frame(minHeight: TCMetrics.controlHeight)
                             .contentTransition(.numericText())
                     }
                     .tcGlassCapsuleStyle(isProminent: false)
@@ -828,7 +832,7 @@ struct MemoryControlsBar: View {
                                     Button {
                                         onJumpToYear(group)
                                     } label: {
-                                        Label("\(group.year) · \(group.assets.count)", systemImage: "calendar")
+                                        Label("\(group.displayYear) · \(group.assets.count)", systemImage: "calendar")
                                     }
                                 }
                             } label: {
@@ -1017,7 +1021,7 @@ struct RecapExportOverlay: View {
                     Text("Cancel")
                         .font(.subheadline.weight(.semibold))
                         .frame(minWidth: 130)
-                        .frame(height: 42)
+                        .frame(minHeight: 42)
                 }
                 .buttonStyle(.bordered)
                 .buttonBorderShape(.capsule)

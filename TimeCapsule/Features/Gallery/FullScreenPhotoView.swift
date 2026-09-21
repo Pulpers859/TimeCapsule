@@ -52,8 +52,27 @@ struct FullScreenPhotoView: View {
     private var currentAssetIdentifier: String? {
         visibleAssets.indices.contains(currentIndex) ? visibleAssets[currentIndex].localIdentifier : nil
     }
+    /// Every state that puts something modal on screen.
+    ///
+    /// `shareError` and `deleteError` were missing, and both present an
+    /// alert. Worse, each is set in the *same* synchronous main-actor block
+    /// that clears the flag which was blocking playback — `isPreparingShare`
+    /// at one line and `shareError` a few lines later, `isDeleting` and
+    /// `deleteError` likewise — so SwiftUI coalesces them into one update in
+    /// which the block goes away. The pause therefore lifted and the video
+    /// started playing, audibly, underneath "Couldn't Share".
+    ///
+    /// That coalescing is the same behaviour the share hand-off relies on to
+    /// avoid flickering the controls back for a frame; it only works in our
+    /// favour while every modal state is listed here.
     private var isPlaybackBlocked: Bool {
-        showDeleteConfirm || infoAsset != nil || shareItem != nil || isPreparingShare || isDeleting
+        showDeleteConfirm
+            || infoAsset != nil
+            || shareItem != nil
+            || isPreparingShare
+            || isDeleting
+            || shareError != nil
+            || deleteError != nil
     }
 
     init(asset: PHAsset, allAssets: [PHAsset]) {

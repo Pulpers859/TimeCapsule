@@ -52,7 +52,13 @@ struct VideoPlaybackControls: View {
             Text(formattedTime(currentTime))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.primary)
-                .frame(minWidth: 40, alignment: .leading)
+                // `minWidth` alone let the readout grow into the slider,
+                // which is the only flexible member of this row — so crossing
+                // 9:59, or 59:59, resized the track sideways mid-playback,
+                // moving the thumb out from under a scrubbing finger. Both
+                // readouts are sized to the longest string either can show, so
+                // the track is stable for the whole of a given video.
+                .frame(minWidth: timeReadoutWidth, alignment: .leading)
 
             Slider(
                 value: sliderBinding,
@@ -66,7 +72,7 @@ struct VideoPlaybackControls: View {
             Text(formattedTime(duration))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(minWidth: 40, alignment: .trailing)
+                .frame(minWidth: timeReadoutWidth, alignment: .trailing)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -75,6 +81,12 @@ struct VideoPlaybackControls: View {
 
     private func formattedTime(_ seconds: Double) -> String {
         MediaDuration.formatted(seconds)
+    }
+
+    /// Wide enough for the longest string this video can produce, so neither
+    /// readout changes width while it plays.
+    private var timeReadoutWidth: CGFloat {
+        MediaDuration.formatted(duration).count >= 7 ? 62 : 40
     }
 }
 

@@ -200,6 +200,11 @@ final class PurchaseStore: ObservableObject {
                 break
             }
         } catch {
+            // A cancelled *purchase* arrives as `.userCancelled` above, but
+            // backing out of the App Store sign-in sheet mid-purchase throws
+            // — the same false-alarm the helper below was written for, and it
+            // was only being used in `restore()`.
+            guard !Self.isUserCancellation(error) else { return }
             purchaseError = "The purchase couldn't be completed. You have not been charged."
         }
     }

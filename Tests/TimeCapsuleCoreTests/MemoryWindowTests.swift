@@ -348,3 +348,99 @@ final class MemoryWindowTests: XCTestCase {
         )
     }
 }
+
+// MARK: - Non-Gregorian system calendars
+
+/// iOS lets someone choose Japanese, Buddhist, Hebrew, Islamic or Persian as
+/// their system calendar from Settings, and `Calendar.current` then reports
+/// year numbers in that calendar. Two assumptions in `MemoryWindow` broke on
+/// that: that a year number is absolute, and that subtracting two of them
+/// gives elapsed years. Neither holds across a Japanese era boundary.
+///
+/// These assert outcomes rather than the era numbers themselves, so they are
+/// not hostage to how a given platform's ICU spells Reiwa.
+final class MemoryWindowNonGregorianTests: XCTestCase {
+    private func calendar(_ identifier: Calendar.Identifier) -> Calendar {
+        var calendar = Calendar(identifier: identifier)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        return calendar
+    }
+
+    private func date(year: Int, month: Int, day: Int) -> Date {
+        calendar(.gregorian).date(
+            from: DateComponents(year: year, month: month, day: day, hour: 12)
+        ) ?? Date(timeIntervalSince1970: 0)
+    }
+
+    /// The headline case. Under the Japanese calendar a 2018 photo is Heisei
+    /// 30 and 2026 is Reiwa 8, so the old subtraction produced -22. Every
+    /// caller guards on `> 0`, so the failure was silent: the "N years ago"
+    /// caption, the info-sheet strapline and the share caption all vanished
+    /// for anything older than the era change.
+    func testYearsAgoIsTheSameUnderEveryCalendar() {
+        let reference = date(year: 2026, month: 9, day: 21)
+        for identifier in [Calendar.Identifier.gregorian, .japanese, .buddhist, .republicOfChina] {
+            XCTAssertEqual(
+                MemoryWindow.yearsAgo(
+                    for: date(year: 2018, month: 9, day: 21),
+                    relativeTo: reference,
+                    dayStartHour: 0,
+                    calendar: calendar(identifier)
+                ),
+                8,
+                "yearsAgo disagreed under \(identifier)"
+            )
+        }
+    }
+
+    /// Crossing the Reiwa boundary (1 May 2019) used to split one Gregorian
+    /// year in two: a March 2019 photo read as Heisei 31 and a September one
+    /// as Reiwa 1, so two photos from the same year behaved differently.
+    func testYearsAgoDoesNotSplitAYearAtAnEraBoundary() {
+        let reference = date(year: 2026, month: 9, day: 21)
+        let japanese = calendar(.japanese)
+        XCTAssertEqual(
+            MemoryWindow.yearsAgo(for: date(year: 2019, month: 3, day: 21), relativeTo: reference, dayStartHour: 0, calendar: japanese),
+            7
+        )
+        XCTAssertEqual(
+            MemoryWindow.yearsAgo(for: date(year: 2019, month: 9, day: 21), relativeTo: reference, dayStartHour: 0, calendar: japanese),
+            7
+        )
+    }
+
+    /// The fetch window itself must land on the same instants regardless of
+    /// the reader's calendar, or the photos found would differ too.
+    func testAnniversaryRangeIsIdenticalUnderEveryCalendar() {
+        let reference = date(year: 2026, month: 9, day: 21)
+        let expected = MemoryWindow.range(
+            for: reference, anniversaryYear: 2006, dayWindow: 0, calendar: calendar(.gregorian)
+        )
+        XCTAssertNotNil(expected)
+        for identifier in [Calendar.Identifier.japanese, .buddhist, .republicOfChina] {
+            let actual = MemoryWindow.range(
+                for: reference, anniversaryYear: 2006, dayWindow: 0, calendar: calendar(identifier)
+            )
+            XCTAssertEqual(actual?.start, expected?.start, "start differed under \(identifier)")
+            XCTAssertEqual(actual?.end, expected?.end, "end differed under \(identifier)")
+        }
+    }
+
+    func testAnniversaryCalendarLeavesAGregorianOneAlone() {
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = TimeZone(identifier: "Asia/Tokyo") ?? .gmt
+        let result = MemoryWindow.anniversaryCalendar(gregorian)
+        XCTAssertEqual(result.identifier, .gregorian)
+        XCTAssertEqual(result.timeZone, gregorian.timeZone)
+    }
+
+    /// The time zone must survive the swap, or a day would start at a
+    /// different instant for these users than for everyone else.
+    func testAnniversaryCalendarKeepsTheTimeZone() {
+        var japanese = Calendar(identifier: .japanese)
+        japanese.timeZone = TimeZone(identifier: "Asia/Tokyo") ?? .gmt
+        let result = MemoryWindow.anniversaryCalendar(japanese)
+        XCTAssertEqual(result.identifier, .gregorian)
+        XCTAssertEqual(result.timeZone, japanese.timeZone)
+    }
+}

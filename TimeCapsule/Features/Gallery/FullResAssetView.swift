@@ -50,6 +50,16 @@ struct FullResAssetView: View {
                                 .background(Color.black)
                                 .accessibilityElement()
                                 .accessibilityLabel(spokenMediaLabel)
+                                .accessibilityValue(isCurrent ? "Current memory" : "")
+                                // The photo branch got an activate action for
+                                // exactly this reason and the video branch did
+                                // not. With the chrome hidden — which also
+                                // hides the playback controls — VoiceOver had
+                                // nothing to activate here, so Close, Share,
+                                // Delete, Info and the transport were all
+                                // unreachable until the user paged to a photo.
+                                .accessibilityAction(.default, onToggleChrome)
+                                .accessibilityHint("Double tap to show or hide the controls.")
 
                             // `isPlaybackAllowed` as well as `isCurrent`.
                             //
@@ -133,6 +143,11 @@ struct FullResAssetView: View {
                     } else {
                         ProgressView()
                             .tint(.white)
+                            // Previously inherited from the container label
+                            // that moved onto the media itself. An iCloud
+                            // original takes seconds, and for all of them this
+                            // page announced nothing at all.
+                            .accessibilityLabel("Loading \(spokenMediaLabel)")
                     }
                 }
             } else {

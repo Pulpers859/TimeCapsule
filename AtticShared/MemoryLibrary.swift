@@ -22,6 +22,29 @@ nonisolated struct YearGroup: Identifiable {
         yearsAgo == 1 ? "1 Year Ago" : "\(yearsAgo) Years Ago"
     }
 
+    /// The year written the way the reader's own calendar writes it.
+    ///
+    /// `year` is a proleptic Gregorian number because that is the only way
+    /// the anniversary arithmetic works across eras — see
+    /// `MemoryWindow.anniversaryCalendar`. Printing it with `String(year)`
+    /// would therefore show 2025 to someone whose phone is set to the
+    /// Buddhist calendar, where every other date in the app reads 2568, and
+    /// would ignore their numbering system besides.
+    ///
+    /// Anchored mid-year on purpose: era boundaries fall on a date, not on
+    /// 1 January, so 1 July lands unambiguously inside the era that owns
+    /// most of the year.
+    var displayYear: String {
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = .current
+        guard let anchor = gregorian.date(
+            from: DateComponents(year: year, month: 7, day: 1, hour: 12)
+        ) else {
+            return String(year)
+        }
+        return anchor.formatted(.dateTime.year())
+    }
+
     /// Narrows the group, keeping the year it is measured against. `nil` when
     /// nothing survives, so a caller can drop the group entirely.
     ///
@@ -48,6 +71,10 @@ nonisolated enum MemoryLibrary {
     /// contract violation, and the only way to guarantee they agree is for both
     /// to derive their date ranges here.
     private static func anniversaryRanges(on date: Date, calendar: Calendar) -> [AnniversaryRange] {
+        // Gregorian, so the stride below is over absolute years. See
+        // `MemoryWindow.anniversaryCalendar` — under the Japanese calendar
+        // this component is an era-relative 8, and the lookback ran to -12.
+        let calendar = MemoryWindow.anniversaryCalendar(calendar)
         let currentYear = calendar.component(.year, from: date)
         return stride(
             from: currentYear - 1,
@@ -132,7 +159,7 @@ nonisolated enum MemoryLibrary {
         exclusions: MemoryExclusions.Context? = nil,
         maxPerYear: Int? = nil
     ) -> [YearGroup] {
-        let currentYear = calendar.component(.year, from: date)
+        let currentYear = MemoryWindow.anniversaryCalendar(calendar).component(.year, from: date)
         let ranges = anniversaryRanges(on: date, calendar: calendar)
         guard !ranges.isEmpty else { return [] }
 

@@ -215,7 +215,7 @@ struct PermissionRequestView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 52)
+                .frame(minHeight: 52)
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.capsule)
@@ -275,7 +275,7 @@ struct PermissionDeniedView: View {
                 Text("Open Settings")
                     .font(.headline)
                     .frame(minWidth: 200)
-                    .frame(height: 50)
+                    .frame(minHeight: 50)
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.capsule)
@@ -363,9 +363,16 @@ struct EmptyStateView: View {
             : "Nothing turned up in the current memory range. Try widening it, or check back tomorrow."
     }
 
+    /// Ordered to match `message`, which checks exclusions first.
+    ///
+    /// The two were inserted at opposite ends of the precedence, so a
+    /// limited-access user who had also hidden today's only shared photo was
+    /// told "You can bring it back in Settings" above a button labelled
+    /// "Choose More Photos" that opened the library picker instead. The one
+    /// route the message named was the one route not offered.
     private var actionTitle: String {
-        if isLimitedAccess { return "Choose More Photos" }
-        return hiddenByExclusions ? "Open Settings" : "Adjust Memory Range"
+        if hiddenByExclusions { return "Open Settings" }
+        return isLimitedAccess ? "Choose More Photos" : "Adjust Memory Range"
     }
 
     var body: some View {
@@ -374,7 +381,7 @@ struct EmptyStateView: View {
             title: "No Memories Today",
             message: message
         ) {
-            Button(action: isLimitedAccess ? onManageAccess : onOpenSettings) {
+            Button(action: (isLimitedAccess && !hiddenByExclusions) ? onManageAccess : onOpenSettings) {
                 Text(actionTitle)
                     .font(.headline)
                     .frame(minWidth: 220)

@@ -16,6 +16,40 @@ nonisolated enum MemoryWindow {
         max(0, min(value, 7))
     }
 
+    /// The calendar every anniversary calculation runs in.
+    ///
+    /// Deliberately not `Calendar.current`. iOS lets someone pick Japanese,
+    /// Buddhist, Hebrew, Islamic or Persian as their system calendar from
+    /// Settings, and `Calendar.current` then reports year numbers in that
+    /// calendar — which breaks two assumptions this file is built on.
+    ///
+    /// The first is that a year number is absolute. Under the Japanese
+    /// calendar `component(.year, from: Date())` returns the year *within the
+    /// current era*, so in 2026 it is 8, and the twenty-year lookback strode
+    /// from 7 down to -12. The second is that subtracting two year numbers
+    /// gives an elapsed number of years. It does not across an era boundary:
+    /// a 2018 photo reads as Heisei 30, today reads as Reiwa 8, and
+    /// `8 - 30` is -22. Every caller of `yearsAgo` guards on `> 0`, so that
+    /// did not show up as a negative number on screen — it silently removed
+    /// the "N years ago" caption, the info-sheet strapline and the share
+    /// caption for every memory older than the era change.
+    ///
+    /// Anchoring the arithmetic to a proleptic Gregorian year removes both,
+    /// and keeps the user's time zone so nothing about which instant a day
+    /// starts at changes. For someone already on Gregorian this returns
+    /// their own calendar untouched, so it is exactly a no-op for them.
+    ///
+    /// Presentation is a separate question and is *not* forced Gregorian:
+    /// `YearGroup.displayYear` formats through the user's own calendar, so a
+    /// Buddhist-calendar user still reads 2568.
+    static func anniversaryCalendar(_ calendar: Calendar = .current) -> Calendar {
+        guard calendar.identifier != .gregorian else { return calendar }
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = calendar.timeZone
+        gregorian.locale = calendar.locale
+        return gregorian
+    }
+
     /// 0 = exact day only. Clamped so a corrupt default can't explode fetches.
     ///
     /// Read from the shared suite, not `.standard`, so the widget resolves the
@@ -55,6 +89,7 @@ nonisolated enum MemoryWindow {
         dayStartHour: Int = MemoryWindow.dayStartHour,
         calendar: Calendar = .current
     ) -> Date {
+        let calendar = anniversaryCalendar(calendar)
         let startHour = max(0, min(dayStartHour, 6))
         guard startHour > 0 else { return date }
         let hour = calendar.component(.hour, from: date)
@@ -84,6 +119,7 @@ nonisolated enum MemoryWindow {
         dayStartHour: Int = MemoryWindow.dayStartHour,
         calendar: Calendar = .current
     ) -> Int {
+        let calendar = anniversaryCalendar(calendar)
         let referenceYear = calendar.component(
             .year,
             from: logicalDate(for: reference, dayStartHour: dayStartHour, calendar: calendar)
@@ -105,6 +141,7 @@ nonisolated enum MemoryWindow {
         dayWindow: Int = MemoryWindow.dayWindow,
         calendar: Calendar = .current
     ) -> (start: Date, end: Date)? {
+        let calendar = anniversaryCalendar(calendar)
         let month = calendar.component(.month, from: referenceDate)
         let day = calendar.component(.day, from: referenceDate)
         let startHour = dayStartHour

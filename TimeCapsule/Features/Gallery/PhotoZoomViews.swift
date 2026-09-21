@@ -49,6 +49,9 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
     /// True only while `display(image:)` drives a synchronous layout, which
     /// happens inside SwiftUI's update pass.
     private var isApplyingImage = false
+    /// The state the custom action is currently *named* for, which is not the
+    /// same question as the one `lastReportedZoomState` answers.
+    private var lastNamedZoomAction: Bool?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -95,9 +98,30 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         accessibilityTraits = .image
         accessibilityLabel = description
         accessibilityHint = "Double tap to show or hide the controls."
+        refreshZoomAction()
+    }
+
+    /// Names the zoom action for the state the view is actually in.
+    ///
+    /// Kept separate from `applyAccessibility` because that only runs from
+    /// `makeUIView`/`updateUIView`. Zooming out ran
+    /// `setZoomScale(_:animated: true)` and then reported the new state on the
+    /// very next line, so the SwiftUI update it triggered re-read `zoomScale`
+    /// while the animation was still mid-flight and rebuilt the action as
+    /// "Zoom out". The settling frames then reported the same value the
+    /// de-dup guard had already recorded, so nothing ran again — leaving a
+    /// fully zoomed-out photo whose only action was called "Zoom out" and
+    /// which zoomed *in* when activated.
+    ///
+    /// Called from `scrollViewDidZoom`, so it tracks the animation rather
+    /// than a snapshot taken before it.
+    private func refreshZoomAction() {
+        let zoomedIn = isZoomedIn
+        guard lastNamedZoomAction != zoomedIn || accessibilityCustomActions?.isEmpty != false else { return }
+        lastNamedZoomAction = zoomedIn
         accessibilityCustomActions = [
             UIAccessibilityCustomAction(
-                name: isZoomedIn ? "Zoom out" : "Zoom in",
+                name: zoomedIn ? "Zoom out" : "Zoom in",
                 target: self,
                 selector: #selector(accessibilityToggleZoom)
             )
@@ -182,6 +206,7 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         centerImage()
+        refreshZoomAction()
         reportZoomState(isZoomedIn)
     }
 
