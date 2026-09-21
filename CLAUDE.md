@@ -2,6 +2,22 @@
 
 `PROJECT_HANDOFF.md` is the canonical project brief. This file stays short on purpose so tool-specific instructions do not drift from the main handoff.
 
+## Shipping A Build To The User's iPhone — Do Not Improvise This
+
+The user has **no Apple Developer account and no Mac**. They install by
+re-signing an unsigned `.ipa` with **Signulous**, on the phone. Xcode,
+a cable, TestFlight and CI *artifacts* are all useless here — artifacts
+cannot be downloaded on a phone at all.
+
+**The workflow already exists: `.github/workflows/build-sideload-ipa.yml`.**
+Trigger it, wait for it, and hand over the release URL it publishes:
+
+`https://github.com/Pulpers859/TimeCapsule/releases/download/sideload-<N>/Attic.ipa`
+
+Full procedure, the exact `curl` calls, and the known limits of a sideloaded
+build (broken App Group, dead purchases) are in **`PROJECT_HANDOFF.md`, first
+section**. Read it before explaining how to install anything.
+
 ## App Summary
 - SwiftUI iPhone app for "on this day" photo and video memories.
 - Core flows: photo permission, grouped browsing, full-screen viewing, deleting, sharing, and daily local notifications.

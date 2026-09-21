@@ -2,6 +2,89 @@
 
 This file is the `TimeCapsule`-specific companion to [AI_PROJECT_HANDOFF_TEMPLATE.md](/C:/Dev/TimeCapsule/docs/templates/AI_PROJECT_HANDOFF_TEMPLATE.md), which defines the broader machine-wide repo and workflow standard.
 
+## READ THIS FIRST — How To Get A Build Onto The User's iPhone
+
+**The user has no Apple Developer account and no Mac.** They install builds by
+re-signing an unsigned `.ipa` with **Signulous** on the phone itself. Do not
+tell them to open Xcode, connect a cable, use TestFlight, or download a CI
+*artifact* — none of those work for them.
+
+**There is a workflow that does this. Use it. Do not invent another.**
+
+### The whole loop
+
+1. Commit and push to `main` as normal.
+2. Trigger the build:
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}\n" \
+     -X POST \
+     -H "Authorization: Bearer $GITHUB_TOKEN" \
+     -H "Content-Type: application/json" \
+     -H "Accept: application/vnd.github+json" \
+     "https://api.github.com/repos/Pulpers859/TimeCapsule/actions/workflows/build-sideload-ipa.yml/dispatches" \
+     -d '{"ref":"main","inputs":{"unlock_pro":true}}'
+   ```
+   `204` means it started. **`415` means you forgot `Content-Type: application/json`.**
+3. Wait for it to finish (about 6–8 minutes). Poll, do not guess:
+   ```bash
+   curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+     "https://api.github.com/repos/Pulpers859/TimeCapsule/actions/workflows/build-sideload-ipa.yml/runs?per_page=1"
+   ```
+4. Get the download link:
+   ```bash
+   curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+     "https://api.github.com/repos/Pulpers859/TimeCapsule/releases?per_page=1" \
+     | grep browser_download_url
+   ```
+5. Give them **that URL and nothing else to do but tap it**. It looks like:
+   `https://github.com/Pulpers859/TimeCapsule/releases/download/sideload-<N>/Attic.ipa`
+
+They then open it in Safari on the phone, signs it in Signulous, and installs.
+
+### Why a release and not an artifact
+
+GitHub Actions **artifacts cannot be downloaded on a phone.** They require a
+signed-in desktop browser, and on mobile the artifact name is not even a link.
+This was tried and it failed. The workflow therefore publishes the `.ipa` as a
+**public GitHub Release asset**, which has a plain direct URL that Safari can
+open and Signulous can be pointed at. The repo is public, so no sign-in is
+needed. Do not "helpfully" revert to artifacts.
+
+### What the workflow does
+
+`.github/workflows/build-sideload-ipa.yml`, manual (`workflow_dispatch`):
+
+- Archives **unsigned** (`CODE_SIGNING_ALLOWED=NO`). Signulous re-signs with its
+  own certificate, so signing in CI would be thrown away — and signing properly
+  needs the Apple Developer account that does not exist yet.
+- Compiles with `ATTIC_SIDELOAD` when `unlock_pro` is true (the default), which
+  forces Pro on. **Leave it on.** A sideloaded build has no App Store product
+  behind it, so the paywall can never complete and every Pro feature would be
+  dead.
+- **Verifies `AtticWidget.appex` is embedded** and fails loudly if not. A missing
+  widget still produces a perfectly valid `.ipa`; you would only find out as a
+  blank space on the home screen.
+- Packages `Payload/TimeCapsule.app` into `Attic.ipa` with `zip`. That is the
+  entire `.ipa` format; no Apple tooling is involved.
+- Publishes it as a prerelease tagged `sideload-<run number>`.
+
+### Known limits of every sideloaded build — check before calling a bug a bug
+
+- **The App Group does not survive Signulous re-signing.** The app and the
+  widget then read *separate* settings stores, so the widget shows the
+  free-tier memory window and an empty exclusion list. This is what made the
+  widget report one memory fewer than the app. Settings shows an orange
+  "Widget can't read these settings" warning when it happens — look there
+  before investigating a widget/app disagreement as a counting bug.
+- **Purchases cannot work.** Nothing StoreKit does in this build is real.
+
+### Verify, do not assert
+
+CI has no photo library and cannot see the screen. Anything about how the app
+*looks* or what it *counts* on a real device has to come back from the
+user. Ask them for the specific observation, and say plainly that you could not check
+it yourself.
+
 ## Project Identity
 - Project name: `TimeCapsule`
 - Project type: `iOS app`
