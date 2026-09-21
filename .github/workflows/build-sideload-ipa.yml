@@ -11,7 +11,9 @@ on:
         default: true
 
 permissions:
-  contents: read
+  # write, because the IPA is published as a release so it has a
+  # direct link you can open on the phone itself.
+  contents: write
 
 concurrency:
   group: sideload-${{ github.ref }}
@@ -110,17 +112,41 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # Artifacts can only be downloaded from a signed-in desktop browser,
+      # which is no use when the phone doing the installing is the only
+      # device to hand. A release asset on a public repo has a plain direct
+      # link that Safari on the phone can open and Signulous can be pointed at.
+      - name: Publish as a release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="sideload-${{ github.run_number }}"
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" 'out/Attic.ipa' \
+            --title "Attic sideload build ${{ github.run_number }}" \
+            --notes "Unsigned build of ${{ github.sha }} for signing with Signulous. Pro unlocked: ${{ inputs.unlock_pro }}." \
+            --prerelease
+          url="${{ github.server_url }}/${{ github.repository }}/releases/download/$tag/Attic.ipa"
+          echo "IPA_URL=$url" >> "$GITHUB_ENV"
+          echo "Direct link: $url"
+
       - name: How to install this
         shell: bash
         run: |
-          cat <<'NOTE'
+          cat <<NOTE
           ============================================================
-          Attic.ipa is attached to this run, under "Artifacts".
+          Download this straight onto the iPhone:
 
-            1. Download it and unzip the download (GitHub wraps artifacts
-               in a zip; you want the .ipa inside).
-            2. Upload the .ipa to Signulous and sign it.
-            3. Install from Signulous onto your iPhone.
+            $IPA_URL
+
+            1. Open that link in Safari on the phone.
+            2. Give it to Signulous and sign it.
+            3. Install from Signulous.
+
+          It is also attached to this run under "Artifacts", wrapped in
+          a zip, if you would rather use a computer.
 
           Known limits of a sideloaded build:
             - The widget may not share settings with the app if the App
