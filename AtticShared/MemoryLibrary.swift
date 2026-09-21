@@ -120,21 +120,65 @@ nonisolated enum MemoryLibrary {
         })
     }
 
-    /// Matches the `mediaType == .image || mediaType == .video` test that
-    /// `yearGroups` applies while enumerating. Expressed as a predicate so
-    /// `count(on:)` can let Photos do the filtering instead of materialising
-    /// every asset to check it in Swift.
+    /// The one definition of what counts as a memory on `date`.
     ///
-    /// Built per call rather than held in a `static let`: `NSPredicate` is not
-    /// `Sendable`, and this type is `nonisolated`, so a stored instance would
-    /// be shared mutable global state. Constructing one is trivial next to the
-    /// fetch it configures.
-    private static func mediaTypePredicate() -> NSPredicate {
-        NSPredicate(
-            format: "mediaType == %d OR mediaType == %d",
-            PHAssetMediaType.image.rawValue,
-            PHAssetMediaType.video.rawValue
-        )
+    /// `yearGroups` and `count` used to each carry their own. One fetched on
+    /// dates alone and decided membership in Swift; the other pushed a
+    /// media-type predicate into the fetch and trusted `PHFetchResult.count`
+    /// without looking at a single asset. Two definitions that had to agree
+    /// by hand — and they did not: the widget reported one memory fewer than
+    /// the app would let you page through, on the same day, for the same
+    /// library, with nothing excluded.
+    ///
+    /// Which of the two was right is not really the point. Either could drift
+    /// from the other again the next time the rules change, and nothing in
+    /// the code would notice. So membership is decided here, once, and both
+    /// callers walk what this yields. They can no longer disagree, because
+    /// there is only one of them.
+    ///
+    /// The date predicate goes to Photos, since it is what makes this a small
+    /// query rather than a walk of the library. Everything after it is
+    /// decided in Swift, where the rule is plain to read and identical for
+    /// every caller.
+    ///
+    /// Returns the ranges it searched, so a caller that needs to label or
+    /// order years does not have to recompute them.
+    @discardableResult
+    private static func enumerateMemories(
+        on date: Date,
+        calendar: Calendar,
+        exclusions: MemoryExclusions.Context?,
+        sorted: Bool,
+        body: @escaping (_ asset: PHAsset, _ year: Int) -> Void
+    ) -> [AnniversaryRange] {
+        let ranges = anniversaryRanges(on: date, calendar: calendar)
+        guard !ranges.isEmpty else { return [] }
+
+        let dates = datePredicate(for: ranges)
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.predicate = dates
+        if sorted {
+            fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        }
+
+        // Resolved here, rather than as a default argument, so the album half
+        // of it can be bounded by the very same date predicate this fetch
+        // uses. Excluding a large album otherwise costs a full walk of that
+        // album on every call — which is what kills the widget.
+        let exclusions = exclusions ?? .current(matching: dates)
+        let result = PHAsset.fetchAssets(with: fetchOptions)
+        result.enumerateObjects { asset, _, _ in
+            guard asset.mediaType == .image || asset.mediaType == .video,
+                  let creationDate = asset.creationDate,
+                  let matchingYear = ranges.first(where: {
+                      creationDate >= $0.start && creationDate < $0.end
+                  })?.year,
+                  !exclusions.excludes(asset) else {
+                return
+            }
+            body(asset, matchingYear)
+        }
+        return ranges
     }
 
     /// The exclusion context a fetch on `date` builds for itself.
@@ -182,32 +226,15 @@ nonisolated enum MemoryLibrary {
         maxPerYear: Int? = nil
     ) -> [YearGroup] {
         let currentYear = MemoryWindow.anniversaryCalendar(calendar).component(.year, from: date)
-        let ranges = anniversaryRanges(on: date, calendar: calendar)
-        guard !ranges.isEmpty else { return [] }
-
-        let dates = datePredicate(for: ranges)
-        let fetchOptions = PHFetchOptions()
-        fetchOptions.predicate = dates
-        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-
-        // Resolved here, rather than as a default argument, so the album
-        // half of it can be bounded by the very same date predicate this
-        // fetch uses. Excluding a large album otherwise costs a full walk of
-        // that album on every call — which is what kills the widget.
-        let exclusions = exclusions ?? .current(matching: dates)
-        let result = PHAsset.fetchAssets(with: fetchOptions)
         var assetsByYear: [Int: [PHAsset]] = [:]
-        result.enumerateObjects { asset, _, _ in
-            guard asset.mediaType == .image || asset.mediaType == .video,
-                  let creationDate = asset.creationDate,
-                  let matchingYear = ranges.first(where: {
-                      creationDate >= $0.start && creationDate < $0.end
-                  })?.year,
-                  !exclusions.excludes(asset) else {
-                return
-            }
-            if let maxPerYear, assetsByYear[matchingYear]?.count ?? 0 >= maxPerYear { return }
-            assetsByYear[matchingYear, default: []].append(asset)
+        let ranges = enumerateMemories(
+            on: date,
+            calendar: calendar,
+            exclusions: exclusions,
+            sorted: true
+        ) { asset, year in
+            if let maxPerYear, assetsByYear[year]?.count ?? 0 >= maxPerYear { return }
+            assetsByYear[year, default: []].append(asset)
         }
 
         return ranges.compactMap { item in
@@ -221,49 +248,32 @@ nonisolated enum MemoryLibrary {
         }
     }
 
-    /// Number of memories on `date`, without building any of them.
+    /// Number of memories on `date`.
     ///
-    /// This used to call `yearGroups(on:)` and sum the arrays it returned,
-    /// which meant materialising a `PHAsset` for every match and then throwing
-    /// them all away. `NotificationManager` calls this once per day for the
-    /// next 60 days on every schedule, so on a large library that was tens of
-    /// thousands of wasted object allocations per refresh.
+    /// `NotificationManager` calls this once per day for the next 60 days on
+    /// every schedule refresh, so it must not be expensive. It is not: the
+    /// date predicate goes to Photos, and what survives it is the handful of
+    /// photos taken on one calendar date across the lookback years, not the
+    /// library. That is what ended the scan storm, and it still holds.
     ///
-    /// `PHFetchResult.count` answers from the fetch itself and never
-    /// materialises a row. The media-type filter moves into the predicate so
-    /// the result stays identical to what `yearGroups` would have counted.
+    /// What it no longer does is answer from `PHFetchResult.count` behind a
+    /// predicate of its own. Counting without looking meant counting by a
+    /// different rule than `yearGroups` displayed by, and the two drifted
+    /// apart by one. Walking the same small result the same way costs a few
+    /// dozen asset materialisations per day and cannot drift at all.
     static func count(
         on date: Date,
         calendar: Calendar = .current,
         exclusions: MemoryExclusions.Context? = nil
     ) -> Int {
-        let ranges = anniversaryRanges(on: date, calendar: calendar)
-        guard !ranges.isEmpty else { return 0 }
-
-        let dates = datePredicate(for: ranges)
-        let fetchOptions = PHFetchOptions()
-        fetchOptions.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-            dates,
-            mediaTypePredicate()
-        ])
-        let result = PHAsset.fetchAssets(with: fetchOptions)
-        let exclusions = exclusions ?? .current(matching: dates)
-
-        // No exclusions is the common case, and it keeps the fast path this
-        // was written for: `.count` answers straight from the fetch without
-        // materialising a `PHAsset` for anything. Once an exclusion exists,
-        // answering correctly needs to look at each candidate, but the set
-        // that survives the date predicate is small — a handful of photos
-        // taken on one calendar date across however many years back — so
-        // this is nowhere near the per-day full-library walk that made
-        // `count(on:)` a "scan storm" before.
-        guard !exclusions.isEmpty else { return result.count }
-
         var count = 0
-        result.enumerateObjects { asset, _, _ in
-            if !exclusions.excludes(asset) {
-                count += 1
-            }
+        enumerateMemories(
+            on: date,
+            calendar: calendar,
+            exclusions: exclusions,
+            sorted: false
+        ) { _, _ in
+            count += 1
         }
         return count
     }
