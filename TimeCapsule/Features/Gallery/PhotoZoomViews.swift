@@ -199,6 +199,25 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
     /// second, to hand it the same boolean it already held. The pager's drag
     /// path had this fixed by windowing the `ForEach`; the pinch path kept it.
     private func reportZoomState(_ isZoomed: Bool) {
+        // Deliberately before the early-out below, so this tracks reality even
+        // when the reported boolean has not changed.
+        //
+        // At minimum zoom the content is exactly the size of the scroll view,
+        // so there is nothing to pan — but the pan recogniser was still live,
+        // and `bounces` let it rubber-band the photo under the finger. The
+        // pager's own drag needs 15 points before it activates, so every
+        // photo-to-photo swipe began with the image sliding a little and then
+        // snapping back as the pager took over. Measured against a screen
+        // recording, that snap was a single frame worth up to a third of the
+        // screen width, and it is the whole reason swiping between two photos
+        // felt worse than swiping from a video, which has no scroll view.
+        //
+        // The recogniser is disabled rather than `isScrollEnabled` set false:
+        // that property also stops the scroll view accepting touches, which
+        // would take the single-tap chrome toggle, the double-tap zoom and
+        // pinch-to-zoom with it. This turns off panning and nothing else.
+        panGestureRecognizer.isEnabled = isZoomed
+
         guard lastReportedZoomState != isZoomed else { return }
         lastReportedZoomState = isZoomed
         guard let onZoomStateChange else { return }
@@ -231,6 +250,9 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         decelerationRate = .fast
         delaysContentTouches = false
         canCancelContentTouches = true
+        // Starts unzoomed, so panning starts off. `reportZoomState` owns it
+        // from here.
+        panGestureRecognizer.isEnabled = false
         maximumZoomScale = 4
         minimumZoomScale = 1
         contentInsetAdjustmentBehavior = .never
