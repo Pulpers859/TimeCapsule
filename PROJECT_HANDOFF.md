@@ -228,6 +228,47 @@ The agent should confirm:
   - Windows can validate Swift syntax and toolchain behavior here, but not real iPhone runtime behavior for SwiftUI, Photos, AVKit, or local notifications
 - Runtime environments that matter: `iOS simulator`, `iPhone device`, `Windows Swift toolchain sanity check`
 
+## Open Polish Items (not bugs, not done)
+
+### Full-screen paging still does not feel like Photos
+
+Status: improved, still not right. The user has seen it and asked to move on
+— pick this up when there is appetite, not before.
+
+What has already been done, so nobody repeats it:
+
+- The activation slop is subtracted, so the page no longer teleports 15 points
+  when the drag registers.
+- The settle is one spring (`FullScreenPhotoView.pageAnimation`, currently
+  response 0.48 / damping 0.88), **not** scaled by velocity. Scaling it by
+  velocity was tried and was wrong: measured frame by frame, Photos'
+  deceleration is very nearly the same length however hard the flick was.
+- Edge resistance uses the UIScrollView rubber-band curve rather than a flat
+  30%.
+- `ZoomingImageScrollView` disables its pan recogniser when not zoomed. Before
+  that, a photo rubber-banded under the finger and snapped back as the pager
+  took over, which is why photo-to-photo felt worse than video-to-photo.
+
+How to work on it, because this is the useful part: **measure, do not guess.**
+Screen recordings can be read frame by frame in this container. There is no
+ffmpeg installed, but `pip install imageio-ffmpeg` provides one. Extract at
+60fps, crop to the photo area, scale to 240px wide, grayscale, raw; then
+cross-correlate each frame's column profile against the previous frame's to
+get a per-frame horizontal shift. A swipe is a run of non-zero shift; the
+speed profile over that run is what to compare against a recording of Apple's
+Photos. That is how the velocity-scaling mistake and the scroll-view bounce
+were both found, and both were invisible from reading the code.
+
+Reference numbers from Apple's Photos, measured this way: peak never above
+about 15 px/frame at 240px wide, and 0.53-0.73s per swipe end to end.
+
+Published data that exists (see the session where this was researched):
+`UIScrollView.decelerationRate` is documented (`.normal` 0.998, `.fast` 0.99,
+a per-millisecond velocity multiplier), and SwiftUI's `.smooth` / `.snappy` /
+`.bouncy` presets are stated by Apple to be based on spring values used in
+iOS. Nothing is published about the paging animation itself, or about
+Photos specifically. `.smooth` is the most defensible untried option.
+
 ## Git / Release Notes
 - Preferred everyday flow:
   - `git st`
