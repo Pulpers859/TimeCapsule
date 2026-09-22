@@ -1,5 +1,6 @@
 import Photos
 import SwiftUI
+import UIKit
 
 /// Everything else from the day a memory was taken.
 ///
@@ -30,7 +31,7 @@ struct DayContextView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let contents, !contents.assets.isEmpty {
+                if let contents, contents.assets.count > 1 {
                     grid(contents)
                 } else if isLoading {
                     ProgressView()
@@ -47,11 +48,15 @@ struct DayContextView: View {
                 }
             }
         }
-        // Keyed on the anchor's identity, not on the view appearing: if the
-        // sheet is ever reused for a different memory this reloads rather
-        // than showing the previous day's photos under the new day's title.
+        // Keyed on the anchor's identity rather than on the view appearing.
+        // `.sheet(item:)` builds a fresh view per presentation so this fires
+        // once in practice; the key is what makes that true by construction
+        // rather than by luck.
         .task(id: anchor.localIdentifier) {
             isLoading = true
+            // Cleared, so a re-key cannot leave the previous day's grid on
+            // screen under the new day's title for the length of the load.
+            contents = nil
             accessIsLimited = PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited
             // Everything below is read from the value that comes back, never
             // from state captured before the await — `.task(id:)` holds the
@@ -84,9 +89,17 @@ struct DayContextView: View {
 
                 footer(contents)
             }
-            .onAppear {
-                // Opens where the user already was, rather than at 7am on a
-                // day they were looking at the evening of.
+            // Opens where the user already was, rather than at 7am on a day
+            // they were looking at the evening of.
+            //
+            // Not `.onAppear`: that fires before a `LazyVGrid` has built the
+            // target row, and `scrollTo` for an id that does not exist yet is
+            // silently dropped — which on a long day is the common case, not
+            // the edge case. One yield past the layout pass that follows
+            // `contents` being assigned is enough.
+            .task(id: contents.assets.count) {
+                await Task.yield()
+                guard !Task.isCancelled else { return }
                 proxy.scrollTo(anchor.localIdentifier, anchor: .center)
             }
         }
@@ -144,8 +157,12 @@ private struct DayTile: View {
     @State private var image: UIImage?
 
     var body: some View {
-        Color(.secondarySystemBackground)
-            .aspectRatio(1, contentMode: .fill)
+        // A `Rectangle` with an aspect ratio, matching `MemoryTile`: a `Color`
+        // has no ideal size, so it cannot give the cell a definite square
+        // before the image lands.
+        Rectangle()
+            .fill(Color(.secondarySystemBackground))
+            .aspectRatio(1, contentMode: .fit)
             .overlay {
                 if let image {
                     Image(uiImage: image)

@@ -235,6 +235,24 @@ nonisolated func resolvedExclusionContext() async -> MemoryExclusions.Context {
 /// cached in `@State` because SwiftUI re-evaluates `body` on every local
 /// state change — the confirmation banner appearing is one — and a computed
 /// property would re-run both fetches for each of those.
+@concurrent
+nonisolated func albumsContaining(_ asset: PHAsset) async -> [PHAssetCollection] {
+    let excludedSubtypes: Set<PHAssetCollectionSubtype> = [
+        .smartAlbumUserLibrary,
+        .smartAlbumAllHidden
+    ]
+    var results: [PHAssetCollection] = []
+    for type: PHAssetCollectionType in [.album, .smartAlbum] {
+        PHAssetCollection.fetchAssetCollectionsContaining(asset, with: type, options: nil)
+            .enumerateObjects { collection, _, _ in
+                guard !excludedSubtypes.contains(collection.assetCollectionSubtype),
+                      let title = collection.localizedTitle, !title.isEmpty else { return }
+                results.append(collection)
+            }
+    }
+    return results
+}
+
 /// The rest of the day a memory was taken on, off the main actor.
 ///
 /// `@concurrent` is load-bearing here, not decoration. `DayContents.onDay`
@@ -257,23 +275,6 @@ nonisolated func loadDayApproximateCount(containing date: Date) async -> Int {
     DayContents.approximateCount(containing: date)
 }
 
-@concurrent
-nonisolated func albumsContaining(_ asset: PHAsset) async -> [PHAssetCollection] {
-    let excludedSubtypes: Set<PHAssetCollectionSubtype> = [
-        .smartAlbumUserLibrary,
-        .smartAlbumAllHidden
-    ]
-    var results: [PHAssetCollection] = []
-    for type: PHAssetCollectionType in [.album, .smartAlbum] {
-        PHAssetCollection.fetchAssetCollectionsContaining(asset, with: type, options: nil)
-            .enumerateObjects { collection, _, _ in
-                guard !excludedSubtypes.contains(collection.assetCollectionSubtype),
-                      let title = collection.localizedTitle, !title.isEmpty else { return }
-                results.append(collection)
-            }
-    }
-    return results
-}
 
 /// Whether today holds memories that only an exclusion is keeping hidden.
 ///

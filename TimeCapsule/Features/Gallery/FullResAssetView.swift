@@ -173,12 +173,23 @@ struct FullResAssetView: View {
                 didFail = false
                 if isCurrent {
                     image = nil
+                    // Released *before* the load, like the photo branch below
+                    // and for the same reason. A page is reused for a
+                    // different asset at the same index whenever the pager's
+                    // contents change under it — a delete that leaves
+                    // `currentIndex` alone, and now every entry into day mode,
+                    // where the tapped item's index in the day commonly lands
+                    // within one of the memory's. Released afterwards, the
+                    // *previous* video stayed alive and `applyPlaybackState()`
+                    // would happily play it over the incoming page for as long
+                    // as the replacement took to arrive, which for an iCloud
+                    // original is a download.
+                    releasePlayer()
                     let loadedPlayer = await loadPlayer(from: asset)
                     guard !Task.isCancelled else {
                         discard(loadedPlayer)
                         return
                     }
-                    releasePlayer()
                     player = loadedPlayer
                     didFail = loadedPlayer == nil
                     progressObserver.attach(

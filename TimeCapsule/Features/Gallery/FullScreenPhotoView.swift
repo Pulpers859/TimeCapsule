@@ -58,6 +58,9 @@ struct FullScreenPhotoView: View {
     /// Roughly how many items that day holds. Gates whether the control is
     /// offered; never displayed — see `DayContents.approximateCount`.
     @State private var dayItemCount = 0
+    /// The mode the paging haptic last fired in, so a level change is not
+    /// mistaken for a swipe.
+    @State private var lastHapticSource: PagerSource = .memories
     @State private var shareTask: Task<Void, Never>? = nil
     @State private var isDeleting = false
     @State private var isPreparingShare = false
@@ -67,6 +70,12 @@ struct FullScreenPhotoView: View {
         case day
 
         var isDay: Bool { self == .day }
+    }
+
+    /// What the day probe watches: which memory is on screen *and* which mode
+    /// the pager is in.
+    private var dayProbeKey: String {
+        "\(pagerSource.isDay ? "day" : "memories")#\(currentAssetIdentifier ?? "-")"
     }
 
     /// Indices of the pages that are actually built: the current one and its
@@ -352,6 +361,7 @@ struct FullScreenPhotoView: View {
             MemoryInfoSheet(
                 asset: wrapper.asset,
                 locationName: locationName,
+                allowsExclusions: !pagerSource.isDay,
                 onExcludePhoto: excludeCurrentPhoto,
                 onExcludeAlbum: excludeAlbum,
                 onExcludePlace: excludePlace
@@ -396,7 +406,16 @@ struct FullScreenPhotoView: View {
         // task started, so a value read afterwards would belong to whichever
         // memory was on screen when the user tapped, not to the one they have
         // swiped to since.
-        .task(id: currentAssetIdentifier) {
+        // Keyed on the mode as well as the asset.
+        //
+        // Keyed on the asset alone, the most natural interaction in the whole
+        // feature broke it: the anchor tile is highlighted and scrolled to, so
+        // people tap the photo they were already on. That leaves
+        // `currentAssetIdentifier` unchanged through both the entry and the
+        // exit, so the probe never re-ran, `dayItemCount` stayed at the zero
+        // `enterDay` set, and the control vanished for that memory with no way
+        // back to it but swiping away and returning.
+        .task(id: dayProbeKey) {
             dayItemCount = 0
             guard !pagerSource.isDay,
                   visibleAssets.indices.contains(currentIndex),
@@ -415,6 +434,13 @@ struct FullScreenPhotoView: View {
         // than to the page: a delete that shifts the index should still feel
         // like the deck moved.
         .onChange(of: currentIndex) { _, _ in
+            // Not when the index jumped because the pager changed level:
+            // entering or leaving a day moves it by a hundred and is not a
+            // page turn.
+            guard pagerSource == lastHapticSource else {
+                lastHapticSource = pagerSource
+                return
+            }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
         .onDisappear {
@@ -812,9 +838,7 @@ struct FullScreenPhotoView: View {
                             // would skip the level they came from.
                             returnToMemories()
                         } else {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                                dismiss()
-                            }
+                            scheduleDismissIfStillEmpty()
                         }
                     }
                 } else {
@@ -908,9 +932,7 @@ struct FullScreenPhotoView: View {
                 NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
 
                 if filtered.isEmpty {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                        dismiss()
-                    }
+                    scheduleDismissIfStillEmpty()
                 }
             }
         }
@@ -942,6 +964,22 @@ struct FullScreenPhotoView: View {
         // it — never reaches `onEnded`, and a stale value would offset the
         // next swipe by however far the abandoned one had travelled.
         dragActivationSlop = nil
+    }
+
+    /// Close the viewer shortly, but only if it is still empty when the time
+    /// comes.
+    ///
+    /// The delay exists so "All memories removed" is readable rather than a
+    /// flash. Unguarded, it was a decision made on stale information: an
+    /// exclusion resolving against a large album takes seconds, so the user
+    /// could open a day and be paging through two hundred photos when a
+    /// dismiss scheduled before any of that finally fired, closing the viewer
+    /// for no reason they could connect to anything.
+    private func scheduleDismissIfStillEmpty() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            guard visibleAssets.isEmpty else { return }
+            dismiss()
+        }
     }
 
     // MARK: - Day mode
@@ -1004,7 +1042,7 @@ struct FullScreenPhotoView: View {
             visibleAssets = []
             currentIndex = 0
             memoriesAnchor = nil
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { dismiss() }
+            scheduleDismissIfStillEmpty()
             return
         }
 
@@ -1012,7 +1050,10 @@ struct FullScreenPhotoView: View {
             .flatMap { identifier in
                 restored.firstIndex { $0.localIdentifier == identifier }
             }
-            ?? min(max(currentIndex, 0), restored.count - 1)
+            // Not the current index: that is a position in a 250-item day and
+            // means nothing in the memories. Clamping it would land the user
+            // at the end of their memories for no reason they could follow.
+            ?? 0
 
         visibleAssets = restored
         currentIndex = index
@@ -1084,6 +1125,16 @@ private struct ChromeButton: View {
 struct MemoryInfoSheet: View {
     let asset: PHAsset
     let locationName: String?
+    /// Hidden in day mode.
+    ///
+    /// "Feature Less Often" governs which memories Attic surfaces, and a day
+    /// is deliberately unfiltered — so excluding from here changed nothing
+    /// visible and the photo stayed exactly where it was. There is no way to
+    /// tell that apart from a failure, so people do it again. Worse, an
+    /// exclusion that emptied the memories behind the day meant the back
+    /// arrow later dropped them straight out of the viewer, as though one tap
+    /// had destroyed everything.
+    let allowsExclusions: Bool
     let onExcludePhoto: () -> Void
     let onExcludeAlbum: (PHAssetCollection) -> Void
     let onExcludePlace: (CLLocationCoordinate2D, String) -> Void
@@ -1127,12 +1178,14 @@ struct MemoryInfoSheet: View {
     init(
         asset: PHAsset,
         locationName: String?,
+        allowsExclusions: Bool = true,
         onExcludePhoto: @escaping () -> Void,
         onExcludeAlbum: @escaping (PHAssetCollection) -> Void,
         onExcludePlace: @escaping (CLLocationCoordinate2D, String) -> Void
     ) {
         self.asset = asset
         self.locationName = locationName
+        self.allowsExclusions = allowsExclusions
         self.onExcludePhoto = onExcludePhoto
         self.onExcludeAlbum = onExcludeAlbum
         self.onExcludePlace = onExcludePlace
@@ -1218,7 +1271,9 @@ struct MemoryInfoSheet: View {
                         .foregroundStyle(.secondary)
                 }
 
-                featureLessOftenSection
+                if allowsExclusions {
+                    featureLessOftenSection
+                }
             }
             .padding(20)
         }
