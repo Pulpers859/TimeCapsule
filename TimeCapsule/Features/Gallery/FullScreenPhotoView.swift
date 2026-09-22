@@ -227,6 +227,29 @@ struct FullScreenPhotoView: View {
                                     action: { dismiss() }
                                 )
 
+                                // Always the grid, never a back arrow, and the
+                                // same control in both modes.
+                                //
+                                // It used to become a "back to the memories"
+                                // arrow once inside a day, which put two
+                                // different retreats on screen — that arrow and
+                                // ✕ — and made the one the user had just come
+                                // through, the grid, unreachable. The grid is
+                                // the level people actually want to return to;
+                                // leaving altogether is what ✕ is for, and the
+                                // sheet's own Done handles backing out of the
+                                // grid itself.
+                                if pagerSource.isDay || dayItemCount > 1 {
+                                    ChromeButton(
+                                        systemImage: "square.grid.2x2",
+                                        accessibilityLabel: pagerSource.isDay
+                                            ? "Back to that day"
+                                            : "See everything from that day",
+                                        action: openDay
+                                    )
+                                    .disabled(isDeleting || isPreparingShare)
+                                }
+
                                 Spacer(minLength: 6)
 
                                 ChromeButton(
@@ -287,31 +310,6 @@ struct FullScreenPhotoView: View {
                                 .disabled(isDeleting || isPreparingShare)
 
                                 Spacer(minLength: 6)
-
-                                // The slot the removed slideshow button left
-                                // behind. The control that goes into the day
-                                // is replaced by the control that comes back
-                                // out of it, so the ✕ keeps exactly one
-                                // meaning — leave the viewer — at both levels.
-                                if pagerSource.isDay {
-                                    ChromeButton(
-                                        systemImage: "chevron.backward",
-                                        accessibilityLabel: "Back to this day's memories",
-                                        action: returnToMemories
-                                    )
-                                    .disabled(isDeleting || isPreparingShare)
-                                } else if dayItemCount > 1 {
-                                    // Absent rather than disabled when there is
-                                    // nothing else from that day: a control
-                                    // that appears and then does nothing is
-                                    // worse than one that was never there.
-                                    ChromeButton(
-                                        systemImage: "square.grid.2x2",
-                                        accessibilityLabel: "See everything from that day",
-                                        action: openDay
-                                    )
-                                    .disabled(isDeleting || isPreparingShare)
-                                }
                             }
                             // The button is layered above the counter so it
                             // still wins hit testing if the capsule ever grows
@@ -1023,6 +1021,11 @@ struct FullScreenPhotoView: View {
     }
 
     /// Back to the memories, at the one the user left from.
+    ///
+    /// No longer user-triggered: the control in the chrome always reopens the
+    /// grid, and leaving the viewer is ✕. This is reached only when a day is
+    /// emptied out from under the pager, where the alternative is showing an
+    /// empty day with nothing on screen to act on.
     ///
     /// Restores the snapshot rather than re-deriving the memories, because
     /// re-deriving cannot see what happened while the day was open. The
