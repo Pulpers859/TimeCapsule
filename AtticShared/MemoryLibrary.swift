@@ -168,7 +168,7 @@ nonisolated enum MemoryLibrary {
         let exclusions = exclusions ?? .current(matching: dates)
         let result = PHAsset.fetchAssets(with: fetchOptions)
         result.enumerateObjects { asset, _, _ in
-            guard asset.mediaType == .image || asset.mediaType == .video,
+            guard AssetEligibility.isBrowsable(asset),
                   let creationDate = asset.creationDate,
                   let matchingYear = ranges.first(where: {
                       creationDate >= $0.start && creationDate < $0.end

@@ -31,7 +31,9 @@ let package = Package(
             // until it is named below, which is the moment to notice.
             exclude: [
                 "MemoryLibrary.swift",
-                "MemoryExclusions.swift"
+                "MemoryExclusions.swift",
+                "AssetEligibility.swift",
+                "DayContents.swift"
             ]
         ),
         .testTarget(

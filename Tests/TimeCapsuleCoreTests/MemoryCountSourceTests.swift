@@ -80,9 +80,13 @@ final class MemoryCountSourceTests: XCTestCase {
         )
     }
 
-    /// The media-type test belongs in the shared function, where both
-    /// callers get it. It used to sit in a predicate only `count` applied,
+    /// The media-type test belongs in the shared enumeration, where both
+    /// counters get it. It used to sit in a predicate only `count` applied,
     /// which is the specific divergence that produced the off-by-one.
+    ///
+    /// It now lives one step further out still, in `AssetEligibility`, so the
+    /// day browser decides "can Attic show this" by the same rule. What must
+    /// not come back is a *second* rule inside this file.
     func testMediaTypeFilterIsNotBackInAPredicate() throws {
         let source = try librarySource()
         XCTAssertFalse(
@@ -93,10 +97,18 @@ final class MemoryCountSourceTests: XCTestCase {
             is what made the widget's count and the gallery's count disagree.
             """
         )
+        XCTAssertFalse(
+            source.contains("mediaType =="),
+            """
+            MemoryLibrary.swift tests mediaType directly. That rule lives in \
+            AssetEligibility.isBrowsable so the memory fetch and the day \
+            fetch cannot drift apart on what Attic is able to display.
+            """
+        )
         XCTAssertEqual(
-            source.components(separatedBy: "asset.mediaType == .image").count - 1,
+            source.components(separatedBy: "AssetEligibility.isBrowsable(").count - 1,
             1,
-            "The media-type test should appear once, in enumerateMemories."
+            "Membership should consult the shared eligibility rule exactly once."
         )
     }
 }
