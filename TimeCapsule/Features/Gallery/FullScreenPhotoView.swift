@@ -309,13 +309,24 @@ struct FullScreenPhotoView: View {
             guard !Task.isCancelled else { return }
             locationName = resolved
         }
+        // Keyed on which memory is on screen, not on its position.
+        //
+        // The index is the wrong key in both directions. A delete can leave
+        // the index untouched while a different photo slides into it, and
+        // nothing reset — which is how a zoomed photo could leave the page
+        // gesture disabled. A delete further back changes the index while the
+        // photo on screen does not, and everything reset for no reason.
+        //
+        // It is also the key that keeps working when the pager's contents are
+        // replaced rather than shrunk.
+        .onChange(of: currentAssetIdentifier) { _, _ in
+            resetPerPageState()
+        }
+        // Paging feedback, which genuinely does belong to the movement rather
+        // than to the page: a delete that shifts the index should still feel
+        // like the deck moved.
         .onChange(of: currentIndex) { _, _ in
-            isCurrentAssetZoomed = false
-            isVideoScrubbing = false
-            shareTask?.cancel()
-            isPreparingShare = false
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            locationName = nil
         }
         .onDisappear {
             shareTask?.cancel()
@@ -569,10 +580,10 @@ struct FullScreenPhotoView: View {
     /// stopping its spinner and re-enabling the button).
     ///
     /// So it is cleared only when this task still owns the flag. Every site
-    /// that cancels the task resets the flag itself — paging at
-    /// `onChange(of: currentIndex)` and `deleteCurrentPhoto()` both do, and
-    /// `onDisappear` is tearing the view down — so a cancelled task has nothing
-    /// left to clean up here.
+    /// that cancels the task resets the flag itself — `resetPerPageState()`
+    /// does, and so does `deleteCurrentPhoto()` before it starts, and
+    /// `onDisappear` is tearing the view down — so a cancelled task has
+    /// nothing left to clean up here.
     private func finishShare(
         for asset: PHAsset,
         caption: String,
@@ -638,8 +649,6 @@ struct FullScreenPhotoView: View {
                 if success {
                     withAnimation {
                         visibleAssets.removeAll { $0.localIdentifier == identifier }
-                        isCurrentAssetZoomed = false
-                        isVideoScrubbing = false
                         if let nextIndex {
                             // Clamped, because `nextIndex` was computed from
                             // the list as it stood before this delete was
@@ -650,7 +659,6 @@ struct FullScreenPhotoView: View {
                             currentIndex = min(max(nextIndex, 0), max(visibleAssets.count - 1, 0))
                         }
                     }
-                    locationName = nil
 
                     NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
 
@@ -724,7 +732,6 @@ struct FullScreenPhotoView: View {
 
                 withAnimation {
                     visibleAssets = filtered
-                    isCurrentAssetZoomed = false
                     if filtered.isEmpty {
                         currentIndex = 0
                     } else if let currentIdentifier,
@@ -734,7 +741,6 @@ struct FullScreenPhotoView: View {
                         currentIndex = min(max(currentIndex, 0), filtered.count - 1)
                     }
                 }
-                locationName = nil
                 NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
 
                 if filtered.isEmpty {
@@ -744,6 +750,29 @@ struct FullScreenPhotoView: View {
                 }
             }
         }
+    }
+
+    /// Everything that belongs to the memory on screen rather than to the
+    /// viewer.
+    ///
+    /// Four places used to reset some of this by hand, and the differences
+    /// between them were not deliberate. The exclusion path cleared the zoom
+    /// flag but not the scrubbing one — and `isVideoScrubbing` left true
+    /// disables the page gesture (see `isEnabled:` where `pageDragGesture` is
+    /// attached), so excluding a video while its scrubber was held left the
+    /// pager unswipeable with no way to recover but closing the viewer. It
+    /// also never cancelled an in-flight share, so the spinner could keep
+    /// running for a memory that had just been removed.
+    ///
+    /// One function, called from one place, keyed on the identity of what is
+    /// displayed. A fifth site cannot forget a fifth flag, because there are
+    /// no other sites.
+    private func resetPerPageState() {
+        isCurrentAssetZoomed = false
+        isVideoScrubbing = false
+        shareTask?.cancel()
+        isPreparingShare = false
+        locationName = nil
     }
 
     private func moveToPreviousMemory() {
