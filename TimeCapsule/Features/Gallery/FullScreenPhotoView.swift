@@ -20,6 +20,15 @@ struct FullScreenPhotoView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var isCurrentAssetZoomed = false
     @State private var isVideoScrubbing = false
+    /// The translation already accumulated when the drag gesture activated.
+    ///
+    /// `DragGesture(minimumDistance: 15)` does not report anything until the
+    /// finger has travelled 15 points, and then reports the *whole*
+    /// translation including those 15 — so the photo jumped sideways the
+    /// instant a swipe registered. Subtracting this makes the page start
+    /// moving from exactly where the finger already is, which is most of what
+    /// "snappy versus smooth" actually was.
+    @State private var dragActivationSlop: CGFloat?
     @State private var locationName: String? = nil
     // Captures the asset at the moment info is opened, rather than reading
     // `visibleAssets[currentIndex]` live while the sheet is up. "Feature Less
@@ -151,7 +160,6 @@ struct FullScreenPhotoView: View {
                     .frame(width: pageWidth, height: geo.size.height, alignment: .leading)
                     .offset(x: -CGFloat(currentIndex) * pageWidth + dragOffset)
                     .gesture(pageDragGesture(pageWidth: pageWidth, isEnabled: !isCurrentAssetZoomed && !isVideoScrubbing && !isDeleting))
-                    .animation(.easeOut(duration: 0.25), value: currentIndex)
                 }
             }
 
@@ -455,28 +463,42 @@ struct FullScreenPhotoView: View {
             .onChanged { value in
                 guard isEnabled else { return }
                 guard abs(value.translation.width) > abs(value.translation.height) else {
-                    dragOffset = 0
+                    // Animated, because this can fire mid-drag when a swipe
+                    // turns vertical. Assigning zero outright teleported the
+                    // photo back to centre.
+                    if dragOffset != 0 {
+                        withAnimation(Self.pageAnimation) { dragOffset = 0 }
+                    }
                     return
                 }
-                let proposed = value.translation.width
-                if (currentIndex == 0 && proposed > 0) ||
-                   (currentIndex == visibleAssets.count - 1 && proposed < 0) {
-                    dragOffset = proposed * 0.3
+
+                let slop = dragActivationSlop ?? value.translation.width
+                if dragActivationSlop == nil { dragActivationSlop = slop }
+                let proposed = value.translation.width - slop
+
+                let atFirst = currentIndex == 0 && proposed > 0
+                let atLast = currentIndex == visibleAssets.count - 1 && proposed < 0
+                if atFirst || atLast {
+                    dragOffset = Self.rubberBanded(proposed, limit: pageWidth)
                 } else {
                     dragOffset = proposed
                 }
             }
             .onEnded { value in
+                let slop = dragActivationSlop ?? 0
+                dragActivationSlop = nil
+
                 guard isEnabled else {
                     dragOffset = 0
                     return
                 }
                 guard abs(value.translation.width) > abs(value.translation.height) else {
-                    dragOffset = 0
+                    withAnimation(Self.pageAnimation) { dragOffset = 0 }
                     return
                 }
+
                 let threshold = pageWidth * 0.2
-                let predicted = value.predictedEndTranslation.width
+                let predicted = value.predictedEndTranslation.width - slop
                 var newIndex = currentIndex
 
                 if predicted < -threshold && currentIndex < visibleAssets.count - 1 {
@@ -485,11 +507,50 @@ struct FullScreenPhotoView: View {
                     newIndex -= 1
                 }
 
-                withAnimation(.easeOut(duration: 0.25)) {
+                withAnimation(Self.settleAnimation(velocity: value.velocity.width, pageWidth: pageWidth)) {
                     currentIndex = newIndex
                     dragOffset = 0
                 }
             }
+    }
+
+    /// How a page settles once the finger lifts.
+    ///
+    /// This used to be `.easeOut(duration: 0.25)`, which is a fixed length
+    /// whatever the hand did: a hard flick and a slow careful drag arrived at
+    /// exactly the same speed, which is what reads as snappy rather than as
+    /// gliding. A spring carries no duration of its own, and scaling its
+    /// response by how fast the finger was moving means a flick lands quickly
+    /// and a gentle push drifts in.
+    ///
+    /// Damped just short of 1 so it never overshoots. A photo that bounces
+    /// past its edge and back looks like a bug rather than like momentum.
+    private static func settleAnimation(velocity: CGFloat, pageWidth: CGFloat) -> Animation {
+        // Pages per second, which is the unit that makes the constants below
+        // mean something on any screen size.
+        let speed = min(abs(velocity) / max(pageWidth, 1), 5)
+        let response = max(0.20, 0.40 - Double(speed) * 0.04)
+        return .spring(response: response, dampingFraction: 0.86, blendDuration: 0.2)
+    }
+
+    /// Used where there is no finger to take a velocity from: the
+    /// accessibility actions, and a page that snaps back after a swipe turns
+    /// vertical.
+    private static let pageAnimation: Animation =
+        .spring(response: 0.36, dampingFraction: 0.86, blendDuration: 0.2)
+
+    /// Resistance at the first and last page.
+    ///
+    /// Was a flat `proposed * 0.3`, which is linear: it resists identically
+    /// at one point of travel and at three hundred, so the edge feels like a
+    /// slow drag rather than like something pulling back. This is the curve
+    /// UIScrollView uses — resistance grows with distance and the offset
+    /// approaches `limit` without ever reaching it.
+    private static func rubberBanded(_ distance: CGFloat, limit: CGFloat) -> CGFloat {
+        guard limit > 0 else { return 0 }
+        let magnitude = abs(distance)
+        let resisted = (1 - (1 / (magnitude * 0.55 / limit + 1))) * limit
+        return distance < 0 ? -resisted : resisted
     }
 
     /// Builds the share payload.
@@ -773,16 +834,21 @@ struct FullScreenPhotoView: View {
         shareTask?.cancel()
         isPreparingShare = false
         locationName = nil
+        // Belt and braces: `onEnded` clears this, but a gesture that is
+        // interrupted rather than ended — a zoom starting mid-swipe disables
+        // it — never reaches `onEnded`, and a stale value would offset the
+        // next swipe by however far the abandoned one had travelled.
+        dragActivationSlop = nil
     }
 
     private func moveToPreviousMemory() {
         guard !isDeleting, currentIndex > 0 else { return }
-        currentIndex -= 1
+        withAnimation(Self.pageAnimation) { currentIndex -= 1 }
     }
 
     private func moveToNextMemory() {
         guard !isDeleting, currentIndex < visibleAssets.count - 1 else { return }
-        currentIndex += 1
+        withAnimation(Self.pageAnimation) { currentIndex += 1 }
     }
 
     private func shareCaption(for asset: PHAsset) -> String {
