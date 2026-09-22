@@ -131,6 +131,78 @@ nonisolated enum MemoryWindow {
         return referenceYear - memoryYear
     }
 
+    /// Half-open bounds of the one logical day that contains `date`.
+    ///
+    /// Deliberately has no `dayWindow` parameter, and that is the whole point
+    /// of it being separate from `range(for:anniversaryYear:)`. `dayWindow` is
+    /// a *recall* setting — how near to today's date still counts as "on this
+    /// day" when looking back at past years. It is not a definition of a day.
+    /// Widening this by it would make "the rest of that day" mean up to seven
+    /// days, and would hand a plainly factual question ("what else did I shoot
+    /// that day") two different answers depending on whether Pro was bought.
+    ///
+    /// `dayStartHour` is the opposite case and *is* honoured: it is the app's
+    /// own declared answer to where a day boundary sits, already applied by
+    /// `logicalDate`, `yearsAgo` and `range`. An evening running to 2am is the
+    /// exact case it exists for, and splitting that night across two days is
+    /// the bug it was added to fix.
+    ///
+    /// Advances by `.day` rather than adding 86,400 seconds so a
+    /// daylight-saving transition does not shift the boundary by an hour, and
+    /// checks the resolved month and day the way `range` does, so 29 February
+    /// is never rolled silently into 1 March.
+    static func dayBounds(
+        containing date: Date,
+        dayStartHour: Int = MemoryWindow.dayStartHour,
+        calendar: Calendar = .current
+    ) -> (start: Date, end: Date)? {
+        let calendar = anniversaryCalendar(calendar)
+        let startHour = max(0, min(dayStartHour, 6))
+
+        // Which logical day this instant belongs to. A photo taken at 01:00
+        // with a 4am day start belongs to the previous evening.
+        let logical = logicalDate(for: date, dayStartHour: startHour, calendar: calendar)
+
+        let year = calendar.component(.year, from: logical)
+        let month = calendar.component(.month, from: logical)
+        let day = calendar.component(.day, from: logical)
+
+        guard let start = calendar.date(from: DateComponents(
+            year: year, month: month, day: day,
+            hour: startHour, minute: 0, second: 0
+        )), calendar.component(.month, from: start) == month,
+            calendar.component(.day, from: start) == day,
+            let end = calendar.date(byAdding: .day, value: 1, to: start) else {
+            return nil
+        }
+        return (start, end)
+    }
+
+    /// A stable identifier for the logical day containing `date`.
+    ///
+    /// Used for view identity and for caching a per-day answer, so it has to
+    /// be the same string for two instants in the same logical day and a
+    /// different one across the boundary. Built from the logical day's own
+    /// components rather than from a formatter, so it does not move with the
+    /// user's locale.
+    static func dayKey(
+        containing date: Date,
+        dayStartHour: Int = MemoryWindow.dayStartHour,
+        calendar: Calendar = .current
+    ) -> String? {
+        let calendar = anniversaryCalendar(calendar)
+        let logical = logicalDate(
+            for: date,
+            dayStartHour: max(0, min(dayStartHour, 6)),
+            calendar: calendar
+        )
+        let parts = calendar.dateComponents([.year, .month, .day], from: logical)
+        guard let year = parts.year, let month = parts.month, let day = parts.day else {
+            return nil
+        }
+        return "\(year)-\(month)-\(day)"
+    }
+
     /// Date range for the anniversary of `referenceDate` in `anniversaryYear`,
     /// widened by the configured window on both sides. `end` is exclusive.
     /// The range begins at `dayStartHour` (not midnight) so photos taken in the

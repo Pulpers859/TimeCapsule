@@ -9,6 +9,161 @@ final class MemoryWindowTests: XCTestCase {
         return calendar
     }
 
+    // MARK: - dayBounds / dayKey
+
+    func testDayBoundsIsMidnightToMidnightByDefault() throws {
+        let noon = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2025, month: 9, day: 21, hour: 12))
+        )
+        let bounds = try XCTUnwrap(
+            MemoryWindow.dayBounds(containing: noon, dayStartHour: 0, calendar: calendar)
+        )
+        XCTAssertEqual(
+            bounds.start,
+            try XCTUnwrap(calendar.date(from: DateComponents(year: 2025, month: 9, day: 21)))
+        )
+        XCTAssertEqual(
+            bounds.end,
+            try XCTUnwrap(calendar.date(from: DateComponents(year: 2025, month: 9, day: 22)))
+        )
+    }
+
+    /// The case the setting exists for: an evening that ran past midnight.
+    func testDayBoundsPutsTheSmallHoursWithThePreviousEvening() throws {
+        let afterMidnight = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2025, month: 9, day: 22, hour: 1, minute: 30))
+        )
+        let bounds = try XCTUnwrap(
+            MemoryWindow.dayBounds(containing: afterMidnight, dayStartHour: 4, calendar: calendar)
+        )
+        // Belongs to the 21st, from 4am, not to the 22nd.
+        XCTAssertEqual(
+            bounds.start,
+            try XCTUnwrap(calendar.date(from: DateComponents(year: 2025, month: 9, day: 21, hour: 4)))
+        )
+        XCTAssertEqual(
+            bounds.end,
+            try XCTUnwrap(calendar.date(from: DateComponents(year: 2025, month: 9, day: 22, hour: 4)))
+        )
+        XCTAssertTrue(bounds.start <= afterMidnight && afterMidnight < bounds.end)
+    }
+
+    /// The whole reason this is not `range(for:anniversaryYear:)`: the Pro
+    /// recall setting must not turn one day into seven.
+    func testDayBoundsIsNeverWidenedByTheMemoryWindow() throws {
+        let noon = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2025, month: 9, day: 21, hour: 12))
+        )
+        let bounds = try XCTUnwrap(
+            MemoryWindow.dayBounds(containing: noon, dayStartHour: 0, calendar: calendar)
+        )
+        let span = calendar.dateComponents([.day], from: bounds.start, to: bounds.end).day
+        XCTAssertEqual(span, 1, "dayBounds must always be exactly one day wide.")
+    }
+
+    /// Adding 86,400 seconds would make this 23 or 25 hours long, and the
+    /// day would silently start an hour early or late.
+    func testDayBoundsSurvivesADaylightSavingTransition() throws {
+        var local = Calendar(identifier: .gregorian)
+        local.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        // 8 March 2026 is a US spring-forward day: it has 23 hours.
+        let duringTheDay = try XCTUnwrap(
+            local.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 12))
+        )
+        let bounds = try XCTUnwrap(
+            MemoryWindow.dayBounds(containing: duringTheDay, dayStartHour: 0, calendar: local)
+        )
+        XCTAssertEqual(
+            bounds.start,
+            try XCTUnwrap(local.date(from: DateComponents(year: 2026, month: 3, day: 8)))
+        )
+        XCTAssertEqual(
+            bounds.end,
+            try XCTUnwrap(local.date(from: DateComponents(year: 2026, month: 3, day: 9))),
+            "The day must end at the next local midnight, not 24 hours later."
+        )
+        XCTAssertEqual(
+            local.dateComponents([.hour], from: bounds.start, to: bounds.end).hour,
+            23,
+            "A spring-forward day is 23 hours; anything else means seconds were added."
+        )
+    }
+
+    func testDayBoundsHandlesTheLeapDayItself() throws {
+        let leapDay = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2024, month: 2, day: 29, hour: 9))
+        )
+        let bounds = try XCTUnwrap(
+            MemoryWindow.dayBounds(containing: leapDay, dayStartHour: 0, calendar: calendar)
+        )
+        XCTAssertEqual(calendar.component(.day, from: bounds.start), 29)
+        XCTAssertEqual(calendar.component(.month, from: bounds.end), 3)
+        XCTAssertEqual(calendar.component(.day, from: bounds.end), 1)
+    }
+
+    func testDayBoundsCrossesAYearBoundary() throws {
+        let newYearsEve = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2025, month: 12, day: 31, hour: 22))
+        )
+        let bounds = try XCTUnwrap(
+            MemoryWindow.dayBounds(containing: newYearsEve, dayStartHour: 0, calendar: calendar)
+        )
+        XCTAssertEqual(calendar.component(.year, from: bounds.end), 2026)
+        XCTAssertEqual(calendar.component(.day, from: bounds.end), 1)
+    }
+
+    /// Two instants in the same logical day must key the same, and the
+    /// boundary must actually separate them.
+    func testDayKeyGroupsALateNightWithTheEveningItBeganIn() throws {
+        let evening = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2025, month: 9, day: 21, hour: 23))
+        )
+        let afterMidnight = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2025, month: 9, day: 22, hour: 1))
+        )
+        let morningAfter = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2025, month: 9, day: 22, hour: 9))
+        )
+
+        let eveningKey = MemoryWindow.dayKey(containing: evening, dayStartHour: 4, calendar: calendar)
+        XCTAssertEqual(
+            eveningKey,
+            MemoryWindow.dayKey(containing: afterMidnight, dayStartHour: 4, calendar: calendar)
+        )
+        XCTAssertNotEqual(
+            eveningKey,
+            MemoryWindow.dayKey(containing: morningAfter, dayStartHour: 4, calendar: calendar)
+        )
+    }
+
+    func testDayKeyAndDayBoundsAgreeOnWhichDayItIs() throws {
+        let afterMidnight = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2025, month: 9, day: 22, hour: 2))
+        )
+        let bounds = try XCTUnwrap(
+            MemoryWindow.dayBounds(containing: afterMidnight, dayStartHour: 4, calendar: calendar)
+        )
+        XCTAssertEqual(
+            MemoryWindow.dayKey(containing: afterMidnight, dayStartHour: 4, calendar: calendar),
+            MemoryWindow.dayKey(containing: bounds.start, dayStartHour: 4, calendar: calendar)
+        )
+    }
+
+    func testDayBoundsClampsCorruptDayStartHour() throws {
+        let noon = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2025, month: 9, day: 21, hour: 12))
+        )
+        let negative = try XCTUnwrap(
+            MemoryWindow.dayBounds(containing: noon, dayStartHour: -5, calendar: calendar)
+        )
+        XCTAssertEqual(calendar.component(.hour, from: negative.start), 0)
+
+        let huge = try XCTUnwrap(
+            MemoryWindow.dayBounds(containing: noon, dayStartHour: 99, calendar: calendar)
+        )
+        XCTAssertEqual(calendar.component(.hour, from: huge.start), 6)
+    }
+
     func testClampsCorruptPreferenceValues() {
         XCTAssertEqual(MemoryWindow.clampedDayWindow(-1), 0)
         XCTAssertEqual(MemoryWindow.clampedDayWindow(0), 0)
