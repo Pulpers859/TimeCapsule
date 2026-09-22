@@ -16,6 +16,7 @@ final class ViewerOverlaysTests: XCTestCase {
             deleteFailureAlert: false,
             shareFailureAlert: false,
             infoSheet: false,
+            daySheet: false,
             preparingShare: false,
             deleting: false
         )

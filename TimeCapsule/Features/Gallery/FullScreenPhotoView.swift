@@ -38,10 +38,37 @@ struct FullScreenPhotoView: View {
     // the ~900ms before it dismisses itself. Item-based presentation is what
     // `shareItem` and `recapShareItem` already use for the same reason.
     @State private var infoAsset: IdentifiableAsset? = nil
+    /// The memory whose day is being browsed. Item-based for the same reason
+    /// as `infoAsset`: the pager must not drift out from under the sheet.
+    @State private var dayRequest: IdentifiableAsset? = nil
+    /// Whether the pager is showing memories or one whole day.
+    ///
+    /// Day mode swaps the pager's contents rather than presenting a second
+    /// viewer over the first. Two live viewers would mean two `AVPlayer`s and
+    /// two claims on the shared audio session, and a SwiftUI view whose body
+    /// can contain itself needs `AnyView` erasure or a duplicated pager.
+    @State private var pagerSource: PagerSource = .memories
+    /// The memories the pager held before day mode, so returning does not
+    /// depend on re-deriving them. Kept filtered by every removal, so a photo
+    /// deleted while browsing the day cannot come back on the way out.
+    @State private var memoriesSnapshot: [PHAsset] = []
+    /// Which memory to land on when leaving day mode. An identifier, not an
+    /// index: indices shift under deletes.
+    @State private var memoriesAnchor: String? = nil
+    /// Roughly how many items that day holds. Gates whether the control is
+    /// offered; never displayed — see `DayContents.approximateCount`.
+    @State private var dayItemCount = 0
     @State private var shareTask: Task<Void, Never>? = nil
     @State private var isDeleting = false
     @State private var isPreparingShare = false
     @State private var shareError: String? = nil
+    private enum PagerSource: Equatable {
+        case memories
+        case day
+
+        var isDay: Bool { self == .day }
+    }
+
     /// Indices of the pages that are actually built: the current one and its
     /// immediate neighbours, so a swipe has somewhere to swipe to.
     private var pageWindow: [Int] {
@@ -76,6 +103,7 @@ struct FullScreenPhotoView: View {
             deleteFailureAlert: deleteError != nil,
             shareFailureAlert: shareError != nil,
             infoSheet: infoAsset != nil,
+            daySheet: dayRequest != nil,
             preparingShare: isPreparingShare,
             deleting: isDeleting
         )
@@ -250,6 +278,31 @@ struct FullScreenPhotoView: View {
                                 .disabled(isDeleting || isPreparingShare)
 
                                 Spacer(minLength: 6)
+
+                                // The slot the removed slideshow button left
+                                // behind. The control that goes into the day
+                                // is replaced by the control that comes back
+                                // out of it, so the ✕ keeps exactly one
+                                // meaning — leave the viewer — at both levels.
+                                if pagerSource.isDay {
+                                    ChromeButton(
+                                        systemImage: "chevron.backward",
+                                        accessibilityLabel: "Back to this day's memories",
+                                        action: returnToMemories
+                                    )
+                                    .disabled(isDeleting || isPreparingShare)
+                                } else if dayItemCount > 1 {
+                                    // Absent rather than disabled when there is
+                                    // nothing else from that day: a control
+                                    // that appears and then does nothing is
+                                    // worse than one that was never there.
+                                    ChromeButton(
+                                        systemImage: "square.grid.2x2",
+                                        accessibilityLabel: "See everything from that day",
+                                        action: openDay
+                                    )
+                                    .disabled(isDeleting || isPreparingShare)
+                                }
                             }
                             // The button is layered above the counter so it
                             // still wins hit testing if the capsule ever grows
@@ -288,6 +341,12 @@ struct FullScreenPhotoView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(shareError ?? "The memory could not be prepared for sharing.")
+        }
+        .sheet(item: $dayRequest) { wrapper in
+            DayContextView(anchor: wrapper.asset) { asset, contents in
+                enterDay(with: contents, focusing: asset)
+            }
+            .presentationDragIndicator(.visible)
         }
         .sheet(item: $infoAsset) { wrapper in
             MemoryInfoSheet(
@@ -329,6 +388,28 @@ struct FullScreenPhotoView: View {
         // replaced rather than shrunk.
         .onChange(of: currentAssetIdentifier) { _, _ in
             resetPerPageState()
+        }
+        // Whether this memory's day holds anything else.
+        //
+        // Everything the answer depends on is read *before* the await. A
+        // `.task(id:)` closure captures the View struct as it was when the
+        // task started, so a value read afterwards would belong to whichever
+        // memory was on screen when the user tapped, not to the one they have
+        // swiped to since.
+        .task(id: currentAssetIdentifier) {
+            dayItemCount = 0
+            guard !pagerSource.isDay,
+                  visibleAssets.indices.contains(currentIndex),
+                  let date = visibleAssets[currentIndex].creationDate else { return }
+
+            // Debounced like the place-name lookup, so a fast swipe through
+            // twenty memories does not queue twenty day queries.
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+
+            let count = await loadDayApproximateCount(containing: date)
+            guard !Task.isCancelled else { return }
+            dayItemCount = count
         }
         // Paging feedback, which genuinely does belong to the movement rather
         // than to the page: a delete that shifts the index should still feel
@@ -705,6 +786,10 @@ struct FullScreenPhotoView: View {
             DispatchQueue.main.async {
                 isDeleting = false
                 if success {
+                    // Both arrays, always. The snapshot is what day mode
+                    // returns to, and a delete performed in day mode would
+                    // otherwise put the photo back on the way out.
+                    memoriesSnapshot.removeAll { $0.localIdentifier == identifier }
                     withAnimation {
                         visibleAssets.removeAll { $0.localIdentifier == identifier }
                         if let nextIndex {
@@ -721,8 +806,15 @@ struct FullScreenPhotoView: View {
                     NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
 
                     if visibleAssets.isEmpty {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                            dismiss()
+                        if pagerSource.isDay {
+                            // Emptying the day is not emptying the viewer.
+                            // Dropping the user all the way out to the gallery
+                            // would skip the level they came from.
+                            returnToMemories()
+                        } else {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                dismiss()
+                            }
                         }
                     }
                 } else {
@@ -783,6 +875,20 @@ struct FullScreenPhotoView: View {
             let context = await resolvedExclusionContext()
 
             await MainActor.run {
+                // The memories to return to are filtered whichever mode the
+                // pager is in, so an exclusion made while browsing a day is
+                // not undone on the way out.
+                memoriesSnapshot = memoriesSnapshot.filter { !context.excludes($0) }
+
+                // A day is deliberately unfiltered — "Feature Less Often"
+                // governs what Attic chooses to surface, not what exists, and
+                // the point of the day view is that it matches the Photos app.
+                // So in day mode the pager itself is left alone.
+                guard !pagerSource.isDay else {
+                    NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
+                    return
+                }
+
                 let currentIdentifier = visibleAssets.indices.contains(currentIndex)
                     ? visibleAssets[currentIndex].localIdentifier
                     : nil
@@ -836,6 +942,81 @@ struct FullScreenPhotoView: View {
         // it — never reaches `onEnded`, and a stale value would offset the
         // next swipe by however far the abandoned one had travelled.
         dragActivationSlop = nil
+    }
+
+    // MARK: - Day mode
+
+    private func openDay() {
+        guard visibleAssets.indices.contains(currentIndex) else { return }
+        dayRequest = IdentifiableAsset(visibleAssets[currentIndex])
+    }
+
+    /// Swap the pager over to the whole day, landing on the tapped item.
+    ///
+    /// The snapshot is taken only on the way *in*, so tapping a second tile
+    /// while already in day mode re-targets without overwriting the memories
+    /// to come back to.
+    private func enterDay(with contents: DayContents.Result, focusing asset: PHAsset) {
+        // Resolved by identity, and a miss refuses rather than falling back to
+        // zero. The day set is not a subset of the memories: it contains
+        // photos outside the anniversary window and photos the user asked to
+        // feature less often. A `?? 0` here would silently open a different
+        // photo and label it "1 of 250".
+        guard let index = contents.assets.firstIndex(where: {
+            $0.localIdentifier == asset.localIdentifier
+        }) else {
+            dayRequest = nil
+            return
+        }
+
+        if !pagerSource.isDay {
+            memoriesSnapshot = visibleAssets
+            memoriesAnchor = currentAssetIdentifier
+        }
+
+        // Contents first, sheet last: the swap and the playback unblock then
+        // land in one update pass, rather than briefly resuming the outgoing
+        // video before the page it belongs to is replaced.
+        visibleAssets = contents.assets
+        currentIndex = index
+        pagerSource = .day
+        dayItemCount = 0
+        dayRequest = nil
+    }
+
+    /// Back to the memories, at the one the user left from.
+    ///
+    /// Restores the snapshot rather than re-deriving the memories, because
+    /// re-deriving cannot see what happened while the day was open. The
+    /// snapshot is filtered by every removal as it happens, so it cannot
+    /// resurrect a photo that was deleted in day mode — the same reasoning
+    /// as `applyExclusionRemoval` filtering the live array.
+    private func returnToMemories() {
+        guard pagerSource.isDay else { return }
+
+        let restored = memoriesSnapshot
+        pagerSource = .memories
+        memoriesSnapshot = []
+
+        guard !restored.isEmpty else {
+            // Every memory was removed while the day was open. Same ending as
+            // deleting the last one from the pager.
+            visibleAssets = []
+            currentIndex = 0
+            memoriesAnchor = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { dismiss() }
+            return
+        }
+
+        let index = memoriesAnchor
+            .flatMap { identifier in
+                restored.firstIndex { $0.localIdentifier == identifier }
+            }
+            ?? min(max(currentIndex, 0), restored.count - 1)
+
+        visibleAssets = restored
+        currentIndex = index
+        memoriesAnchor = nil
     }
 
     private func moveToPreviousMemory() {

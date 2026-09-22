@@ -31,15 +31,15 @@ final class ViewerPresentationTripwireTests: XCTestCase {
     /// What the file contains today, counted and accounted for:
     ///
     /// - 1 `.confirmationDialog` — "Delete this item?"
-    /// - 2 `.sheet` — the share sheet and the info panel
+    /// - 3 `.sheet` — the share sheet, the info panel and the day grid
     /// - 2 `.alert` — "Couldn't Delete" and "Couldn't Share"
     /// - 1 `.confirmationDialog` inside `MemoryInfoSheet`, a *different*
     ///   view presented within the info sheet, already covered by the
     ///   `infoSheet` field rather than needing one of its own.
     ///
-    /// Five of those six are the viewer's own, which is
+    /// Six of those seven are the viewer's own, which is
     /// `ViewerOverlays.presentationCount`.
-    private static let expectedTotal = 6
+    private static let expectedTotal = 7
     private static let accountedForByNestedView = 1
 
     private func repositoryRoot(file: StaticString = #filePath) -> URL {

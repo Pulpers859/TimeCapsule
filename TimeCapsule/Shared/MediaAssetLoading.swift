@@ -235,6 +235,28 @@ nonisolated func resolvedExclusionContext() async -> MemoryExclusions.Context {
 /// cached in `@State` because SwiftUI re-evaluates `body` on every local
 /// state change — the confirmation banner appearing is one — and a computed
 /// property would re-run both fetches for each of those.
+/// The rest of the day a memory was taken on, off the main actor.
+///
+/// `@concurrent` is load-bearing here, not decoration. `DayContents.onDay`
+/// enumerates every asset in a calendar day, which on a wedding or a holiday
+/// is hundreds — and under this target's isolation a plain `nonisolated
+/// async` function runs on its *caller's* executor, which for a SwiftUI
+/// `.task` is the main actor. Without this annotation the sheet would freeze
+/// on presentation for as long as the enumeration took.
+@concurrent
+nonisolated func loadDayContents(containing date: Date) async -> DayContents.Result? {
+    DayContents.onDay(containing: date)
+}
+
+/// Whether a day holds anything beyond the memory already on screen.
+///
+/// Gates whether the control is offered at all. Approximate by design, and
+/// never displayed — see `DayContents.approximateCount`.
+@concurrent
+nonisolated func loadDayApproximateCount(containing date: Date) async -> Int {
+    DayContents.approximateCount(containing: date)
+}
+
 @concurrent
 nonisolated func albumsContaining(_ asset: PHAsset) async -> [PHAssetCollection] {
     let excludedSubtypes: Set<PHAssetCollectionSubtype> = [

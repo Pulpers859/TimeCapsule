@@ -35,6 +35,8 @@ struct ViewerOverlays: Equatable {
     var shareFailureAlert: Bool
     /// `.sheet(item: $infoAsset)` — the memory information panel.
     var infoSheet: Bool
+    /// `.sheet(item: $dayRequest)` — the rest of that day, as a grid.
+    var daySheet: Bool
     /// No UI of its own: an export is running and the chrome is disabled.
     var preparingShare: Bool
     /// No UI of its own: a delete is in flight.
@@ -51,6 +53,7 @@ struct ViewerOverlays: Equatable {
         \.deleteFailureAlert,
         \.shareFailureAlert,
         \.infoSheet,
+        \.daySheet,
         \.preparingShare,
         \.deleting,
     ]
@@ -59,7 +62,7 @@ struct ViewerOverlays: Equatable {
     ///
     /// Read by the source-level tripwire test, which counts the modifiers in
     /// `FullScreenPhotoView.swift` and refuses to let the two drift apart.
-    static let presentationCount = 5
+    static let presentationCount = 6
 
     /// The rule. A video may run only when nothing is over the viewer.
     ///
