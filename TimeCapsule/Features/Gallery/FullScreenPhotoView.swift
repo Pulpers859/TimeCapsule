@@ -952,6 +952,11 @@ struct MemoryInfoSheet: View {
         .background(Color(.systemGroupedBackground))
         .task(id: asset.localIdentifier) {
             exif = nil
+            // Reset alongside `exif`, which this already did. Leaving it
+            // behind meant a previous photo's "Pinned." could sit under a
+            // different memory if the sheet were ever reused for another
+            // asset.
+            handoff = .idle
             containingAlbums = await albumsContaining(asset)
             guard asset.mediaType == .image else { return }
             exif = await photoEXIF(for: asset)
@@ -1186,37 +1191,69 @@ struct MemoryInfoSheet: View {
     /// does not exist. The copy is deliberately explicit about where to look,
     /// because a vague confirmation would leave the user hunting anyway.
     @ViewBuilder
+    /// Where this memory lives, and a way to make it findable.
+    ///
+    /// This used to be a single button reading "Send to Photos for Editing",
+    /// which was wrong in both halves. Nothing is sent: an album holds
+    /// references, so there is exactly one of each photo before and after.
+    /// And what someone asking this question usually wants is not the editor —
+    /// it is to know where their own photo actually lives. The sheet already
+    /// loads the user's own album names for this asset, so it can simply say
+    /// so, which is a better answer than any button.
     private var editHandoffSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button(action: stageForEditing) {
-                HStack(spacing: 12) {
-                    Image(systemName: "photo.badge.plus")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 28, alignment: .center)
+            Text("Find This in Photos")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Send to Photos for Editing")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Text("Files it in an album so you can find it right away")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .multilineTextAlignment(.leading)
-
-                    Spacer(minLength: 12)
-
-                    if isWorking {
-                        ProgressView()
-                    }
+            VStack(spacing: 0) {
+                if let albums = ownAlbumNames {
+                    infoRow(label: "In your album", value: albums, icon: "rectangle.stack")
+                    Divider().padding(.leading, 40)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
+
+                if let date = asset.creationDate {
+                    infoRow(
+                        label: "Taken",
+                        value: date.formatted(date: .abbreviated, time: .shortened),
+                        icon: "calendar"
+                    )
+                    Divider().padding(.leading, 40)
+                }
+
+                Button(action: stageForEditing) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "pin")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 28, alignment: .center)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Pin for Photos")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text("Puts it alone in an album called \(PhotosEditHandoff.albumTitle)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .multilineTextAlignment(.leading)
+
+                        Spacer(minLength: 12)
+
+                        if isWorking {
+                            ProgressView()
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Pin for Photos")
+                .accessibilityHint("Puts this memory on its own in an album called \(PhotosEditHandoff.albumTitle), so you can find it in the Photos app")
             }
-            .buttonStyle(.plain)
-            .disabled(isWorking)
             .background(
                 Color(.secondarySystemGroupedBackground),
                 in: RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -1233,6 +1270,9 @@ struct MemoryInfoSheet: View {
                         .foregroundStyle(Color.accentColor)
                 }
                 .font(.footnote)
+                // The arrow reads unreliably under VoiceOver, so the spoken
+                // version spells the path out.
+                .accessibilityLabel(spokenHandoffResult ?? outcome)
                 .transition(.opacity)
             }
 
@@ -1249,8 +1289,35 @@ struct MemoryInfoSheet: View {
                 .font(.footnote)
                 .transition(.opacity)
             }
+
+            Text("Attic never copies your photos. There is only ever one of each, in your own library.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .animation(.easeInOut(duration: 0.2), value: isWorking)
+        // Keyed on the whole state, not on `isWorking`: a retry that goes from
+        // one failure straight to another leaves `isWorking` unchanged, so the
+        // new message used to appear with no transition at all.
+        .animation(.easeInOut(duration: 0.2), value: handoffAnimationKey)
+        // VoiceOver does not announce a view that simply appears mid-screen,
+        // so tapping the button was silent for anyone not watching the
+        // checkmark.
+        .onChange(of: handoffAnimationKey) { _, _ in
+            guard let message = spokenHandoffResult ?? handoffFailureMessage else { return }
+            AccessibilityNotification.Announcement(message).post()
+        }
+    }
+
+    /// The user's own albums holding this memory, as one readable phrase.
+    ///
+    /// This is the "my album" the whole section exists to answer, and it costs
+    /// nothing: `containingAlbums` is already loaded for "Feature Less Often".
+    private var ownAlbumNames: String? {
+        let names = containingAlbums
+            .compactMap { $0.localizedTitle }
+            .filter { !$0.isEmpty }
+        guard !names.isEmpty else { return nil }
+        return Array(names.prefix(3)).formatted(.list(type: .and))
     }
 
     private var isWorking: Bool {
@@ -1261,12 +1328,36 @@ struct MemoryInfoSheet: View {
     private var handoffResult: String? {
         guard case .done(let outcome) = handoff else { return nil }
         switch outcome {
-        case .addedToAlbum:
-            return "Added to your \(PhotosEditHandoff.albumTitle) album. In Photos, open Albums → \(PhotosEditHandoff.albumTitle) — it's the last one in there."
-        case .alreadyInAlbum:
-            return "Already in your \(PhotosEditHandoff.albumTitle) album. In Photos, open Albums → \(PhotosEditHandoff.albumTitle) to edit it."
-        case .markedFavorite:
-            return "Marked as a Favorite. Attic only has limited access to your library, so it can't create an album — look in Albums → Favorites, filed under this memory's original date."
+        case .pinned:
+            return "Pinned. In Photos, open Albums → \(PhotosEditHandoff.albumTitle) — it's the only photo in there."
+        case .alreadyPinned:
+            return "Already pinned. In Photos, open Albums → \(PhotosEditHandoff.albumTitle) — it's the only photo in there."
+        }
+    }
+
+    /// The same sentence without the arrow, which VoiceOver reads unreliably.
+    private var spokenHandoffResult: String? {
+        guard case .done(let outcome) = handoff else { return nil }
+        let opening = outcome == .alreadyPinned ? "Already pinned." : "Pinned."
+        return "\(opening) In Photos, open Albums, then \(PhotosEditHandoff.albumTitle). It is the only photo in there."
+    }
+
+    private var handoffFailureMessage: String? {
+        guard case .failed(let message) = handoff else { return nil }
+        return message
+    }
+
+    /// Changes whenever the section's visible state does.
+    ///
+    /// `isWorking` is not enough on its own: a retry that fails a second time
+    /// leaves it false throughout, so neither the animation nor the VoiceOver
+    /// announcement fired for the new message.
+    private var handoffAnimationKey: String {
+        switch handoff {
+        case .idle: return "idle"
+        case .working: return "working"
+        case .done(let outcome): return "done-\(outcome)"
+        case .failed(let message): return "failed-\(message)"
         }
     }
 
@@ -1281,9 +1372,8 @@ struct MemoryInfoSheet: View {
             } catch {
                 await MainActor.run {
                     handoff = .failed(
-                        error.localizedDescription.isEmpty
-                            ? "That memory could not be sent to Photos."
-                            : error.localizedDescription
+                        (error as? PhotosEditHandoff.HandoffError)?.errorDescription
+                            ?? "That memory couldn't be pinned."
                     )
                 }
             }

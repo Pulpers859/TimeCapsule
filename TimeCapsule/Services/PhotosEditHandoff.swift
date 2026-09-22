@@ -1,68 +1,83 @@
 import Foundation
 import Photos
 
-/// Hands a memory off to the Photos app so it can be edited there.
+/// Pins a memory in a one-photo album so it can be found in the Photos app.
 ///
 /// The obvious implementation of this feature does not exist. iOS has no
 /// public URL scheme, activity, or view controller that opens the Photos app
-/// at a specific `PHAsset` — `assets-library://` was obsoleted in iOS 26, and
-/// the undocumented `photos-redirect://` / `photos-navigation://` schemes both
-/// launch Photos into whatever it was last showing rather than at an asset.
-/// Shipping one of those would put an undocumented scheme in the binary under
-/// App Review guideline 2.5.1 and still not land on the right item.
+/// at a specific `PHAsset`. Photos itself has one — an internal
+/// `photos://edit/enter?assetUUID=` route it uses for Lock Screen Photo
+/// Shuffle and Handoff — but the `photos://` scheme is not openable from a
+/// third-party app. The undocumented `photos-redirect://` only launches the
+/// app, and `photos-navigation://` accepts a fixed list of six built-in album
+/// names, so an app-created album can never be targeted by name. Shipping
+/// either would put an undocumented scheme in the binary under App Review
+/// guideline 2.5.1 and still land the user on the Photos home screen.
 ///
 /// So this solves the problem the user actually has — "I cannot find this one
 /// item again in a library of thousands" — from the other end. It cannot
 /// control where Photos opens, but it can control how findable the memory is
-/// once the user gets there: the asset is added to a small app-owned album, so
-/// the hunt collapses to Albums → Attic Edits → the last item.
+/// once the user gets there.
+///
+/// The album holds **exactly one** photo. It used to accumulate, which made
+/// the instruction "it's the last one in there" — an instruction that gets
+/// worse every time the feature is used, and eventually means scrolling. One
+/// slot makes it "it's the only one in there", which never degrades, and it
+/// bounds what this leaves behind in someone's Photos app to a single album
+/// with a single entry.
 ///
 /// Nothing here runs unless the user taps the button. The library is never
-/// mutated in the background.
+/// mutated in the background, and no photo is ever copied: an album holds
+/// references, so there is still exactly one of each photo afterwards.
 ///
 /// `nonisolated` on purpose, matching `MemoryRecapExporter`. This target
 /// builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so without it every
-/// synchronous PhotoKit call below — including the album walk in `contains` —
-/// would run on the main thread, and this album is designed to accumulate.
+/// synchronous PhotoKit call below would run on the main thread.
 nonisolated enum PhotosEditHandoff {
-    /// User albums keep insertion order, so the most recently staged memory is
-    /// always the last one in this album. That ordering is the whole trick, and
-    /// it is why this is an album rather than the Favorites flag: Favorites is
-    /// a smart album sorted by capture date, so a memory from six years ago
-    /// would land six years back in the list — exactly the hunt being avoided.
-    static let albumTitle = "Attic Edits"
+    /// Named for the app, not for "edits", because nothing here edits anything
+    /// and the previous name ("Attic Edits") read as a folder of copies.
+    static let albumTitle = "Attic"
 
-    enum Outcome {
-        case addedToAlbum
-        case alreadyInAlbum
-        /// Limited-access libraries cannot create or fetch user albums, so the
-        /// date-sorted Favorites flag is the only handoff left.
-        case markedFavorite
+    enum Outcome: Equatable {
+        /// The album now holds this memory and nothing else.
+        case pinned
+        /// It was already the only photo in the album; nothing was written.
+        case alreadyPinned
     }
 
     enum HandoffError: LocalizedError {
         case notAuthorized
+        /// A limited library cannot create or fetch user albums at all, so
+        /// there is no album path to fall back to.
+        ///
+        /// This used to set the Favorites flag instead. That was wrong twice
+        /// over: it silently rewrote a user-curated, iCloud-synced flag from a
+        /// button about editing, with no way to undo it from Attic — and
+        /// Favorites is sorted by capture date, so a memory from six years ago
+        /// landed six years back in the list, which is the exact hunt this
+        /// feature exists to avoid.
+        case limitedAccess
         case albumUnavailable
         /// The album exists, but the memory is not in it after the write.
-        ///
-        /// Distinct from `albumUnavailable` because the message is what the
-        /// user reads: that case says the album "could not be created",
-        /// which is plainly untrue here — the album was found, and it was
-        /// adding to it that did not take. Reusing it told the user
-        /// something false about a failure they might act on.
         case addFailed
-        case writeFailed(String)
+        case writeFailed
 
         var errorDescription: String? {
             switch self {
             case .notAuthorized:
                 return "Attic needs access to your photo library to do this."
+            case .limitedAccess:
+                return "Attic only has limited access to your library, so it can't make an album. The details above still say where this memory lives."
             case .albumUnavailable:
                 return "The \(PhotosEditHandoff.albumTitle) album could not be created."
             case .addFailed:
-                return "This memory couldn't be added to the \(PhotosEditHandoff.albumTitle) album."
-            case .writeFailed(let reason):
-                return reason
+                return "This memory couldn't be pinned to the \(PhotosEditHandoff.albumTitle) album."
+            case .writeFailed:
+                // Deliberately not the underlying `localizedDescription`.
+                // PhotoKit's is "The operation couldn't be completed.
+                // (PHPhotosErrorDomain error 3300.)", which tells the user
+                // nothing and looks like a crash report.
+                return "Your photo library wouldn't accept that change. Nothing was altered."
             }
         }
     }
@@ -70,8 +85,7 @@ nonisolated enum PhotosEditHandoff {
     /// `@concurrent`, not just the enum's `nonisolated`.
     ///
     /// The type is marked `nonisolated` to keep the synchronous PhotoKit work
-    /// below — the album fetch and the `contains()` walk over every asset in
-    /// the album — off the main thread. That is not what `nonisolated` alone
+    /// below — the album fetch and the membership read — off the main thread. That is not what `nonisolated` alone
     /// does to an *async* function under this build's
     /// NonisolatedNonsendingByDefault: such a function runs on its caller's
     /// executor, and the caller is a SwiftUI view, so all of it was running on
@@ -82,14 +96,9 @@ nonisolated enum PhotosEditHandoff {
     static func stage(_ asset: PHAsset) async throws -> Outcome {
         switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
         case .authorized:
-            return try await addToAlbum(asset)
+            return try await pin(asset)
         case .limited:
-            // Checked up front rather than by letting the album write fail:
-            // under limited access the fetch returns empty and the creation
-            // request fails silently, which would read as a bug rather than a
-            // deliberate fallback.
-            try await markFavorite(asset)
-            return .markedFavorite
+            throw HandoffError.limitedAccess
         default:
             throw HandoffError.notAuthorized
         }
@@ -97,20 +106,28 @@ nonisolated enum PhotosEditHandoff {
 
     // MARK: - Album path
 
-    private static func addToAlbum(_ asset: PHAsset) async throws -> Outcome {
+    private static func pin(_ asset: PHAsset) async throws -> Outcome {
         let album = try await fetchOrCreateAlbum()
 
-        if contains(asset, in: album) {
-            return .alreadyInAlbum
+        let existing = members(of: album)
+        if existing.count == 1, existing[0] == asset.localIdentifier {
+            return .alreadyPinned
         }
 
+        // Clearing and adding in one change block, so the album is never
+        // briefly empty and the user is asked for permission once rather
+        // than twice.
         do {
             try await PHPhotoLibrary.shared().performChanges {
-                PHAssetCollectionChangeRequest(for: album)?
-                    .addAssets([asset] as NSArray)
+                guard let request = PHAssetCollectionChangeRequest(for: album) else { return }
+                let current = PHAsset.fetchAssets(in: album, options: nil)
+                if current.count > 0 {
+                    request.removeAssets(current)
+                }
+                request.addAssets([asset] as NSArray)
             }
         } catch {
-            throw HandoffError.writeFailed(error.localizedDescription)
+            throw HandoffError.writeFailed
         }
 
         // Confirmed against the album rather than inferred from the write
@@ -118,15 +135,15 @@ nonisolated enum PhotosEditHandoff {
         //
         // `PHAssetCollectionChangeRequest(for:)` returns nil when the album is
         // no longer writable — deleted, or otherwise changed, between the
-        // fetch above and this block — and the optional chain then makes the
-        // whole change a no-op that `performChanges` still reports as a
-        // success. The user was told to open Attic Edits and find their
-        // photo there, and it was not in it. Asking the album what it
-        // actually contains is the only answer that cannot be wrong.
-        guard contains(asset, in: album) else {
+        // fetch above and this block — and the guard then makes the whole
+        // change a no-op that `performChanges` still reports as a success. The
+        // user was told to open the album and find their photo there, and it
+        // was not in it. Asking the album what it actually contains is the
+        // only answer that cannot be wrong.
+        guard members(of: album) == [asset.localIdentifier] else {
             throw HandoffError.addFailed
         }
-        return .addedToAlbum
+        return .pinned
     }
 
     private static func fetchOrCreateAlbum() async throws -> PHAssetCollection {
@@ -140,7 +157,7 @@ nonisolated enum PhotosEditHandoff {
                 box.identifier = request.placeholderForCreatedAssetCollection.localIdentifier
             }
         } catch {
-            throw HandoffError.writeFailed(error.localizedDescription)
+            throw HandoffError.writeFailed
         }
 
         guard let identifier = box.identifier,
@@ -170,30 +187,14 @@ nonisolated enum PhotosEditHandoff {
 
     /// Enumerated rather than fetched with a `localIdentifier` predicate:
     /// PhotoKit only supports predicates over a documented subset of
-    /// properties, and this album is small enough that the walk is cheap.
-    private static func contains(_ asset: PHAsset, in album: PHAssetCollection) -> Bool {
-        let members = PHAsset.fetchAssets(in: album, options: nil)
-        var found = false
-        members.enumerateObjects { member, _, stop in
-            if member.localIdentifier == asset.localIdentifier {
-                found = true
-                stop.pointee = true
-            }
+    /// properties, and this album holds at most one item.
+    private static func members(of album: PHAssetCollection) -> [String] {
+        let result = PHAsset.fetchAssets(in: album, options: nil)
+        var identifiers: [String] = []
+        result.enumerateObjects { member, _, _ in
+            identifiers.append(member.localIdentifier)
         }
-        return found
-    }
-
-    // MARK: - Limited-access fallback
-
-    private static func markFavorite(_ asset: PHAsset) async throws {
-        guard !asset.isFavorite else { return }
-        do {
-            try await PHPhotoLibrary.shared().performChanges {
-                PHAssetChangeRequest(for: asset).isFavorite = true
-            }
-        } catch {
-            throw HandoffError.writeFailed(error.localizedDescription)
-        }
+        return identifiers
     }
 }
 

@@ -31,7 +31,22 @@ final class MemoryCountSourceTests: XCTestCase {
         let source = root
             .appendingPathComponent("AtticShared")
             .appendingPathComponent("MemoryLibrary.swift")
-        return try String(contentsOf: source, encoding: .utf8)
+        return Self.strippingCommentLines(try String(contentsOf: source, encoding: .utf8))
+    }
+
+    /// Comment lines removed before anything is counted.
+    ///
+    /// This reads text, not syntax. The doc comments in `MemoryLibrary.swift`
+    /// explain at length why there is one fetch and one media-type test, which
+    /// means they name both — and a counting test that reads its own
+    /// explanation as evidence will fail the moment someone documents the
+    /// thing it guards. The sibling tripwire in
+    /// `ViewerPresentationTripwireTests` was tripped by exactly that.
+    private static func strippingCommentLines(_ source: String) -> String {
+        source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
     }
 
     /// One fetch, in the shared function. A second one anywhere in this file

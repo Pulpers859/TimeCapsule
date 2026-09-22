@@ -56,7 +56,26 @@ final class ViewerPresentationTripwireTests: XCTestCase {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw XCTSkip("Viewer source not found at \(url.path); repository layout changed.")
         }
-        return try String(contentsOf: url, encoding: .utf8)
+        return Self.strippingCommentLines(try String(contentsOf: url, encoding: .utf8))
+    }
+
+    /// Comment lines removed before anything is counted.
+    ///
+    /// This test reads text, not syntax, so a doc comment that merely *names*
+    /// a presentation modifier — "presented with `.sheet(item:)`" — counted as
+    /// one. That is not a hypothetical: it happened, the count came back one
+    /// too high, and the failure pointed at a modifier nobody had added.
+    ///
+    /// A test that punishes writing about the code it guards teaches people to
+    /// stop writing about it. Whole-line comments are dropped; a trailing
+    /// comment after code is left alone, since removing one safely means
+    /// knowing where string literals end, and no comment of that shape has
+    /// ever tripped this.
+    private static func strippingCommentLines(_ source: String) -> String {
+        source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
     }
 
     func testPresentationModifierCountHasNotDrifted() throws {
