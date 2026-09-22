@@ -47,6 +47,14 @@ jobs:
       # need an Apple Developer account, which is the thing this route exists
       # to avoid. `CODE_SIGNING_ALLOWED=NO` is what makes that possible
       # without one.
+      #
+      # Note what is *not* overridden: `CODE_SIGN_ENTITLEMENTS`. It used to be
+      # blanked here alongside the identity, which looked harmless — codesign
+      # is the only thing that reads it, and codesign is not running. But it
+      # meant the .app reached the re-signer with no App Group declared, and a
+      # re-signer cannot preserve an entitlement that was never in the bundle.
+      # That is why the app and the widget were reading separate settings
+      # stores. Leaving it in place cannot break an unsigned archive.
       - name: Archive
         shell: bash
         run: |
@@ -67,7 +75,6 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_ENTITLEMENTS="" \
             $extra 2>&1 | tee archive.log
           status=${PIPESTATUS[0]}
           if [[ "$status" -ne 0 ]]; then exit "$status"; fi
@@ -103,6 +110,33 @@ jobs:
           size=$(du -h out/Attic.ipa | cut -f1)
           echo "Built out/Attic.ipa ($size)"
           echo "IPA_SIZE=$size" >> "$GITHUB_ENV"
+
+      # Reported rather than assumed. The symptom of a missing App Group is
+      # the widget quietly disagreeing with the app, which is invisible here
+      # and confusing on the phone, so the build says out loud whether the
+      # entitlement made it into the bundle. If it is present here and still
+      # missing on the phone, the re-signer dropped it and nothing in this
+      # repository can fix that.
+      - name: Report entitlements in the archive
+        shell: bash
+        run: |
+          set -uo pipefail
+          group='group.Patrick-App.TimeCapsule'
+          found=0
+          while IFS= read -r xcent; do
+            echo "--- $xcent"
+            /usr/libexec/PlistBuddy -c Print "$xcent" 2>/dev/null \
+              || plutil -p "$xcent" 2>/dev/null \
+              || cat "$xcent"
+            if grep -q "$group" "$xcent" 2>/dev/null; then found=1; fi
+          done < <(find build/Attic.xcarchive -name '*.xcent' 2>/dev/null)
+
+          if [[ "$found" -eq 1 ]]; then
+            echo "App Group $group IS declared in the archive."
+          else
+            echo "App Group $group is NOT in any .xcent in the archive."
+            echo "The app and the widget will read separate settings stores."
+          fi
 
       - name: Upload IPA
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
