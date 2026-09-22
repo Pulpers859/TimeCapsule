@@ -79,6 +79,42 @@ jobs:
           status=${PIPESTATUS[0]}
           if [[ "$status" -ne 0 ]]; then exit "$status"; fi
 
+      # Ad-hoc signed so the App Group survives into the bundle.
+      #
+      # `CODE_SIGNING_ALLOWED=NO` does not merely skip the signature — it
+      # skips the step that *generates* the entitlements blob, so an unsigned
+      # archive contains no App Group declaration anywhere, however correctly
+      # the .entitlements files are configured. That was verified, not
+      # assumed: the archive report below said the group was missing even
+      # after the build stopped blanking `CODE_SIGN_ENTITLEMENTS`.
+      #
+      # Ad-hoc signing (`--sign -`) needs no certificate, no provisioning
+      # profile and no Apple Developer account, and it does embed
+      # entitlements. The signature itself is thrown away when Signulous
+      # re-signs; the point is to hand the re-signer a bundle that declares
+      # the group, because it cannot preserve what was never there.
+      #
+      # Nested code first, then the app: signing a bundle seals its contents,
+      # so signing the app before the extension invalidates the app's seal.
+      - name: Ad-hoc sign so entitlements are embedded
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="build/Attic.xcarchive/Products/Applications/TimeCapsule.app"
+
+          codesign --force --sign - --timestamp=none \
+            --entitlements 'Config/AtticWidget.entitlements' \
+            "$app/PlugIns/AtticWidget.appex"
+
+          codesign --force --sign - --timestamp=none \
+            --entitlements 'Config/Attic.entitlements' \
+            "$app"
+
+          echo '--- app entitlements'
+          codesign -d --entitlements :- "$app" 2>/dev/null || true
+          echo '--- widget entitlements'
+          codesign -d --entitlements :- "$app/PlugIns/AtticWidget.appex" 2>/dev/null || true
+
       # An .ipa is a zip with the .app inside a folder called Payload. That
       # is the whole format; there is no Apple tool needed to make one.
       - name: Package IPA
@@ -113,29 +149,28 @@ jobs:
 
       # Reported rather than assumed. The symptom of a missing App Group is
       # the widget quietly disagreeing with the app, which is invisible here
-      # and confusing on the phone, so the build says out loud whether the
-      # entitlement made it into the bundle. If it is present here and still
-      # missing on the phone, the re-signer dropped it and nothing in this
-      # repository can fix that.
-      - name: Report entitlements in the archive
+      # and confusing on the phone, so the build fails outright rather than
+      # shipping a bundle that will behave that way. If the group is present
+      # here and the app still warns on the phone, the re-signer dropped it
+      # and nothing in this repository can fix that.
+      - name: Verify the App Group is embedded
         shell: bash
         run: |
           set -uo pipefail
+          app="build/Attic.xcarchive/Products/Applications/TimeCapsule.app"
           group='group.Patrick-App.TimeCapsule'
-          found=0
-          while IFS= read -r xcent; do
-            echo "--- $xcent"
-            /usr/libexec/PlistBuddy -c Print "$xcent" 2>/dev/null \
-              || plutil -p "$xcent" 2>/dev/null \
-              || cat "$xcent"
-            if grep -q "$group" "$xcent" 2>/dev/null; then found=1; fi
-          done < <(find build/Attic.xcarchive -name '*.xcent' 2>/dev/null)
-
-          if [[ "$found" -eq 1 ]]; then
-            echo "App Group $group IS declared in the archive."
-          else
-            echo "App Group $group is NOT in any .xcent in the archive."
-            echo "The app and the widget will read separate settings stores."
+          missing=0
+          for bundle in "$app" "$app/PlugIns/AtticWidget.appex"; do
+            if codesign -d --entitlements :- "$bundle" 2>/dev/null | grep -q "$group"; then
+              echo "OK   $bundle declares $group"
+            else
+              echo "FAIL $bundle does not declare $group" >&2
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo 'The app and the widget would read separate settings stores.' >&2
+            exit 1
           fi
 
       - name: Upload IPA
