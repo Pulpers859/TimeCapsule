@@ -108,26 +108,38 @@ struct SettingsView: View {
                         ) { showPaywall = true }
                     }
 
-                    // Only ever appears when the App Group is missing, which
-                    // on a correctly signed build it is not. Without it the
-                    // failure is silent and reads as the widget being wrong:
-                    // it falls back to a private store, so it shows the
-                    // free-tier memory window and an empty exclusion list
-                    // while the app shows the real ones. That surfaced as the
-                    // widget reporting one memory fewer than the app would
-                    // let you page through, with no way to tell why.
+                    // Only appears when the App Group is missing, which on a
+                    // correctly signed build it is not. Without something
+                    // here the failure is silent and reads as the widget
+                    // being wrong: it falls back to a private store, so it
+                    // shows the free-tier memory window and an empty
+                    // exclusion list while the app shows the real ones. That
+                    // surfaced as the widget reporting one memory fewer than
+                    // the app would let you page through, with no way to tell
+                    // why.
+                    //
+                    // Two different messages, because it means two different
+                    // things. In a re-signed sideload build it is expected
+                    // and nothing in this repository can fix it: an App Group
+                    // belongs to a developer team, and a re-signing service
+                    // signs with its own, so iOS will not grant a group that
+                    // is not in its profile. Shouting about that on every
+                    // build trains the reader to ignore the row — which is
+                    // the one place it has to be believed when a real App
+                    // Store build is genuinely misprovisioned.
                     if !AtticDefaults.isAppGroupAvailable {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Widget can't read these settings")
+                                Text(Self.appGroupNoticeTitle)
                                     .font(.subheadline.weight(.semibold))
-                                Text("It will show its own defaults, so its memory count can differ from the app's. This needs the app's App Group, which a re-signed build usually drops.")
+                                Text(Self.appGroupNoticeDetail)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
+                            Image(systemName: Self.appGroupNoticeSymbol)
+                                .foregroundStyle(Self.appGroupNoticeTint)
                         }
                     }
                 } header: {
@@ -331,6 +343,49 @@ struct SettingsView: View {
     private var effectiveDayStartHour: Int {
         guard purchaseStore.isUnlocked else { return MemoryWindow.defaultDayStartHour }
         return max(0, min(dayStartHour, 6))
+    }
+
+    // MARK: - App Group notice
+
+    // `ATTIC_SIDELOAD` is defined for both the app and the widget targets
+    // (`SWIFT_ACTIVE_COMPILATION_CONDITIONS` inherits
+    // `ATTIC_EXTRA_SWIFT_FLAGS` in all four configurations), so this is a
+    // reliable way to tell a re-signed build from a real one.
+
+    private static var appGroupNoticeTitle: String {
+        #if ATTIC_SIDELOAD
+        return "Widget settings don't sync in this build"
+        #else
+        return "Widget can't read these settings"
+        #endif
+    }
+
+    private static var appGroupNoticeDetail: String {
+        #if ATTIC_SIDELOAD
+        // Stated as a known limit rather than a fault, because it is one. An
+        // App Group belongs to a developer team, and a re-signing service
+        // signs with its own, so iOS will not grant a group that is not in
+        // its profile. No change to this app can alter that.
+        return "Expected for a re-signed build: an App Group belongs to a developer team, so a re-signing service can't grant this one. The widget uses exact-day memories and its own defaults, so its count can differ from the app's. An App Store build won't do this."
+        #else
+        return "It will show its own defaults, so its memory count can differ from the app's. Check the App Group is enabled on both targets."
+        #endif
+    }
+
+    private static var appGroupNoticeSymbol: String {
+        #if ATTIC_SIDELOAD
+        return "info.circle.fill"
+        #else
+        return "exclamationmark.triangle.fill"
+        #endif
+    }
+
+    private static var appGroupNoticeTint: Color {
+        #if ATTIC_SIDELOAD
+        return .secondary
+        #else
+        return .orange
+        #endif
     }
 
     private func hourLabel(_ hour: Int) -> String {
