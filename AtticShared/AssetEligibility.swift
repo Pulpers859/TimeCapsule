@@ -19,13 +19,16 @@ nonisolated enum AssetEligibility {
 
     /// Whether this asset should be counted once rather than forty times.
     ///
-    /// A burst is one press of the shutter and many `PHAsset`s — Photos shows
-    /// it as a single item. Counting every frame would make Attic's number for
-    /// a day disagree with the number the user can see in Photos, which is the
-    /// one place they can check it.
+    /// A burst is one press of the shutter and many `PHAsset`s, and Photos
+    /// shows it as a single item. A count that said 47 against Photos' 12
+    /// would look like a bug in the one number a user can actually check.
     ///
-    /// An asset with no `burstIdentifier` is not part of a burst and is always
-    /// counted.
+    /// Belt and braces, not the mechanism. `PHFetchOptions.includeAllBurstAssets`
+    /// defaults to false, so a fetch already returns only the representative
+    /// frame — which means the memory fetch and the day fetch have never
+    /// disagreed about this, contrary to what an audit of the day browser
+    /// concluded and what the commit that landed it claimed. This survives as
+    /// a guard for the day someone sets that option, and is otherwise a no-op.
     static func isRepresentative(_ asset: PHAsset) -> Bool {
         asset.burstIdentifier == nil || asset.representsBurst
     }

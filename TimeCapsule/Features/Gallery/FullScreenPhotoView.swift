@@ -74,6 +74,15 @@ struct FullScreenPhotoView: View {
 
     /// What the day probe watches: which memory is on screen *and* which mode
     /// the pager is in.
+    /// What to call what is on screen.
+    ///
+    /// In day mode these are not memories — no anniversary window and no
+    /// exclusions were applied — and that distinction is the whole reason
+    /// `DayContents` is a separate type. The visible copy already respects it;
+    /// the VoiceOver labels did not, and they are the only description a
+    /// VoiceOver user gets.
+    private var itemNoun: String { pagerSource.isDay ? "item" : "memory" }
+
     private var dayProbeKey: String {
         "\(pagerSource.isDay ? "day" : "memories")#\(currentAssetIdentifier ?? "-")"
     }
@@ -254,7 +263,7 @@ struct FullScreenPhotoView: View {
 
                                 ChromeButton(
                                     systemImage: "square.and.arrow.up",
-                                    accessibilityLabel: "Share memory",
+                                    accessibilityLabel: "Share \(itemNoun)",
                                     isBusy: isPreparingShare,
                                     action: shareCurrentPhoto
                                 )
@@ -262,7 +271,7 @@ struct FullScreenPhotoView: View {
 
                                 ChromeButton(
                                     systemImage: "trash",
-                                    accessibilityLabel: "Delete memory",
+                                    accessibilityLabel: "Delete \(itemNoun)",
                                     isBusy: isDeleting,
                                     action: { showDeleteConfirm = true }
                                 )
@@ -294,6 +303,7 @@ struct FullScreenPhotoView: View {
                                 .font(.footnote.weight(.medium))
                                 .monospacedDigit()
                                 .contentTransition(.numericText())
+                                .accessibilityLabel("\(itemNoun.capitalized) \(currentIndex + 1) of \(visibleAssets.count)")
                                 .padding(.horizontal, 16)
                                 .frame(minHeight: 44)
                                 .tcGlass(in: Capsule())
@@ -301,7 +311,7 @@ struct FullScreenPhotoView: View {
                             HStack {
                                 ChromeButton(
                                     systemImage: "info.circle",
-                                    accessibilityLabel: "Memory info",
+                                    accessibilityLabel: "\(itemNoun.capitalized) info",
                                     action: {
                                         guard visibleAssets.indices.contains(currentIndex) else { return }
                                         infoAsset = IdentifiableAsset(visibleAssets[currentIndex])
@@ -449,10 +459,10 @@ struct FullScreenPhotoView: View {
             VideoAudioSession.end()
         }
         .preferredColorScheme(.dark)
-        .accessibilityAction(named: "Previous memory") {
+        .accessibilityAction(named: "Previous \(itemNoun)") {
             moveToPreviousMemory()
         }
-        .accessibilityAction(named: "Next memory") {
+        .accessibilityAction(named: "Next \(itemNoun)") {
             moveToNextMemory()
         }
     }

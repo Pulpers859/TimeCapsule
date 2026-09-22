@@ -67,6 +67,10 @@ nonisolated enum DayContents {
         // the Hidden album behind Face ID; surfacing those here would be a
         // privacy break wearing a feature's clothes.
         options.includeHiddenAssets = false
+        // Both of these are the defaults, set out loud because both are
+        // load-bearing and silent. Hidden assets sit behind Face ID in Photos,
+        // and a burst is one item there however many frames it holds.
+        options.includeAllBurstAssets = false
 
         let result = PHAsset.fetchAssets(with: options)
 
@@ -113,6 +117,7 @@ nonisolated enum DayContents {
             bounds.end as NSDate
         )
         options.includeHiddenAssets = false
+        options.includeAllBurstAssets = false
         return PHAsset.fetchAssets(with: options).count
     }
 }

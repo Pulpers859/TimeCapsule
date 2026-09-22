@@ -60,20 +60,13 @@ item 5 should be renamed to match at the same time.
 Note the bundle ID should now derive from whatever domain you pick for Attic,
 not the old name.
 
-### 2. Privacy policy — a certain rejection without it
+### 2. Privacy policy — done
 
-Guideline 5.1.1(i), verbatim:
+Hosted at **https://pulpers859.github.io/TimeCapsule/** via GitHub Pages, served
+from `docs/index.html` on `main`. That is the URL for the App Store listing.
 
-> All apps must include a link to their privacy policy in the App Store Connect
-> metadata field **and within the app in an easily accessible manner**.
-
-This applies to every app, including one that collects nothing. There is
-currently no privacy policy link anywhere in the app or the repo.
-
-Needs: a hosted URL, then a row in `SettingsView` linking to it. The policy
-itself is short for this app — photos never leave the device; a memory's
-coordinates go to Apple Maps for place names; no analytics, no accounts, no
-third-party SDKs.
+`docs/privacy.md` is the same text in Markdown; edit both together, or the page
+and the repo will disagree.
 
 ### 3. Price
 
@@ -106,10 +99,19 @@ and register that identifier. If the bundle identifier changes (item 1), change
 the group with it — it is referenced in one constant,
 `AtticDefaults.appGroupIdentifier`, plus the two entitlement files.
 
-**This fails silently if skipped.** `UserDefaults(suiteName:)` returns nil when
-the group is not provisioned, and the code falls back to `.standard` rather
-than crashing. In the app everything keeps working; in the widget the memory
-range silently reverts to the free-tier default. Nothing logs an error.
+**It no longer fails silently.** `AtticDefaults.isAppGroupAvailable` asks for
+the group's container directory, which is the check that actually fails without
+the entitlement — `UserDefaults(suiteName:)` is not, because it returns a store
+for a suite the process cannot reach. Settings shows a row when the group is
+missing, worded as a known limit in a sideloaded build and as a warning in any
+other.
+
+**Sideloaded builds cannot have it, and that is expected.** An App Group
+belongs to a developer team; a re-signing service signs with its own, so iOS
+will not grant a group that is not in its profile. Confirmed on device. The
+visible symptom is the widget reporting a different memory count from the app,
+because the widget falls back to the free-tier exact-day window. This is the
+one item on this list that an App Store build fixes by itself.
 
 ### 6. Account prerequisites
 
