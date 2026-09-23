@@ -6,6 +6,19 @@ nonisolated struct LockedYear: Identifiable, Hashable {
     let year: Int
     let count: Int
     let yearsAgo: Int
+    /// Formatted from the year's own anniversary in the user's calendar, the
+    /// same way `YearGroup.displayYear` is. `year` is Gregorian, so printing
+    /// it directly showed "2016" beside a heading reading "Reiwa 6".
+    let displayYear: String
+
+    var id: Int { year }
+}
+
+/// A year inside the free window that turned up nothing on this date.
+nonisolated struct EmptyYear: Identifiable, Hashable {
+    let year: Int
+    let yearsAgo: Int
+    let displayYear: String
 
     var id: Int { year }
 }
@@ -65,6 +78,13 @@ nonisolated struct YearGroup: Identifiable {
     }
 
     var label: String {
+        Self.label(yearsAgo: yearsAgo)
+    }
+
+    /// Shared by every row that names a past year — memories, locked years
+    /// and empty years — so they cannot drift into different casing, which
+    /// the locked card briefly did ("3 years ago" under "2 Years Ago").
+    static func label(yearsAgo: Int) -> String {
         yearsAgo == 1 ? "1 Year Ago" : "\(yearsAgo) Years Ago"
     }
 
@@ -288,7 +308,7 @@ nonisolated enum MemoryLibrary {
 
         let currentYear = MemoryWindow.anniversaryCalendar(calendar).component(.year, from: date)
         var counts: [Int: Int] = [:]
-        enumerateMemories(
+        let ranges = enumerateMemories(
             on: date,
             calendar: calendar,
             exclusions: exclusions,
@@ -302,9 +322,53 @@ nonisolated enum MemoryLibrary {
             counts[year, default: 0] += 1
         }
 
+        var anniversaries: [Int: Date] = [:]
+        for range in ranges { anniversaries[range.year] = range.anniversary }
+
         return counts
-            .map { LockedYear(year: $0.key, count: $0.value, yearsAgo: currentYear - $0.key) }
+            .map { entry in
+                LockedYear(
+                    year: entry.key,
+                    count: entry.value,
+                    yearsAgo: currentYear - entry.key,
+                    displayYear: anniversaries[entry.key]?.formatted(.dateTime.year()) ?? String(entry.key)
+                )
+            }
             .sorted { $0.year > $1.year }
+    }
+
+    /// Years the free version searched and found nothing in.
+    ///
+    /// The free version promises the last two years. When one of them is
+    /// empty it used to vanish without a word, and a promise of two years
+    /// that visibly delivers one reads as a bug or as being shortchanged.
+    ///
+    /// Taken from `anniversaryRanges` — the same years the search actually
+    /// covered — rather than counted back from today. Counting back by hand
+    /// gets the year wrong exactly where this code has been wrong before: a
+    /// late day start just after New Year, and calendars whose year
+    /// component is not the Gregorian one. It also gets February 29 right
+    /// for free: a year with no February 29 is not in the ranges at all, so
+    /// it is never reported as an empty year it could not have been.
+    ///
+    /// Empty for Pro, where twenty years of mostly-empty rows would be noise
+    /// and no specific number of years was promised.
+    static func emptyFreeYears(
+        on date: Date,
+        calendar: Calendar = .current,
+        shownYears: Set<Int>
+    ) -> [EmptyYear] {
+        guard MemoryWindow.lookbackYears < MemoryWindow.fullLookbackYears else { return [] }
+        let currentYear = MemoryWindow.anniversaryCalendar(calendar).component(.year, from: date)
+        return anniversaryRanges(on: date, calendar: calendar)
+            .filter { !shownYears.contains($0.year) }
+            .map { range in
+                EmptyYear(
+                    year: range.year,
+                    yearsAgo: currentYear - range.year,
+                    displayYear: range.anniversary.formatted(.dateTime.year())
+                )
+            }
     }
 
     /// Number of memories on `date`.

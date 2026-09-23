@@ -7,6 +7,9 @@ struct TimeCapsuleView: View {
     /// Older years the free version cannot open. Shown after the memories,
     /// never counted with them.
     let lockedYears: [LockedYear]
+    /// Years in the free window that turned up nothing, interleaved with the
+    /// memories so the two years the free version promises are both visible.
+    let emptyFreeYears: [EmptyYear]
     let onOpenSettings: () -> Void
     @State private var isSelecting = false
     @State private var selectedIDs: Set<String> = []
@@ -75,6 +78,34 @@ struct TimeCapsuleView: View {
         allFilteredAssets.map(\.localIdentifier)
     }
 
+    /// One entry per year in the grouped list, newest first, whether it holds
+    /// memories or is an empty free year.
+    private enum YearRow: Identifiable {
+        case memories(YearGroup)
+        case empty(EmptyYear)
+
+        var id: String {
+            switch self {
+            case .memories(let group): return "memories-\(group.year)"
+            case .empty(let year): return "empty-\(year.year)"
+            }
+        }
+
+        var year: Int {
+            switch self {
+            case .memories(let group): return group.year
+            case .empty(let year): return year.year
+            }
+        }
+    }
+
+    /// Interleaved rather than appended: an empty 2025 belongs above 2024,
+    /// not after it, or the list stops reading as a timeline.
+    private var groupedRows: [YearRow] {
+        (filteredYearGroups.map(YearRow.memories) + emptyFreeYears.map(YearRow.empty))
+            .sorted { $0.year > $1.year }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
@@ -86,9 +117,19 @@ struct TimeCapsuleView: View {
                             // empty state: no filter is hiding anything, and
                             // offering to reset one would send them looking for
                             // a problem that is not there.
-                            RecentYearsEmptyNote()
-                                .padding(.horizontal, TCMetrics.screenPadding)
-                                .padding(.top, 24)
+                            if emptyFreeYears.isEmpty {
+                                // February 29: neither of the two years before
+                                // a leap year has one, so there are no years
+                                // to name and a blank space would explain
+                                // nothing.
+                                RecentYearsEmptyNote()
+                                    .padding(.horizontal, TCMetrics.screenPadding)
+                                    .padding(.top, 24)
+                            } else {
+                                ForEach(emptyFreeYears) { year in
+                                    EmptyYearRow(year: year)
+                                }
+                            }
                         } else if filteredYearGroups.isEmpty {
                             FilterEmptyState(
                                 selectedFilter: selectedFilter,
@@ -110,16 +151,29 @@ struct TimeCapsuleView: View {
 
                             switch gridLayoutMode {
                             case .grouped:
-                                ForEach(filteredYearGroups) { group in
-                                    YearSection(
-                                        group: group,
-                                        isSelecting: isSelecting,
-                                        selectedIDs: $selectedIDs,
-                                        onOpen: { selectedAsset = IdentifiableAsset($0) }
-                                    )
-                                    .id(sectionID(for: group))
+                                ForEach(groupedRows) { row in
+                                    switch row {
+                                    case .memories(let group):
+                                        YearSection(
+                                            group: group,
+                                            isSelecting: isSelecting,
+                                            selectedIDs: $selectedIDs,
+                                            onOpen: { selectedAsset = IdentifiableAsset($0) }
+                                        )
+                                        .id(sectionID(for: group))
+                                    case .empty(let year):
+                                        EmptyYearRow(year: year)
+                                    }
                                 }
                             case .merged:
+                                // The merged grid has no year headings, so an
+                                // empty year has no row to sit in. One line
+                                // above it says the same thing.
+                                if !emptyFreeYears.isEmpty {
+                                    EmptyYearsLine(years: emptyFreeYears)
+                                        .padding(.horizontal, TCMetrics.screenPadding)
+                                        .padding(.top, 16)
+                                }
                                 MemoryGridBody(
                                     items: mergedItems,
                                     isSelecting: isSelecting,
@@ -1091,10 +1145,10 @@ struct LockedYearsSection: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(years) { year in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(String(year.year))
+                            Text(year.displayYear)
                                 .font(.system(size: 20, design: .rounded).weight(.bold))
                                 .foregroundStyle(.secondary)
-                            Text(year.yearsAgo == 1 ? "1 year ago" : "\(year.yearsAgo) years ago")
+                            Text(YearGroup.label(yearsAgo: year.yearsAgo))
                                 .font(.footnote.weight(.medium))
                                 .foregroundStyle(.tertiary)
                             Spacer(minLength: 8)
@@ -1157,5 +1211,57 @@ private struct RecentYearsEmptyNote: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A year the free version searched and found nothing in.
+///
+/// Laid out exactly like `YearSectionHeader` so it reads as a year in the
+/// same timeline, only quieter.
+///
+/// "No memories" rather than "No photos": a year can be empty because its
+/// photos were hidden with Feature Less Often rather than because none were
+/// taken, and in this app a memory is what is shown. "No photos" would be
+/// false in that case; this is true in both.
+struct EmptyYearRow: View {
+    let year: EmptyYear
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(year.displayYear)
+                .font(.system(size: 26, design: .rounded).weight(.bold))
+                .tracking(-0.4)
+                .foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+
+            Text(YearGroup.label(yearsAgo: year.yearsAgo))
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+
+            Spacer(minLength: 8)
+
+            Text("No memories")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .padding(.horizontal, TCMetrics.screenPadding)
+        .padding(.top, 20)
+    }
+}
+
+/// The merged grid's version of `EmptyYearRow`, which has no heading to sit
+/// under.
+private struct EmptyYearsLine: View {
+    let years: [EmptyYear]
+
+    var body: some View {
+        Text("No memories from \(years.map(\.displayYear).formatted(.list(type: .or))) on this day.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

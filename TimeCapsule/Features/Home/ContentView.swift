@@ -51,6 +51,7 @@ struct ContentView: View {
                                 TimeCapsuleView(
                                     yearGroups: model.yearGroups,
                                     lockedYears: model.lockedYears,
+                                    emptyFreeYears: model.emptyFreeYears,
                                     onOpenSettings: { showSettings = true }
                                 )
                             }

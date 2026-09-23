@@ -10,6 +10,9 @@ class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     /// two must never be summed: `yearGroups` is what the user can see, and
     /// that is the number the widget and the notifications agree on.
     @Published var lockedYears: [LockedYear] = []
+    /// Years inside the free window with nothing on this date. Shown as
+    /// rows so a promise of two years never silently delivers one.
+    @Published var emptyFreeYears: [EmptyYear] = []
     @Published var authorizationStatus: PHAuthorizationStatus
     @Published var isLoading: Bool
 
@@ -97,14 +100,21 @@ class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
         let queryDate = MemoryWindow.logicalDate(for: Date())
         // Both off the main actor, and in one hop so the gallery never shows
         // one updated and the other stale.
-        let (groups, locked) = await Task.detached(priority: .userInitiated) {
-            (MemoryLibrary.yearGroups(on: queryDate), MemoryLibrary.lockedYears(on: queryDate))
+        let (groups, locked, empty) = await Task.detached(priority: .userInitiated) {
+            let groups = MemoryLibrary.yearGroups(on: queryDate)
+            let locked = MemoryLibrary.lockedYears(on: queryDate)
+            let empty = MemoryLibrary.emptyFreeYears(
+                on: queryDate,
+                shownYears: Set(groups.map { $0.year })
+            )
+            return (groups, locked, empty)
         }.value
         let currentAuthorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         guard requestedGeneration == fetchGeneration,
               currentAuthorization == .authorized || currentAuthorization == .limited else { return }
         yearGroups = groups
         lockedYears = locked
+        emptyFreeYears = empty
         isLoading = false
     }
 
