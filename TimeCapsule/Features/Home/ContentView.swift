@@ -31,7 +31,13 @@ struct ContentView: View {
                         }
 
                         ZStack {
-                            if model.yearGroups.isEmpty {
+                            // Empty only when there is nothing to show *or* to
+                            // unlock. A free user whose last two years are empty
+                            // but whose older years are full would otherwise be
+                            // told "nothing was captured on this date in previous
+                            // years", which is false and is also the one moment
+                            // the app has the most to offer them.
+                            if model.yearGroups.isEmpty && model.lockedYears.isEmpty {
                                 if model.isLoading {
                                     SkeletonGalleryView()
                                 } else {
@@ -44,6 +50,7 @@ struct ContentView: View {
                             } else {
                                 TimeCapsuleView(
                                     yearGroups: model.yearGroups,
+                                    lockedYears: model.lockedYears,
                                     onOpenSettings: { showSettings = true }
                                 )
                             }
@@ -60,7 +67,7 @@ struct ContentView: View {
             // Swapping between skeleton, empty, and gallery is a full-screen
             // change; a cross-fade keeps it from snapping.
             .animation(.easeInOut(duration: 0.28), value: model.isLoading)
-            .animation(.easeInOut(duration: 0.28), value: model.yearGroups.isEmpty)
+            .animation(.easeInOut(duration: 0.28), value: model.yearGroups.isEmpty && model.lockedYears.isEmpty)
         }
         .task {
             await model.refreshAuthorizationAndMemories()

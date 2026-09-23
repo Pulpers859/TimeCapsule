@@ -1,6 +1,15 @@
 import Foundation
 import Photos
 
+/// A past year the free version cannot open, with how many memories it holds.
+nonisolated struct LockedYear: Identifiable, Hashable {
+    let year: Int
+    let count: Int
+    let yearsAgo: Int
+
+    var id: Int { year }
+}
+
 nonisolated struct YearGroup: Identifiable {
     let id: Int
     let year: Int
@@ -86,7 +95,11 @@ nonisolated enum MemoryLibrary {
     /// Shared deliberately: `CLAUDE.md` treats the two surfaces disagreeing as a
     /// contract violation, and the only way to guarantee they agree is for both
     /// to derive their date ranges here.
-    private static func anniversaryRanges(on date: Date, calendar: Calendar) -> [AnniversaryRange] {
+    private static func anniversaryRanges(
+        on date: Date,
+        calendar: Calendar,
+        lookbackYears: Int = MemoryWindow.lookbackYears
+    ) -> [AnniversaryRange] {
         // Gregorian, so the stride below is over absolute years. See
         // `MemoryWindow.anniversaryCalendar` — under the Japanese calendar
         // this component is an era-relative 8, and the lookback ran to -12.
@@ -94,7 +107,7 @@ nonisolated enum MemoryLibrary {
         let currentYear = calendar.component(.year, from: date)
         return stride(
             from: currentYear - 1,
-            through: currentYear - MemoryWindow.lookbackYears,
+            through: currentYear - lookbackYears,
             by: -1
         ).compactMap { year -> AnniversaryRange? in
             guard let range = MemoryWindow.range(for: date, anniversaryYear: year, calendar: calendar) else {
@@ -149,9 +162,10 @@ nonisolated enum MemoryLibrary {
         calendar: Calendar,
         exclusions: MemoryExclusions.Context?,
         sorted: Bool,
+        lookbackYears: Int = MemoryWindow.lookbackYears,
         body: @escaping (_ asset: PHAsset, _ year: Int) -> Void
     ) -> [AnniversaryRange] {
-        let ranges = anniversaryRanges(on: date, calendar: calendar)
+        let ranges = anniversaryRanges(on: date, calendar: calendar, lookbackYears: lookbackYears)
         guard !ranges.isEmpty else { return [] }
 
         let dates = datePredicate(for: ranges)
@@ -246,6 +260,51 @@ nonisolated enum MemoryLibrary {
                 referenceYear: currentYear
             )
         }
+    }
+
+    /// The years the current user cannot open yet, and how much is in each.
+    ///
+    /// What makes the free version's limit sell rather than merely restrict:
+    /// the gallery shows "2016 · 14 memories" behind a lock, so every day the
+    /// app shows exactly what is on the other side of the purchase. Empty for
+    /// Pro, where there is nothing locked.
+    ///
+    /// Goes through `enumerateMemories` like the two counters, so a locked
+    /// count obeys exactly the same membership rule as an unlocked one —
+    /// exclusions included. A photo someone asked Attic to feature less often
+    /// must not reappear as a number used to sell them the app.
+    ///
+    /// These counts must never feed the gallery's memory total, the widget or
+    /// the notification schedule. Those count what the user can open. This
+    /// counts what they cannot, and mixing the two is how a reminder would
+    /// promise twelve memories to someone who could see three.
+    static func lockedYears(
+        on date: Date,
+        calendar: Calendar = .current,
+        exclusions: MemoryExclusions.Context? = nil
+    ) -> [LockedYear] {
+        let accessible = MemoryWindow.lookbackYears
+        guard accessible < MemoryWindow.fullLookbackYears else { return [] }
+
+        let currentYear = MemoryWindow.anniversaryCalendar(calendar).component(.year, from: date)
+        var counts: [Int: Int] = [:]
+        enumerateMemories(
+            on: date,
+            calendar: calendar,
+            exclusions: exclusions,
+            sorted: false,
+            lookbackYears: MemoryWindow.fullLookbackYears
+        ) { _, year in
+            // The accessible years are fetched here too and discarded; they
+            // are a handful of single days, and skipping them would mean a
+            // second way of building the date ranges.
+            guard currentYear - year > accessible else { return }
+            counts[year, default: 0] += 1
+        }
+
+        return counts
+            .map { LockedYear(year: $0.key, count: $0.value, yearsAgo: currentYear - $0.key) }
+            .sorted { $0.year > $1.year }
     }
 
     /// Number of memories on `date`.

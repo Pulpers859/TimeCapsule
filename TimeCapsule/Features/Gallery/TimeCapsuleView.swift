@@ -4,6 +4,9 @@ import UIKit
 
 struct TimeCapsuleView: View {
     let yearGroups: [YearGroup]
+    /// Older years the free version cannot open. Shown after the memories,
+    /// never counted with them.
+    let lockedYears: [LockedYear]
     let onOpenSettings: () -> Void
     @State private var isSelecting = false
     @State private var selectedIDs: Set<String> = []
@@ -77,7 +80,16 @@ struct TimeCapsuleView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        if filteredYearGroups.isEmpty {
+                        if yearGroups.isEmpty {
+                            // Reachable only for a free user with nothing in the
+                            // last two years and something older. Not the filter
+                            // empty state: no filter is hiding anything, and
+                            // offering to reset one would send them looking for
+                            // a problem that is not there.
+                            RecentYearsEmptyNote()
+                                .padding(.horizontal, TCMetrics.screenPadding)
+                                .padding(.top, 24)
+                        } else if filteredYearGroups.isEmpty {
                             FilterEmptyState(
                                 selectedFilter: selectedFilter,
                                 onResetFilters: resetFilters
@@ -117,6 +129,14 @@ struct TimeCapsuleView: View {
                                 )
                                 .padding(.top, 20)
                             }
+                        }
+
+                        if !lockedYears.isEmpty {
+                            LockedYearsSection(years: lockedYears) {
+                                showPaywall = true
+                            }
+                            .padding(.horizontal, TCMetrics.screenPadding)
+                            .padding(.top, 28)
                         }
                     }
                     .padding(.bottom, 28)
@@ -1050,5 +1070,92 @@ struct IdentifiableAsset: Identifiable {
     init(_ asset: PHAsset) {
         self.id = asset.localIdentifier
         self.asset = asset
+    }
+}
+
+/// The years a free user cannot open yet, as a list of what is waiting.
+///
+/// A count and a lock rather than blurred thumbnails. Blurred previews look
+/// like a teaser but leak the photo, and a sideloaded or jailbroken build
+/// could simply unblur them. A number gives nothing away and still says
+/// exactly what is on the other side of the purchase.
+struct LockedYearsSection: View {
+    let years: [LockedYear]
+    let onUnlock: () -> Void
+
+    private var total: Int { years.reduce(0) { $0 + $1.count } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button(action: onUnlock) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(years) { year in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(String(year.year))
+                                .font(.system(size: 20, design: .rounded).weight(.bold))
+                                .foregroundStyle(.secondary)
+                            Text(year.yearsAgo == 1 ? "1 year ago" : "\(year.yearsAgo) years ago")
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(.tertiary)
+                            Spacer(minLength: 8)
+                            Text(year.count == 1 ? "1 memory" : "\(year.count) memories")
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "lock.fill")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+
+                        if year.id != years.last?.id {
+                            Divider().padding(.leading, 16)
+                        }
+                    }
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "lock.open.fill")
+                        Text("See every year with Attic Pro")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                }
+                .background(
+                    Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            // One element for VoiceOver rather than a row per year: the rows
+            // are not separately actionable, and reading twenty of them
+            // before reaching the only thing the card does is a trap.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                "\(total) more memories from \(years.count) earlier years. Locked."
+            )
+            .accessibilityHint("Opens Attic Pro, which shows every year.")
+            .accessibilityAddTraits(.isButton)
+        }
+    }
+}
+
+/// What the gallery says when the free version's two years are empty but
+/// older years are not. Deliberately specific about *which* years: "no
+/// memories today" would be false, and it is the day the app has the most
+/// to offer.
+private struct RecentYearsEmptyNote: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Nothing from the last \(MemoryWindow.freeLookbackYears) years today")
+                .font(.headline)
+            Text("But there is from further back.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

@@ -36,6 +36,15 @@ struct PaywallView: View {
                             .padding(.bottom, 32)
 
                         VStack(alignment: .leading, spacing: 18) {
+                            // First, because it is what the locked years in the
+                            // gallery lead here to buy. The free version shows
+                            // the last two; the other three points are extras
+                            // on top of the reason anyone pays.
+                            PaywallPoint(
+                                symbol: "clock.arrow.circlepath",
+                                title: "Every year you have photos from",
+                                detail: "The free version shows the last \(MemoryWindow.freeLookbackYears) years. Pro goes all the way back."
+                            )
                             PaywallPoint(
                                 symbol: "film.stack",
                                 title: "Recap videos",

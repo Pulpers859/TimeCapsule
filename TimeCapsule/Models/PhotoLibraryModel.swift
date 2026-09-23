@@ -4,6 +4,12 @@ import Combine
 @MainActor
 class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserver {
     @Published var yearGroups: [YearGroup] = []
+    /// Older years the free version cannot open. Always empty for Pro.
+    ///
+    /// Published beside `yearGroups` rather than folded into it, because the
+    /// two must never be summed: `yearGroups` is what the user can see, and
+    /// that is the number the widget and the notifications agree on.
+    @Published var lockedYears: [LockedYear] = []
     @Published var authorizationStatus: PHAuthorizationStatus
     @Published var isLoading: Bool
 
@@ -79,19 +85,26 @@ class PhotoLibraryModel: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     func fetchOnThisDay() async {
         fetchGeneration += 1
         let requestedGeneration = fetchGeneration
-        let shouldShowLoading = yearGroups.isEmpty
+        // Nothing on screen yet means neither list has anything. A free user
+        // whose only memories are locked has an empty `yearGroups` and a
+        // full gallery; keyed on `yearGroups` alone they got a skeleton flash
+        // on every refresh.
+        let shouldShowLoading = yearGroups.isEmpty && lockedYears.isEmpty
         if shouldShowLoading {
             isLoading = true
         }
         await Task.yield()
         let queryDate = MemoryWindow.logicalDate(for: Date())
-        let groups = await Task.detached(priority: .userInitiated) {
-            MemoryLibrary.yearGroups(on: queryDate)
+        // Both off the main actor, and in one hop so the gallery never shows
+        // one updated and the other stale.
+        let (groups, locked) = await Task.detached(priority: .userInitiated) {
+            (MemoryLibrary.yearGroups(on: queryDate), MemoryLibrary.lockedYears(on: queryDate))
         }.value
         let currentAuthorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         guard requestedGeneration == fetchGeneration,
               currentAuthorization == .authorized || currentAuthorization == .limited else { return }
         yearGroups = groups
+        lockedYears = locked
         isLoading = false
     }
 

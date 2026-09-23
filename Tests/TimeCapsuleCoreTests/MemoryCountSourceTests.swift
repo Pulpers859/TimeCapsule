@@ -66,18 +66,35 @@ final class MemoryCountSourceTests: XCTestCase {
         )
     }
 
-    /// Both public entry points go through the shared function.
-    func testBothCountersUseTheSharedEnumeration() throws {
+    /// Every counter goes through the shared function.
+    ///
+    /// This number has moved once, from 3 to 4, and the reason matters because
+    /// raising a tripwire's number to make it pass is exactly how the
+    /// guarantee it protects gets retired. It moved because a *third* counter
+    /// was added — `lockedYears`, for the years the free version cannot open —
+    /// and that counter goes through the shared enumeration like the other
+    /// two. That strengthens the guarantee rather than weakening it: a locked
+    /// count now obeys the same membership rule, exclusions included.
+    ///
+    /// What this must keep catching is a counter that does *not* go through
+    /// it. That case still fails, both here and in the single-fetch test above.
+    func testEveryCounterUsesTheSharedEnumeration() throws {
         let source = try librarySource()
-        let calls = source.components(separatedBy: "enumerateMemories(").count - 1
+        let occurrences = source.components(separatedBy: "enumerateMemories(").count - 1
         XCTAssertEqual(
-            calls,
-            3,
+            occurrences,
+            4,
             """
             Expected enumerateMemories to be declared once and called by \
-            both yearGroups and count — three occurrences. Found \(calls).
+            yearGroups, count and lockedYears — four occurrences. Found \
+            \(occurrences). If you added a counter, route it through \
+            enumerateMemories and raise this; if a counter stopped using it, \
+            that is the bug.
             """
         )
+        for counter in ["static func yearGroups(", "static func count(", "static func lockedYears("] {
+            XCTAssertTrue(source.contains(counter), "\(counter) is missing from MemoryLibrary.swift.")
+        }
     }
 
     /// The media-type test belongs in the shared enumeration, where both
