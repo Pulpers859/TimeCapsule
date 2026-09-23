@@ -95,12 +95,18 @@ nonisolated enum AtticDefaults {
     /// device clock skew, reads exactly like an absent one.
     static var isProEntitled: Bool {
         get {
-            // A sideloaded build compiles Pro in, and `PurchaseStore` records
-            // that — but only into the *app's* store. Re-signing drops the App
-            // Group, so the widget cannot read it and would fall back to the
-            // free two-year window while the app showed twenty. The flag is
-            // compiled into both targets, so answering from it here makes the
-            // two processes agree without needing to share anything.
+            // A sideloaded build decides Pro with a switch, and `PurchaseStore`
+            // records the answer — but only into the *app's* store. Re-signing
+            // drops the App Group, so the widget cannot read it. Answering
+            // from `SideloadSettings` here means the widget falls back to the
+            // build's starting position rather than to free.
+            //
+            // That depends on the widget being compiled with the flag, which
+            // for a long time it was not: its build configurations never read
+            // `ATTIC_EXTRA_SWIFT_FLAGS`, so this branch was compiled into the
+            // app alone and every sideloaded widget ran the free version.
+            // `SideloadFlagTripwireTests` now fails if either target stops
+            // reading it.
             #if ATTIC_SIDELOAD
             return SideloadSettings.proUnlocked
             #else

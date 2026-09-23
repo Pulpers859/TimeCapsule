@@ -368,10 +368,12 @@ struct SettingsView: View {
 
     // MARK: - App Group notice
 
-    // `ATTIC_SIDELOAD` is defined for both the app and the widget targets
-    // (`SWIFT_ACTIVE_COMPILATION_CONDITIONS` inherits
-    // `ATTIC_EXTRA_SWIFT_FLAGS` in all four configurations), so this is a
-    // reliable way to tell a re-signed build from a real one.
+    // `ATTIC_SIDELOAD` tells a re-signed build from a real one. This view is
+    // in the app target, which has always read the flag. (An earlier version
+    // of this comment said the widget did too, citing "all four
+    // configurations" — two of those four were the test target, and the
+    // widget read nothing. `SideloadFlagTripwireTests` now checks the app and
+    // the widget by name.)
 
     private static var appGroupNoticeTitle: String {
         #if ATTIC_SIDELOAD

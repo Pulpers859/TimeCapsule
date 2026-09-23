@@ -68,15 +68,70 @@ final class SideloadFlagTripwireTests: XCTestCase {
         }
     }
 
-    /// The placeholder must still be wired, or the workflow's flag goes
-    /// nowhere and a sideload build silently loses its switch.
-    func testCompilationConditionsStillReadThePlaceholder() throws {
+    /// Both targets that compile `AtticShared` must read the placeholder.
+    ///
+    /// The widget did not, for weeks, while the check that stood here passed:
+    /// it only asked whether the placeholder appeared *anywhere* in the
+    /// project, and the app and the test target were enough to satisfy it.
+    /// So every sideloaded widget ran the free version whatever the app said,
+    /// and the settings footer explaining the widget's behaviour described
+    /// code that was never compiled into it. Found by reading strings out of
+    /// a built IPA, not by any test. This names the targets instead.
+    func testAppAndWidgetBothReadThePlaceholder() throws {
         let project = repositoryRoot()
             .appendingPathComponent("TimeCapsule.xcodeproj/project.pbxproj")
-        let text = try String(contentsOf: project, encoding: .utf8)
-        XCTAssertTrue(
-            text.contains("$(ATTIC_EXTRA_SWIFT_FLAGS)"),
-            "SWIFT_ACTIVE_COMPILATION_CONDITIONS no longer reads $(ATTIC_EXTRA_SWIFT_FLAGS)."
-        )
+        guard let text = try? String(contentsOf: project, encoding: .utf8) else {
+            throw XCTSkip("project.pbxproj not readable; repository layout changed.")
+        }
+
+        for target in ["TimeCapsule", "AtticWidget"] {
+            let blocks = configurationBlocks(forTarget: target, in: text)
+            XCTAssertEqual(
+                blocks.count, 2,
+                "Expected a Debug and a Release configuration for \(target); found \(blocks.count)."
+            )
+            for block in blocks {
+                XCTAssertTrue(
+                    block.contains("$(ATTIC_EXTRA_SWIFT_FLAGS)"),
+                    """
+                    A \(target) build configuration does not read \
+                    $(ATTIC_EXTRA_SWIFT_FLAGS) in SWIFT_ACTIVE_COMPILATION_CONDITIONS, \
+                    so a sideload build compiles this target without the sideload \
+                    flag and the two processes disagree about Pro.
+                    """
+                )
+            }
+        }
+    }
+
+    /// The `XCBuildConfiguration` blocks belonging to one native target.
+    ///
+    /// Plain string searching rather than regular expressions so this runs
+    /// the same on the Windows toolchain. An ID appears twice in the file: in
+    /// the target's configuration list, indented four tabs, and at its own
+    /// definition, indented two — which is the one wanted.
+    private func configurationBlocks(forTarget target: String, in text: String) -> [String] {
+        let marker = "/* Build configuration list for PBXNativeTarget \"\(target)\" */ = {"
+        guard let list = text.range(of: marker),
+              let open = text.range(of: "buildConfigurations = (", range: list.upperBound..<text.endIndex),
+              let close = text.range(of: ");", range: open.upperBound..<text.endIndex) else {
+            return []
+        }
+
+        let ids = text[open.upperBound..<close.lowerBound]
+            .split(separator: "\n")
+            .compactMap { line -> String? in
+                let first = line.trimmingCharacters(in: .whitespaces).split(separator: " ").first
+                guard let id = first, id.count == 24 else { return nil }
+                return String(id)
+            }
+
+        return ids.compactMap { id in
+            guard let start = text.range(of: "\n\t\t\(id) /* "),
+                  let end = text.range(of: "\n\t\t};", range: start.upperBound..<text.endIndex) else {
+                return nil
+            }
+            return String(text[start.lowerBound..<end.upperBound])
+        }
     }
 }
