@@ -90,7 +90,11 @@ final class PurchaseStore: ObservableObject {
         // App Store build cannot pick it up by accident, and it grants
         // nothing at runtime that a receipt check would have granted — the
         // flag has to be compiled in deliberately.
-        unlocked = true
+        //
+        // Read from a switch in Settings rather than hard-coded, so one build
+        // can be used both to enjoy Pro and to check what a free user sees.
+        // `ATTIC_SIDELOAD_PRO` only decides where the switch starts.
+        unlocked = SideloadSettings.proUnlocked
         #else
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }

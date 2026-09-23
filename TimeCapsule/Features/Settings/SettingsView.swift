@@ -1,6 +1,7 @@
 import SwiftUI
 import UserNotifications
 import UIKit
+import WidgetKit
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -255,7 +256,7 @@ struct SettingsView: View {
                                 symbol: "sparkles",
                                 tint: .accentColor,
                                 title: "Attic Pro",
-                                subtitle: "Recap videos and a wider memory range"
+                                subtitle: "Every year you have photos from, plus recap videos"
                             )
                         }
                         // App Review requires a visible restore control for a
@@ -268,6 +269,26 @@ struct SettingsView: View {
                 } header: {
                     Text("Upgrade")
                 }
+
+                #if ATTIC_SIDELOAD
+                // Compiled only into builds made for sideloading. See
+                // `SideloadSettings` for why an App Store build contains no
+                // code for this rather than a hidden switch.
+                Section {
+                    Toggle(isOn: sideloadProBinding) {
+                        SettingsRowLabel(
+                            symbol: "wrench.and.screwdriver",
+                            tint: .gray,
+                            title: "Pro unlocked",
+                            subtitle: "For testing this build"
+                        )
+                    }
+                } header: {
+                    Text("Sideload Build")
+                } footer: {
+                    Text("Only in builds made for sideloading. App Store builds don't have this switch. The widget follows how this build was made rather than the switch, because a re-signed app can't share its settings with it.")
+                }
+                #endif
             }
             // The restore button above is reachable from here without ever
             // opening the paywall, and only the paywall was showing what
@@ -387,6 +408,33 @@ struct SettingsView: View {
         return .orange
         #endif
     }
+
+    #if ATTIC_SIDELOAD
+    /// Flips the sideload Pro switch and makes everything that depends on it
+    /// catch up.
+    ///
+    /// The refresh is posted here rather than left to `refreshEntitlement`,
+    /// because that only posts when the entitlement it reads back differs
+    /// from before — and in a sideload build it reads back from this very
+    /// switch, which has already flipped. It would see no change and leave
+    /// the gallery showing the old years.
+    private var sideloadProBinding: Binding<Bool> {
+        Binding(
+            // Read from the switch's own value rather than `isUnlocked`: the
+            // store updates after an async hop, and reading it here let the
+            // toggle flick back for a frame before settling.
+            get: { SideloadSettings.proUnlocked },
+            set: { newValue in
+                SideloadSettings.proUnlocked = newValue
+                Task {
+                    await purchaseStore.refreshEntitlement()
+                    NotificationCenter.default.post(name: .timeCapsulePhotosDidChange, object: nil)
+                    WidgetCenter.shared.reloadAllTimelines()
+                }
+            }
+        )
+    }
+    #endif
 
     private func hourLabel(_ hour: Int) -> String {
         hour == 0 ? "midnight" : "\(hour) AM"

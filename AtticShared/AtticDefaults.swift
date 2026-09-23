@@ -102,7 +102,7 @@ nonisolated enum AtticDefaults {
             // compiled into both targets, so answering from it here makes the
             // two processes agree without needing to share anything.
             #if ATTIC_SIDELOAD
-            return true
+            return SideloadSettings.proUnlocked
             #else
             return shared.bool(forKey: proEntitlementKey)
             #endif

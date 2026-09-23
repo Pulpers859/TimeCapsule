@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       unlock_pro:
-        description: 'Compile with Pro unlocked (no App Store product exists for a sideloaded build)'
+        description: 'Start with Pro on. Either way it can be switched in Settings > Sideload Build.'
         type: boolean
         default: true
 
@@ -59,12 +59,15 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          extra=""
+          # ATTIC_SIDELOAD is always set here: it is what compiles in the Pro
+          # switch in Settings, and a sideload build should always have it.
+          # ATTIC_SIDELOAD_PRO only decides which way the switch starts.
+          flags="ATTIC_SIDELOAD"
           if [[ "${{ inputs.unlock_pro }}" == "true" ]]; then
-            extra="ATTIC_EXTRA_SWIFT_FLAGS=ATTIC_SIDELOAD"
-            echo 'Building with Pro unlocked.'
+            flags="$flags ATTIC_SIDELOAD_PRO"
+            echo 'Building with Pro on by default.'
           else
-            echo 'Building with Pro locked; the paywall will report no product.'
+            echo 'Building with Pro off by default.'
           fi
           xcodebuild archive \
             -project 'TimeCapsule.xcodeproj' \
@@ -75,7 +78,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            $extra 2>&1 | tee archive.log
+            "ATTIC_EXTRA_SWIFT_FLAGS=$flags" 2>&1 | tee archive.log
           status=${PIPESTATUS[0]}
           if [[ "$status" -ne 0 ]]; then exit "$status"; fi
 
@@ -195,7 +198,7 @@ jobs:
           gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
           gh release create "$tag" 'out/Attic.ipa' \
             --title "Attic sideload build ${{ github.run_number }}" \
-            --notes "Unsigned build of ${{ github.sha }} for signing with Signulous. Pro unlocked: ${{ inputs.unlock_pro }}." \
+            --notes "Unsigned build of ${{ github.sha }} for signing with Signulous. Pro on by default: ${{ inputs.unlock_pro }}." \
             --prerelease
           url="${{ github.server_url }}/${{ github.repository }}/releases/download/$tag/Attic.ipa"
           echo "IPA_URL=$url" >> "$GITHUB_ENV"
@@ -221,8 +224,8 @@ jobs:
             - The widget may not share settings with the app if the App
               Group does not survive re-signing. If the widget shows a
               photo you hid, that is why.
-            - Purchases cannot work. Pro was compiled in directly if you
-              left the unlock option on.
+            - Purchases cannot work. Pro is a switch instead, in
+              Settings > Sideload Build.
           ============================================================
           NOTE
 
