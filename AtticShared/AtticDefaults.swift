@@ -94,7 +94,19 @@ nonisolated enum AtticDefaults {
     /// and an entitlement that merely fails verification, as happens on
     /// device clock skew, reads exactly like an absent one.
     static var isProEntitled: Bool {
-        get { shared.bool(forKey: proEntitlementKey) }
+        get {
+            // A sideloaded build compiles Pro in, and `PurchaseStore` records
+            // that — but only into the *app's* store. Re-signing drops the App
+            // Group, so the widget cannot read it and would fall back to the
+            // free two-year window while the app showed twenty. The flag is
+            // compiled into both targets, so answering from it here makes the
+            // two processes agree without needing to share anything.
+            #if ATTIC_SIDELOAD
+            return true
+            #else
+            return shared.bool(forKey: proEntitlementKey)
+            #endif
+        }
         set { shared.set(newValue, forKey: proEntitlementKey) }
     }
 

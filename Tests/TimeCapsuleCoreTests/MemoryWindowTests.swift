@@ -9,6 +9,21 @@ final class MemoryWindowTests: XCTestCase {
         return calendar
     }
 
+    // MARK: - History gate
+
+    func testFreeVersionSeesTwoYearsAndProSeesTwenty() {
+        XCTAssertEqual(MemoryWindow.lookback(isPro: false), 2)
+        XCTAssertEqual(MemoryWindow.lookback(isPro: true), 20)
+    }
+
+    /// The gate has to be a real narrowing. Equal values would silently make
+    /// Pro sell nothing.
+    func testFreeLookbackIsStrictlyShorterThanPro() {
+        XCTAssertLessThan(MemoryWindow.freeLookbackYears, MemoryWindow.fullLookbackYears)
+        XCTAssertGreaterThan(MemoryWindow.freeLookbackYears, 0,
+                             "A free version that shows nothing is not a free version.")
+    }
+
     // MARK: - dayBounds / dayKey
 
     func testDayBoundsIsMidnightToMidnightByDefault() throws {

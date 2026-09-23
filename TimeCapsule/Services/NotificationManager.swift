@@ -290,7 +290,11 @@ final class NotificationManager: NSObject {
                 guard isCurrent(requestedGeneration) else { throw CancellationError() }
                 let content = UNMutableNotificationContent()
                 content.title = "Attic"
-                content.body = NotificationPlan.body(memoryCount: count, dayWindow: dayWindow)
+                content.body = NotificationPlan.body(
+                    memoryCount: count,
+                    dayWindow: dayWindow,
+                    lookbackYears: MemoryWindow.lookbackYears
+                )
                 content.sound = .default
                 // `.era` included, so the year is never ambiguous.
                 //

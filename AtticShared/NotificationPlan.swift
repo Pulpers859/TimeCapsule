@@ -54,8 +54,20 @@ nonisolated public enum NotificationPlan {
         return result
     }
 
-    public static func body(memoryCount: Int, dayWindow: Int) -> String {
+    /// - Parameter lookbackYears: how many past years the count covered, or
+    ///   nil for the full history — which is what every existing caller meant
+    ///   before the free version was limited.
+    ///
+    ///   Optional rather than defaulting to `MemoryWindow.fullLookbackYears`
+    ///   because this function is `public` and `MemoryWindow` is not: a public
+    ///   function's default argument may only reference public declarations.
+    public static func body(
+        memoryCount: Int,
+        dayWindow: Int,
+        lookbackYears: Int? = nil
+    ) -> String {
         let dayPhrase = dayWindow > 0 ? "around this day" : "this day"
+        let searchedYears = lookbackYears ?? MemoryWindow.fullLookbackYears
         switch memoryCount {
         case 1:
             return "You have 1 memory from \(dayPhrase) in a past year."
@@ -69,6 +81,13 @@ nonisolated public enum NotificationPlan {
             // claim the app then contradicted the moment it opened. A
             // reminder on a quiet day is wanted; a reminder that is wrong is
             // not.
+            //
+            // And it says *which* years. The free version only searches the
+            // recent ones, and "nothing from this day in past years" is false
+            // for someone whose 2016 is full of photos they cannot see yet.
+            if searchedYears < MemoryWindow.fullLookbackYears {
+                return "Nothing from \(dayPhrase) in the last \(searchedYears) years. Today could be next year's."
+            }
             return "Nothing from \(dayPhrase) in past years. Today could be next year's."
         }
     }

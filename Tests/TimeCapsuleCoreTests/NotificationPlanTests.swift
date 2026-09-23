@@ -56,4 +56,31 @@ final class NotificationPlanTests: XCTestCase {
         XCTAssertTrue(NotificationPlan.body(memoryCount: 1, dayWindow: 0).contains("1 memory"))
         XCTAssertTrue(NotificationPlan.body(memoryCount: 7, dayWindow: 0).contains("7 memories"))
     }
+
+    /// A free user's quiet-day reminder must not claim there is nothing in
+    /// *past years* when only the recent ones were searched — their 2016 may
+    /// be full.
+    func testQuietDayNamesTheYearsSearchedWhenHistoryIsLimited() {
+        let body = NotificationPlan.body(memoryCount: 0, dayWindow: 0, lookbackYears: 2)
+        XCTAssertFalse(body.contains("in past years"), body)
+        XCTAssertTrue(body.contains("last 2 years"), body)
+    }
+
+    /// Pro, and every caller that predates the gate, keeps the original copy.
+    func testQuietDayKeepsOriginalCopyForFullHistory() {
+        XCTAssertEqual(
+            NotificationPlan.body(memoryCount: 0, dayWindow: 0, lookbackYears: 20),
+            NotificationPlan.body(memoryCount: 0, dayWindow: 0)
+        )
+        XCTAssertTrue(NotificationPlan.body(memoryCount: 0, dayWindow: 0).contains("in past years"))
+    }
+
+    /// A day that has memories reads the same whatever the lookback: they are
+    /// from past years either way.
+    func testDaysWithMemoriesAreUnaffectedByTheLookback() {
+        XCTAssertEqual(
+            NotificationPlan.body(memoryCount: 3, dayWindow: 0, lookbackYears: 2),
+            NotificationPlan.body(memoryCount: 3, dayWindow: 0)
+        )
+    }
 }

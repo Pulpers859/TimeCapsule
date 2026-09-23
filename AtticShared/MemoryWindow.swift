@@ -8,7 +8,6 @@ import Foundation
 nonisolated enum MemoryWindow {
     static let storageKey = "TimeCapsule.memoryDayWindow"
     static let dayStartHourKey = "TimeCapsule.dayStartHour"
-    static let lookbackYears = 20
     static let defaultDayWindow = 0
     static let defaultDayStartHour = 0
 
@@ -66,6 +65,45 @@ nonisolated enum MemoryWindow {
         return clampedDayWindow(
             AtticDefaults.shared.object(forKey: storageKey) as? Int ?? defaultDayWindow
         )
+    }
+
+    /// How far back Attic looks with Pro: effectively the whole history of
+    /// anyone who has owned a phone camera.
+    static let fullLookbackYears = 20
+
+    /// How far back the free version looks.
+    ///
+    /// This is the paywall. The three original Pro features — recap videos,
+    /// nearby days and a custom day start — were real but small, and the free
+    /// version did the whole job without them, so almost nobody would have
+    /// had a reason to pay. The value of an on-this-day app is depth: the
+    /// photo from two years ago is nice, the one from ten years ago is why
+    /// people stop scrolling. So depth is what Pro sells.
+    ///
+    /// Two years rather than three so the locked years show up sooner and more
+    /// often, which is what makes the gate sell rather than merely restrict.
+    static let freeLookbackYears = 2
+
+    /// How many past years to search, for a given entitlement. Pure, so the
+    /// rule is testable without StoreKit or shared defaults.
+    static func lookback(isPro: Bool) -> Int {
+        isPro ? fullLookbackYears : freeLookbackYears
+    }
+
+    /// How many past years the current user can see.
+    ///
+    /// Gated here, beside `dayWindow` and `dayStartHour`, for the same reason
+    /// those are: at the point of use, so a lapsed or unverified entitlement
+    /// narrows what is shown without destroying anything.
+    ///
+    /// Read in exactly one place, `MemoryLibrary.anniversaryRanges`, and every
+    /// count in the app goes through that — the gallery, the widget and the
+    /// notification schedule. That is what keeps them agreeing. Gating the
+    /// gallery alone would have had the widget showing a photo from 2016 that
+    /// the app then refused to open, and a notification promising twelve
+    /// memories to someone who could see three.
+    static var lookbackYears: Int {
+        lookback(isPro: AtticDefaults.isProEntitled)
     }
 
     /// Hour (0–6) at which a new TimeCapsule "day" begins. Photos taken before
