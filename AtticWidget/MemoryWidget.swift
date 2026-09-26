@@ -134,12 +134,13 @@ nonisolated struct MemoryProvider: TimelineProvider {
         let span = Self.nextDayBoundary(after: now).timeIntervalSince(now)
         // `nil` for the accessory families, which draw no photo.
         let pixelSize = Self.thumbnailSize(for: family)
+        let contentMode = Self.requestContentMode(for: family)
 
         var entries: [MemoryEntry] = []
         for (offset, pick) in picks.enumerated() {
             var image: UIImage?
             if let pixelSize {
-                image = await Self.thumbnail(for: pick.asset, size: pixelSize)
+                image = await Self.thumbnail(for: pick.asset, size: pixelSize, contentMode: contentMode)
             }
             let stride = span * Double(offset) / Double(max(picks.count, 1))
             entries.append(
@@ -205,11 +206,23 @@ nonisolated struct MemoryProvider: TimelineProvider {
         }
     }
 
-    /// The photo, as sharp as can be had without going to the network.
+    /// How Photos should shape the image it hands back, matched to how the
+    /// tile draws it.
     ///
-    /// Asked for at `.aspectFit`, not `.aspectFill`: the widget now shows the
-    /// whole frame, so a request that crops to a square would throw away the
-    /// very parts the fit exists to keep.
+    /// The small tile fills edge to edge, so it asks for a square crop: at
+    /// `.aspectFill` with `.exact` sizing, Photos returns exactly 512 × 512,
+    /// already centred. Asking for a fitted image instead and filling the tile
+    /// with it would have been soft — a 4:3 photo fitted inside 512 comes
+    /// back 384 pixels on its short side, and the tile is about 474 across on
+    /// a 3x screen.
+    ///
+    /// The wide tile shows the whole frame, so it asks for `.aspectFit`; a
+    /// request that cropped would throw away the very parts the fit keeps.
+    private static func requestContentMode(for family: WidgetFamily) -> PHImageContentMode {
+        family == .systemSmall ? .aspectFill : .aspectFit
+    }
+
+    /// The photo, as sharp as can be had without going to the network.
     ///
     /// Quality is requested first and a fast rendition is the fallback rather
     /// than the default. `.fastFormat` returns whatever is already cached,
@@ -223,16 +236,23 @@ nonisolated struct MemoryProvider: TimelineProvider {
     /// Neither delivery mode calls the result handler more than once, which
     /// is what makes resuming a continuation from it safe. `.opportunistic`
     /// is the mode that calls back twice, and using it here would crash.
-    private static func thumbnail(for asset: PHAsset, size: CGFloat) async -> UIImage? {
-        if let image = await requestImage(for: asset, size: size, delivery: .highQualityFormat) {
+    private static func thumbnail(
+        for asset: PHAsset,
+        size: CGFloat,
+        contentMode: PHImageContentMode
+    ) async -> UIImage? {
+        if let image = await requestImage(
+            for: asset, size: size, contentMode: contentMode, delivery: .highQualityFormat
+        ) {
             return image
         }
-        return await requestImage(for: asset, size: size, delivery: .fastFormat)
+        return await requestImage(for: asset, size: size, contentMode: contentMode, delivery: .fastFormat)
     }
 
     private static func requestImage(
         for asset: PHAsset,
         size: CGFloat,
+        contentMode: PHImageContentMode,
         delivery: PHImageRequestOptionsDeliveryMode
     ) async -> UIImage? {
         let options = PHImageRequestOptions()
@@ -245,7 +265,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
             PHImageManager.default().requestImage(
                 for: asset,
                 targetSize: CGSize(width: size, height: size),
-                contentMode: .aspectFit,
+                contentMode: contentMode,
                 options: options
             ) { image, _ in
                 continuation.resume(returning: image)
@@ -267,9 +287,18 @@ struct MemoryWidgetView: View {
         }
     }
 
-    /// The photo, whole, over a blurred copy of itself.
+    /// The photo, laid out for the tile it is in.
     ///
-    /// A plain `.scaledToFill()` crops to the centre, and a widget is a far
+    /// The small tile fills edge to edge. It is square and most photos are
+    /// 4:3 or 3:4, so filling costs a sliver off two sides — and the blurred
+    /// bands the fit leaves looked odd around an ordinary photo, which is what
+    /// prompted the change. Seen on device, not guessed.
+    ///
+    /// The wide tile keeps the whole photo over a blurred copy of itself,
+    /// because there filling is not a sliver: a standing portrait cropped to
+    /// roughly 2:1 keeps a band through the middle and loses the subject.
+    ///
+    /// For the wide tile: a plain `.scaledToFill()` crops to the centre, and a widget is a far
     /// more extreme aspect ratio than any photo: a standing portrait in a
     /// `.systemMedium` tile keeps a vertical sliver and throws away the
     /// subject. Fitting instead would show all of it but band the sides with
@@ -284,25 +313,35 @@ struct MemoryWidgetView: View {
     /// another zoomed. Pinning both copies to the measured size and clipping
     /// makes every family behave the same way.
     @ViewBuilder
-    private static func photo(_ image: UIImage) -> some View {
+    private static func photo(_ image: UIImage, fillsTile: Bool) -> some View {
         GeometryReader { geometry in
             let size = geometry.size
-            ZStack {
+            if fillsTile {
+                // Pinned to the measured size and clipped, for the reason
+                // above: `scaledToFill` would otherwise grow the stack.
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size.width, height: size.height)
                     .clipped()
-                    // `opaque` because a blur otherwise samples past the edge
-                    // and fades the border to transparent, which over the
-                    // black container reads as a vignette.
-                    .blur(radius: 20, opaque: true)
-                    .overlay(Color.black.opacity(0.3))
+            } else {
+                ZStack {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size.width, height: size.height)
+                        .clipped()
+                        // `opaque` because a blur otherwise samples past the edge
+                        // and fades the border to transparent, which over the
+                        // black container reads as a vignette.
+                        .blur(radius: 20, opaque: true)
+                        .overlay(Color.black.opacity(0.3))
 
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: size.width, height: size.height)
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: size.width, height: size.height)
+                }
             }
         }
     }
@@ -333,7 +372,7 @@ struct MemoryWidgetView: View {
                 ZStack {
                     Color.black
                     if let image {
-                        Self.photo(image)
+                        Self.photo(image, fillsTile: family == .systemSmall)
                     } else {
                         // A memory whose photo could not be loaded locally.
                         // The widget never goes to the network, so an
