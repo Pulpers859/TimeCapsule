@@ -23,24 +23,52 @@ nonisolated enum WidgetRotation {
 
     // MARK: - Memory
 
-    /// Free memory below which no further photo is fetched.
+    /// The limit Apple's WidgetKit engineers state for a widget extension,
+    /// and the one its crash reports name (`limit=30 MB`).
+    ///
+    /// Assumed rather than asked for, because asking does not work
+    /// everywhere. `os_proc_available_memory` was the first version of this
+    /// check, and on a sideloaded build it reported about 6,600 MB free —
+    /// the whole phone, not the widget's allowance — so a check against it
+    /// could never trip. Seen on device. Whichever of the two is stricter
+    /// wins, so a phone that does report the real limit is still respected.
+    static let assumedLimitBytes = 30 * 1024 * 1024
+
+    /// Headroom below which no further photo is fetched.
     ///
     /// One fetch briefly holds the decoded photo from Photos (up to about
-    /// 3.6 MB for the wide tile on the largest iPhone), its JPEG encoding,
-    /// and Photos' own working memory. Ten megabytes leaves that roughly
-    /// twice over, plus room for WidgetKit to draw afterwards.
-    static let memoryFloorBytes = 10 * 1024 * 1024
+    /// 3.6 MB for the wide tile on the largest iPhone) plus its JPEG
+    /// encoding. Six megabytes covers that with room to spare, and stops
+    /// fetching once the widget is using 24 MB of its 30.
+    ///
+    /// Not higher on purpose: the floor is paid on every reload, and one set
+    /// too cautious would quietly cut the rotation to a photo or two on a
+    /// phone that was never in danger.
+    static let memoryFloorBytes = 6 * 1024 * 1024
 
-    /// Whether to fetch one more photo, given the memory iOS says is left
-    /// before it kills the extension (`os_proc_available_memory`).
+    /// Memory left before iOS kills the extension, from what the system
+    /// reports (`os_proc_available_memory`) and from what the extension is
+    /// using against `assumedLimitBytes` — the smaller of the two it has.
+    /// `nil` when it has neither.
+    ///
+    /// Either input is zero when unknown: the system reports zero for no
+    /// limit, and a footprint that could not be read comes back as zero.
+    static func headroom(reportedAvailable: Int, footprint: Int) -> Int? {
+        var candidates: [Int] = []
+        if reportedAvailable > 0 { candidates.append(reportedAvailable) }
+        if footprint > 0 { candidates.append(assumedLimitBytes - footprint) }
+        return candidates.min()
+    }
+
+    /// Whether to fetch one more photo.
     ///
     /// The first photo is always fetched: a widget with no photo at all
-    /// reads as broken, and at that point nothing else is held. Zero means
-    /// the system reported no limit, which is not a reason to stop.
-    static func shouldLoadAnother(loadedSoFar: Int, availableBytes: Int) -> Bool {
+    /// reads as broken, and at that point nothing else is held. Unknown
+    /// headroom is not a reason to stop either.
+    static func shouldLoadAnother(loadedSoFar: Int, headroomBytes: Int?) -> Bool {
         if loadedSoFar == 0 { return true }
-        if availableBytes <= 0 { return true }
-        return availableBytes >= memoryFloorBytes
+        guard let headroomBytes else { return true }
+        return headroomBytes >= memoryFloorBytes
     }
 
     // MARK: - Photo files

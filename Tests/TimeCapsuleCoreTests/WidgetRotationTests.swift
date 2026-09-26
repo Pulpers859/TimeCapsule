@@ -163,27 +163,54 @@ final class WidgetRotationTests: XCTestCase {
 
     // MARK: - Memory floor
 
+    private let megabyte = 1024 * 1024
+
     func testTheFirstPhotoIsAlwaysLoaded() {
-        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 0, availableBytes: 1024))
+        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 0, headroomBytes: 1024))
+        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 0, headroomBytes: -1024))
     }
 
     func testLoadingStopsBelowTheFloor() {
         let floor = WidgetRotation.memoryFloorBytes
-        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 5, availableBytes: floor))
-        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 5, availableBytes: floor * 2))
-        XCTAssertFalse(WidgetRotation.shouldLoadAnother(loadedSoFar: 5, availableBytes: floor - 1))
+        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 5, headroomBytes: floor))
+        XCTAssertFalse(WidgetRotation.shouldLoadAnother(loadedSoFar: 5, headroomBytes: floor - 1))
+        XCTAssertFalse(WidgetRotation.shouldLoadAnother(loadedSoFar: 5, headroomBytes: -megabyte))
     }
 
-    /// Zero is what the system reports for a process with no limit.
-    func testAnUnreportedLimitDoesNotStopLoading() {
-        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 11, availableBytes: 0))
+    func testUnknownHeadroomDoesNotStopLoading() {
+        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 11, headroomBytes: nil))
+    }
+
+    /// What was seen on a sideloaded build: the system reported the whole
+    /// phone free. The widget's own use against 30 MB must still govern.
+    func testAHugeReportedFigureDoesNotHideTheWidgetsOwnUse() throws {
+        let headroom = try XCTUnwrap(
+            WidgetRotation.headroom(reportedAvailable: 6_628 * megabyte, footprint: 26 * megabyte)
+        )
+        XCTAssertEqual(headroom, 4 * megabyte)
+        XCTAssertFalse(WidgetRotation.shouldLoadAnother(loadedSoFar: 3, headroomBytes: headroom))
+    }
+
+    /// A phone that reports a stricter limit than the assumption is obeyed.
+    func testAStricterReportedLimitWins() {
+        XCTAssertEqual(
+            WidgetRotation.headroom(reportedAvailable: 2 * megabyte, footprint: 10 * megabyte),
+            2 * megabyte
+        )
+    }
+
+    func testHeadroomFromWhicheverInputIsKnown() {
+        XCTAssertEqual(WidgetRotation.headroom(reportedAvailable: 0, footprint: 10 * megabyte), 20 * megabyte)
+        XCTAssertEqual(WidgetRotation.headroom(reportedAvailable: 8 * megabyte, footprint: 0), 8 * megabyte)
+        XCTAssertNil(WidgetRotation.headroom(reportedAvailable: 0, footprint: 0))
     }
 
     /// The floor has to leave room for one more fetch of the largest photo
     /// the widget asks for, or it protects nothing.
     func testTheFloorCoversOneLargeFetch() {
         let largestDecodedPhoto = 1_092 * 819 * 4
-        XCTAssertGreaterThan(WidgetRotation.memoryFloorBytes, largestDecodedPhoto * 2)
+        XCTAssertGreaterThan(WidgetRotation.memoryFloorBytes, largestDecodedPhoto * 3 / 2)
+        XCTAssertLessThan(WidgetRotation.memoryFloorBytes, WidgetRotation.assumedLimitBytes / 2)
     }
 
     // MARK: - Photo files

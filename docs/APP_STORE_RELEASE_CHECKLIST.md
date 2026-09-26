@@ -213,9 +213,11 @@ verified only by the CI build.
       killed for memory freezes on one photo). Check a sideways-shot photo
       shows upright, since the widget crops and re-encodes each one to save
       memory. Sideload builds print memory on the widget's top-right corner:
-      `loaded/picked · low <least free while loading> · now <free while
-      drawing>`. iOS kills the widget at zero free; below about 10 MB it
-      stops loading more photos and rotates through fewer instead.
+      `loaded/picked · peak <most used while loading> · now <used while
+      drawing> of 30`. iOS kills the widget at about 30 MB; past 24 MB it
+      stops loading more photos and rotates through fewer instead. (The
+      system's own "memory left" figure read about 6,600 MB on a sideloaded
+      build — the whole phone — so the check uses the widget's own usage.)
 - [ ] **Widget empty and no-access states**, the second by revoking photo
       access in Settings.
 - [ ] **Widget freshness** — delete a memory in the app, background the app,

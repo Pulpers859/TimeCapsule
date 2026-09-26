@@ -1,3 +1,4 @@
+import Darwin
 import os
 import Photos
 import SwiftUI
@@ -179,7 +180,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // `nil` tile for the accessory families, which draw no photo.
         var photos: [String: WidgetPhoto] = [:]
         var attempted = 0
-        var lowestFree = Self.availableMemory()
+        var peakUsed = Self.footprint()
         if let tile = await Self.tilePixels(for: family, displaySize: displaySize),
            let folder = WidgetPhotoStore.newBatch(now: now) {
             let maxZoom = family == .systemSmall ? .infinity : WidgetPhotoFraming.wideMaxZoom
@@ -189,16 +190,16 @@ nonisolated struct MemoryProvider: TimelineProvider {
                 // of freezing on one.
                 guard WidgetRotation.shouldLoadAnother(
                     loadedSoFar: attempted,
-                    availableBytes: Self.availableMemory()
+                    headroomBytes: Self.headroom()
                 ) else { break }
                 attempted += 1
-                let (photo, freeAtPeak) = await Self.savedPhoto(
+                let (photo, usedAtPeak) = await Self.savedPhoto(
                     for: pick.asset,
                     tile: tile,
                     maxZoom: maxZoom,
                     to: folder.appendingPathComponent("\(attempted).jpg")
                 )
-                lowestFree = min(lowestFree, freeAtPeak)
+                peakUsed = max(peakUsed, usedAtPeak)
                 if let photo {
                     photos[pick.asset.localIdentifier] = photo
                 }
@@ -219,7 +220,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
 
         let diagnostics = attempted == 0
             ? nil
-            : "\(photos.count)/\(picks.count) · low \(Self.megabytes(lowestFree))"
+            : "\(photos.count)/\(picks.count) · peak \(Self.megabytes(peakUsed))"
 
         let entries = schedule.entries.map { slot in
             MemoryEntry(
@@ -235,10 +236,30 @@ nonisolated struct MemoryProvider: TimelineProvider {
         return (entries, schedule.reload)
     }
 
-    /// Memory left before iOS kills this extension, in bytes. Zero when the
-    /// system reports no limit.
-    static func availableMemory() -> Int {
-        Int(os_proc_available_memory())
+    /// Memory left before iOS kills this extension, or `nil` if unknown.
+    /// See `WidgetRotation.headroom` for why this is not simply what the
+    /// system reports.
+    static func headroom() -> Int? {
+        WidgetRotation.headroom(
+            reportedAvailable: Int(os_proc_available_memory()),
+            footprint: footprint()
+        )
+    }
+
+    /// What this extension is using, as iOS counts it against the limit
+    /// (`phys_footprint`, the figure Xcode's memory gauge shows). Zero if it
+    /// cannot be read.
+    static func footprint() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? Int(info.phys_footprint) : 0
     }
 
     static func megabytes(_ bytes: Int) -> String {
@@ -289,14 +310,14 @@ nonisolated struct MemoryProvider: TimelineProvider {
 
     /// Fetches one photo, crops it to what the tile shows, and saves it.
     ///
-    /// Also returns the free memory measured while the fetched photo was
-    /// held — the high point of the whole job — for the sideload readout.
+    /// Also returns the memory in use while the fetched photo was held —
+    /// the high point of the whole job — for the sideload readout.
     private static func savedPhoto(
         for asset: PHAsset,
         tile: CGSize,
         maxZoom: Double,
         to url: URL
-    ) async -> (photo: WidgetPhoto?, freeAtPeak: Int) {
+    ) async -> (photo: WidgetPhoto?, usedAtPeak: Int) {
         // Asked for at the size it will be drawn, no larger. `pixelWidth`
         // and `pixelHeight` only guide the request; the crop below is worked
         // out from the image Photos actually returns.
@@ -315,13 +336,13 @@ nonisolated struct MemoryProvider: TimelineProvider {
         }
 
         guard let image = await thumbnail(for: asset, target: target) else {
-            return (nil, availableMemory())
+            return (nil, footprint())
         }
-        let freeAtPeak = availableMemory()
+        let usedAtPeak = footprint()
         let photo = autoreleasepool {
             save(image, tile: tile, maxZoom: maxZoom, to: url)
         }
-        return (photo, freeAtPeak)
+        return (photo, usedAtPeak)
     }
 
     /// Crops to the visible part and writes it out as JPEG.
@@ -600,14 +621,14 @@ struct MemoryWidgetView: View {
     }
 
     #if ATTIC_SIDELOAD
-    /// Sideload builds only: photos loaded out of those picked, the least
-    /// free memory while loading them, and free memory now, while drawing.
-    /// iOS kills the extension at zero; this is how the phone reports how
-    /// close it came, with no Mac to profile on.
+    /// Sideload builds only: photos loaded out of those picked, the most
+    /// memory used while loading them, and the memory in use now, while
+    /// drawing. iOS kills the extension at about 30 MB; this is how the
+    /// phone reports how close it came, with no Mac to profile on.
     @ViewBuilder
     private var diagnostics: some View {
         if let diagnostics = entry.diagnostics {
-            Text("\(diagnostics) · now \(MemoryProvider.megabytes(MemoryProvider.availableMemory()))")
+            Text("\(diagnostics) · now \(MemoryProvider.megabytes(MemoryProvider.footprint())) of 30")
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.85))
                 .padding(.horizontal, 4)
