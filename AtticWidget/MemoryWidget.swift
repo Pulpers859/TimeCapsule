@@ -221,8 +221,9 @@ nonisolated struct MemoryProvider: TimelineProvider {
     /// back 384 pixels on its short side, and the tile is about 474 across on
     /// a 3x screen.
     ///
-    /// The wide tile shows the whole frame, so it asks for `.aspectFit`; a
-    /// request that cropped would throw away the very parts the fit keeps.
+    /// The wide tile asks for `.aspectFit`, the whole frame, and crops it
+    /// itself: how much, and from where, is `WidgetPhotoFraming`'s call, and
+    /// a square crop from Photos would already have cut what it keeps.
     private static func requestContentMode(for family: WidgetFamily) -> PHImageContentMode {
         family == .systemSmall ? .aspectFill : .aspectFit
     }
@@ -316,43 +317,35 @@ struct MemoryWidgetView: View {
 
     /// The photo, laid out for the tile it is in.
     ///
-    /// The small tile fills edge to edge. It is square and most photos are
-    /// 4:3 or 3:4, so filling costs a sliver off two sides — and the blurred
-    /// bands the fit leaves looked odd around an ordinary photo, which is what
-    /// prompted the change. Seen on device, not guessed.
+    /// Where it sits is decided by `WidgetPhotoFraming`, which is tested.
+    /// The small tile always fills: it is square, most photos are 4:3 or
+    /// 3:4, and the blurred bands a fit left looked odd around an ordinary
+    /// photo. The wide tile zooms part-way between fit and fill, because a
+    /// fitted portrait covered a third of it and a filled one kept only a
+    /// band through the middle. Both seen on device.
     ///
-    /// The wide tile keeps the whole photo over a blurred copy of itself,
-    /// because there filling is not a sliver: a standing portrait cropped to
-    /// roughly 2:1 keeps a band through the middle and loses the subject.
+    /// Whatever the photo leaves uncovered shows a blurred copy of itself,
+    /// so the tile is edge to edge either way. The backdrop is skipped when
+    /// nothing of it would show.
     ///
-    /// For the wide tile: a plain `.scaledToFill()` crops to the centre, and a widget is a far
-    /// more extreme aspect ratio than any photo: a standing portrait in a
-    /// `.systemMedium` tile keeps a vertical sliver and throws away the
-    /// subject. Fitting instead would show all of it but band the sides with
-    /// dead black. Scaling one copy to fill as a backdrop and fitting the
-    /// real one on top keeps the tile edge-to-edge while still showing the
-    /// picture the photo actually is.
-    ///
-    /// The explicit `GeometryReader` frame is not decoration. `scaledToFill`
-    /// reports a size larger than the one proposed to it, so inside a `ZStack`
-    /// it grows the stack rather than overflowing it, and what that does to
-    /// the layout differs by family — which is why one size letterboxed while
-    /// another zoomed. Pinning both copies to the measured size and clipping
-    /// makes every family behave the same way.
+    /// Everything is pinned to the `GeometryReader`'s measured size and
+    /// clipped. `scaledToFill` reports a size larger than the one proposed to
+    /// it, so inside a `ZStack` it grows the stack rather than overflowing
+    /// it, and what that did to the layout differed by family — which is why
+    /// one size once letterboxed while another zoomed.
     @ViewBuilder
-    private static func photo(_ image: UIImage, fillsTile: Bool) -> some View {
+    private static func photo(_ image: UIImage, maxZoom: Double) -> some View {
         GeometryReader { geometry in
             let size = geometry.size
-            if fillsTile {
-                // Pinned to the measured size and clipped, for the reason
-                // above: `scaledToFill` would otherwise grow the stack.
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: size.width, height: size.height)
-                    .clipped()
-            } else {
-                ZStack {
+            let frame = WidgetPhotoFraming.frame(
+                imageWidth: Double(image.size.width),
+                imageHeight: Double(image.size.height),
+                tileWidth: Double(size.width),
+                tileHeight: Double(size.height),
+                maxZoom: maxZoom
+            )
+            ZStack {
+                if frame?.coversTile != true {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -363,13 +356,17 @@ struct MemoryWidgetView: View {
                         // black container reads as a vignette.
                         .blur(radius: 20, opaque: true)
                         .overlay(Color.black.opacity(0.3))
+                }
 
+                if let frame {
                     Image(uiImage: image)
                         .resizable()
-                        .scaledToFit()
-                        .frame(width: size.width, height: size.height)
+                        .frame(width: CGFloat(frame.width), height: CGFloat(frame.height))
+                        .position(x: CGFloat(frame.centerX), y: CGFloat(frame.centerY))
                 }
             }
+            .frame(width: size.width, height: size.height)
+            .clipped()
         }
     }
 
@@ -399,7 +396,10 @@ struct MemoryWidgetView: View {
                 ZStack {
                     Color.black
                     if let image {
-                        Self.photo(image, fillsTile: family == .systemSmall)
+                        Self.photo(
+                            image,
+                            maxZoom: family == .systemSmall ? .infinity : WidgetPhotoFraming.wideMaxZoom
+                        )
                     } else {
                         // A memory whose photo could not be loaded locally.
                         // The widget never goes to the network, so an
