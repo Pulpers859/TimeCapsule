@@ -1,3 +1,4 @@
+import os
 import Photos
 import SwiftUI
 import UIKit
@@ -31,7 +32,7 @@ struct MemoryWidget: Widget {
 
 struct MemoryEntry: TimelineEntry {
     enum Content {
-        case memory(image: UIImage?, yearsAgo: Int)
+        case memory(photo: WidgetPhoto?, yearsAgo: Int)
         case empty
         case noAccess
     }
@@ -39,6 +40,25 @@ struct MemoryEntry: TimelineEntry {
     let date: Date
     let content: Content
     let totalCount: Int
+    /// Memory figures from building this timeline, shown on the widget in
+    /// sideload builds only. There is no Mac to profile on, so the phone
+    /// has to report its own numbers.
+    var diagnostics: String? = nil
+}
+
+/// A photo the widget has already cropped and saved, and where to draw it.
+///
+/// The timeline holds this — a file location — rather than the picture.
+/// Twelve decoded photos held in the timeline is the one thing most likely
+/// to push the extension past iOS's memory limit, and Apple's WidgetKit
+/// engineers' advice for exactly that is file-backed images and fewer held
+/// in memory. Each one is decoded only when it is drawn.
+struct WidgetPhoto {
+    let url: URL
+    /// Where the saved image goes, in fractions of the tile.
+    let placement: WidgetPhotoFraming.Rect
+    /// Nothing of the tile is left uncovered, so no blurred backdrop.
+    let coversTile: Bool
 }
 
 /// Marked `nonisolated` throughout on purpose.
@@ -49,12 +69,16 @@ struct MemoryEntry: TimelineEntry {
 /// cannot become a mismatch.
 nonisolated struct MemoryProvider: TimelineProvider {
     func placeholder(in context: Context) -> MemoryEntry {
-        MemoryEntry(date: Date(), content: .memory(image: nil, yearsAgo: 3), totalCount: 4)
+        MemoryEntry(date: Date(), content: .memory(photo: nil, yearsAgo: 3), totalCount: 4)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (MemoryEntry) -> Void) {
         Task {
-            let (entries, _) = await timelineEntries(family: context.family, limit: 1)
+            let (entries, _) = await timelineEntries(
+                family: context.family,
+                displaySize: context.displaySize,
+                limit: 1
+            )
             completion(entries.first ?? MemoryEntry(date: Date(), content: .empty, totalCount: 0))
         }
     }
@@ -63,6 +87,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
         Task {
             let (entries, refresh) = await timelineEntries(
                 family: context.family,
+                displaySize: context.displaySize,
                 limit: WidgetRotation.slotCount
             )
             let timeline = Timeline(
@@ -84,6 +109,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
     /// ask for the next batch. See `WidgetRotation` for the shape.
     private func timelineEntries(
         family: WidgetFamily,
+        displaySize: CGSize,
         limit: Int
     ) async -> (entries: [MemoryEntry], refresh: Date) {
         let now = Date()
@@ -147,34 +173,76 @@ nonisolated struct MemoryProvider: TimelineProvider {
             limit: limit,
             using: &generator
         )
-        let schedule = WidgetRotation.schedule(picks, from: now, dayBoundary: dayBoundary)
 
-        // `nil` for the accessory families, which draw no photo.
-        let pixelSize = Self.thumbnailSize(for: family)
-        let contentMode = Self.requestContentMode(for: family)
-
-        // Fetched once per pick, not once per slot: a day with three photos
-        // cycles them through twelve slots and must not load each four times.
-        var images: [String: UIImage] = [:]
-        if let pixelSize {
-            for pick in picks where images[pick.asset.localIdentifier] == nil {
-                images[pick.asset.localIdentifier] = await Self.thumbnail(
-                    for: pick.asset, size: pixelSize, contentMode: contentMode
+        // One photo at a time: fetch, crop, save, let go. Only file
+        // locations accumulate, so memory stays flat however many there are.
+        // `nil` tile for the accessory families, which draw no photo.
+        var photos: [String: WidgetPhoto] = [:]
+        var attempted = 0
+        var lowestFree = Self.availableMemory()
+        if let tile = await Self.tilePixels(for: family, displaySize: displaySize),
+           let folder = WidgetPhotoStore.newBatch(now: now) {
+            let maxZoom = family == .systemSmall ? .infinity : WidgetPhotoFraming.wideMaxZoom
+            for pick in picks {
+                // Checked before every fetch, not once: this is what makes
+                // a day that runs short of memory show eight photos instead
+                // of freezing on one.
+                guard WidgetRotation.shouldLoadAnother(
+                    loadedSoFar: attempted,
+                    availableBytes: Self.availableMemory()
+                ) else { break }
+                attempted += 1
+                let (photo, freeAtPeak) = await Self.savedPhoto(
+                    for: pick.asset,
+                    tile: tile,
+                    maxZoom: maxZoom,
+                    to: folder.appendingPathComponent("\(attempted).jpg")
                 )
+                lowestFree = min(lowestFree, freeAtPeak)
+                if let photo {
+                    photos[pick.asset.localIdentifier] = photo
+                }
             }
         }
+
+        // Rotate through the photos that actually loaded. One that could not
+        // be read locally, or was never fetched because memory ran short,
+        // is left out rather than shown as an empty tile. Only if none
+        // loaded at all — or this family draws no photo — do the picks stand
+        // as they are.
+        let loaded = picks.filter { photos[$0.asset.localIdentifier] != nil }
+        let schedule = WidgetRotation.schedule(
+            loaded.isEmpty ? picks : loaded,
+            from: now,
+            dayBoundary: dayBoundary
+        )
+
+        let diagnostics = attempted == 0
+            ? nil
+            : "\(photos.count)/\(picks.count) · low \(Self.megabytes(lowestFree))"
 
         let entries = schedule.entries.map { slot in
             MemoryEntry(
                 date: slot.date,
                 content: .memory(
-                    image: images[slot.item.asset.localIdentifier],
+                    photo: photos[slot.item.asset.localIdentifier],
                     yearsAgo: slot.item.yearsAgo
                 ),
-                totalCount: total
+                totalCount: total,
+                diagnostics: diagnostics
             )
         }
         return (entries, schedule.reload)
+    }
+
+    /// Memory left before iOS kills this extension, in bytes. Zero when the
+    /// system reports no limit.
+    static func availableMemory() -> Int {
+        Int(os_proc_available_memory())
+    }
+
+    static func megabytes(_ bytes: Int) -> String {
+        String(format: "%.1f MB", Double(bytes) / 1_048_576)
     }
 
     /// The next time the answer to "what is today" changes.
@@ -190,42 +258,112 @@ nonisolated struct MemoryProvider: TimelineProvider {
             ?? date.addingTimeInterval(60 * 60)
     }
 
-    /// The longest edge, in pixels, worth asking Photos for — or `nil` for a
-    /// family that shows no photo at all.
+    /// The tile's size in pixels, or `nil` for a family that shows no photo.
     ///
-    /// These are pixels, not points, because that is what `targetSize` means.
-    /// A `.systemMedium` tile is roughly 338 x 158 points, so on a 3x screen
-    /// its widest edge is a bit over 1000 pixels; the old 600 was under half
-    /// of that and every photo was being stretched to fit. `.systemSmall` is
-    /// about 158 points square, so 512 covers it with a little headroom.
+    /// From the size WidgetKit reports for this phone, not a guess: photos
+    /// are fetched and cropped to exactly this, so a guess too large wastes
+    /// memory on every photo and one too small is soft. The fallbacks are the
+    /// largest iPhone's tiles, for the rare context that reports no size.
     ///
     /// The accessory families return `nil`. Neither of them draws the image —
-    /// they are a count and a line of text — so the previous 200-pixel
-    /// request was decoded and thrown away on every timeline refresh, inside
-    /// the one process that has a memory limit worth respecting.
-    private static func thumbnailSize(for family: WidgetFamily) -> CGFloat? {
+    /// they are a count and a line of text — so fetching one would be decoded
+    /// and thrown away, inside the one process with a memory limit.
+    private static func tilePixels(for family: WidgetFamily, displaySize: CGSize) async -> CGSize? {
+        let points: CGSize
         switch family {
-        case .systemMedium: 1024
-        case .accessoryCircular, .accessoryRectangular: nil
-        default: 512
+        case .accessoryCircular, .accessoryRectangular:
+            return nil
+        case .systemMedium:
+            points = displaySize.width > 0 ? displaySize : CGSize(width: 364, height: 170)
+        default:
+            points = displaySize.width > 0 ? displaySize : CGSize(width: 170, height: 170)
         }
+        // `UIScreen.main` is deprecated for apps with scenes; an extension
+        // has none, and it is still the one reliable source of the scale.
+        let scale = await MainActor.run { UIScreen.main.scale }
+        return CGSize(
+            width: (points.width * scale).rounded(.up),
+            height: (points.height * scale).rounded(.up)
+        )
     }
 
-    /// How Photos should shape the image it hands back, matched to how the
-    /// tile draws it.
+    /// Fetches one photo, crops it to what the tile shows, and saves it.
     ///
-    /// The small tile fills edge to edge, so it asks for a square crop: at
-    /// `.aspectFill` with `.exact` sizing, Photos returns exactly 512 × 512,
-    /// already centred. Asking for a fitted image instead and filling the tile
-    /// with it would have been soft — a 4:3 photo fitted inside 512 comes
-    /// back 384 pixels on its short side, and the tile is about 474 across on
-    /// a 3x screen.
+    /// Also returns the free memory measured while the fetched photo was
+    /// held — the high point of the whole job — for the sideload readout.
+    private static func savedPhoto(
+        for asset: PHAsset,
+        tile: CGSize,
+        maxZoom: Double,
+        to url: URL
+    ) async -> (photo: WidgetPhoto?, freeAtPeak: Int) {
+        // Asked for at the size it will be drawn, no larger. `pixelWidth`
+        // and `pixelHeight` only guide the request; the crop below is worked
+        // out from the image Photos actually returns.
+        let target: CGSize
+        if let frame = WidgetPhotoFraming.frame(
+            imageWidth: Double(asset.pixelWidth),
+            imageHeight: Double(asset.pixelHeight),
+            tileWidth: Double(tile.width),
+            tileHeight: Double(tile.height),
+            maxZoom: maxZoom
+        ) {
+            target = CGSize(width: frame.width.rounded(.up), height: frame.height.rounded(.up))
+        } else {
+            let edge = max(tile.width, tile.height)
+            target = CGSize(width: edge, height: edge)
+        }
+
+        guard let image = await thumbnail(for: asset, target: target) else {
+            return (nil, availableMemory())
+        }
+        let freeAtPeak = availableMemory()
+        let photo = autoreleasepool {
+            save(image, tile: tile, maxZoom: maxZoom, to: url)
+        }
+        return (photo, freeAtPeak)
+    }
+
+    /// Crops to the visible part and writes it out as JPEG.
     ///
-    /// The wide tile asks for `.aspectFit`, the whole frame, and crops it
-    /// itself: how much, and from where, is `WidgetPhotoFraming`'s call, and
-    /// a square crop from Photos would already have cut what it keeps.
-    private static func requestContentMode(for family: WidgetFamily) -> PHImageContentMode {
-        family == .systemSmall ? .aspectFill : .aspectFit
+    /// Only an upright image is cropped. A `CGImage` is stored unrotated, so
+    /// for any other orientation its pixel grid is not the one the crop was
+    /// worked out on, and cropping it would cut the wrong part. Photos
+    /// returns resized images upright in practice; if one ever is not, it is
+    /// saved whole — `jpegData` keeps its orientation — and drawn at its
+    /// full placement, clipped by the tile. Same picture, more pixels.
+    private static func save(_ image: UIImage, tile: CGSize, maxZoom: Double, to url: URL) -> WidgetPhoto? {
+        let width = Double(image.size.width * image.scale)
+        let height = Double(image.size.height * image.scale)
+        guard let crop = WidgetPhotoFraming.crop(
+            imageWidth: width,
+            imageHeight: height,
+            tileWidth: Double(tile.width),
+            tileHeight: Double(tile.height),
+            maxZoom: maxZoom
+        ) else { return nil }
+
+        let data: Data?
+        let placement: WidgetPhotoFraming.Rect
+        if image.imageOrientation == .up,
+           let cgImage = image.cgImage,
+           cgImage.width == Int(width.rounded()),
+           cgImage.height == Int(height.rounded()),
+           let cropped = cgImage.cropping(to: CGRect(
+               x: crop.source.x,
+               y: crop.source.y,
+               width: crop.source.width,
+               height: crop.source.height
+           ).integral) {
+            data = UIImage(cgImage: cropped).jpegData(compressionQuality: 0.85)
+            placement = crop.placement
+        } else {
+            data = image.jpegData(compressionQuality: 0.85)
+            placement = crop.fullPlacement
+        }
+
+        guard let data, (try? data.write(to: url, options: .atomic)) != nil else { return nil }
+        return WidgetPhoto(url: url, placement: placement, coversTile: crop.coversTile)
     }
 
     /// The photo, as sharp as can be had without going to the network.
@@ -239,48 +377,24 @@ nonisolated struct MemoryProvider: TimelineProvider {
     /// trip would blow its time budget. So a soft photo beats an empty tile,
     /// and it is only ever reached when the sharp one is genuinely absent.
     ///
+    /// `.aspectFit` at the size the photo will be drawn: the whole frame,
+    /// which `save` then crops to what the tile shows. Photos does the
+    /// resizing in its own process, which is what keeps a 12-megapixel
+    /// original from ever being decoded in this one.
+    ///
     /// Neither delivery mode calls the result handler more than once, which
     /// is what makes resuming a continuation from it safe. `.opportunistic`
     /// is the mode that calls back twice, and using it here would crash.
-    private static func thumbnail(
-        for asset: PHAsset,
-        size: CGFloat,
-        contentMode: PHImageContentMode
-    ) async -> UIImage? {
-        if let image = await requestImage(
-            for: asset, size: size, contentMode: contentMode, delivery: .highQualityFormat
-        ) {
-            return compressed(image)
-        }
-        return await requestImage(for: asset, size: size, contentMode: contentMode, delivery: .fastFormat)
-            .map(compressed)
-    }
-
-    /// The same picture, held as JPEG until it is drawn.
-    ///
-    /// Photos hands back a decoded bitmap: about 1 MB for the small tile and
-    /// up to 3 MB for the wide one. Twelve of those at once, before WidgetKit
-    /// has rendered any of them, is enough to get the extension killed — and
-    /// a killed timeline never installs its next reload, so the widget
-    /// freezes on one photo until the app is opened. A `UIImage` made from
-    /// JPEG data decodes when it is drawn, one at a time, so twelve cost
-    /// a few hundred kilobytes between them. Falls back to the bitmap if
-    /// encoding fails; one large photo is better than none.
-    ///
-    /// `jpegData` writes the image's orientation into the data and
-    /// `UIImage(data:)` reads it back, so a photo shot sideways stays upright.
-    private static func compressed(_ image: UIImage) -> UIImage {
-        guard let data = image.jpegData(compressionQuality: 0.85),
-              let small = UIImage(data: data) else {
+    private static func thumbnail(for asset: PHAsset, target: CGSize) async -> UIImage? {
+        if let image = await requestImage(for: asset, target: target, delivery: .highQualityFormat) {
             return image
         }
-        return small
+        return await requestImage(for: asset, target: target, delivery: .fastFormat)
     }
 
     private static func requestImage(
         for asset: PHAsset,
-        size: CGFloat,
-        contentMode: PHImageContentMode,
+        target: CGSize,
         delivery: PHImageRequestOptionsDeliveryMode
     ) async -> UIImage? {
         let options = PHImageRequestOptions()
@@ -292,8 +406,8 @@ nonisolated struct MemoryProvider: TimelineProvider {
         return await withCheckedContinuation { continuation in
             PHImageManager.default().requestImage(
                 for: asset,
-                targetSize: CGSize(width: size, height: size),
-                contentMode: contentMode,
+                targetSize: target,
+                contentMode: .aspectFit,
                 options: options
             ) { image, _ in
                 continuation.resume(returning: image)
@@ -315,18 +429,19 @@ struct MemoryWidgetView: View {
         }
     }
 
-    /// The photo, laid out for the tile it is in.
+    /// The photo, drawn where the provider decided.
     ///
-    /// Where it sits is decided by `WidgetPhotoFraming`, which is tested.
-    /// The small tile always fills: it is square, most photos are 4:3 or
-    /// 3:4, and the blurred bands a fit left looked odd around an ordinary
-    /// photo. The wide tile zooms part-way between fit and fill, because a
-    /// fitted portrait covered a third of it and a filled one kept only a
-    /// band through the middle. Both seen on device.
+    /// The framing — the small tile filling, the wide one zooming part-way
+    /// so a portrait is not a sliver and a landscape still fills — is
+    /// `WidgetPhotoFraming`'s, worked out once when the photo was saved. The
+    /// saved image is already cropped to the part that shows, so here it is
+    /// only placed. Placement is in fractions of the tile, so a tile drawn a
+    /// little larger or smaller than reported (StandBy, display zoom) still
+    /// comes out right.
     ///
-    /// Whatever the photo leaves uncovered shows a blurred copy of itself,
-    /// so the tile is edge to edge either way. The backdrop is skipped when
-    /// nothing of it would show.
+    /// Whatever the photo leaves uncovered shows a blurred copy of it, so the
+    /// tile is edge to edge either way; skipped when nothing of it would
+    /// show, which also spares the blur's own memory.
     ///
     /// Everything is pinned to the `GeometryReader`'s measured size and
     /// clipped. `scaledToFill` reports a size larger than the one proposed to
@@ -334,46 +449,64 @@ struct MemoryWidgetView: View {
     /// it, and what that did to the layout differed by family — which is why
     /// one size once letterboxed while another zoomed.
     @ViewBuilder
-    private static func photo(_ image: UIImage, maxZoom: Double) -> some View {
+    private static func photo(_ photo: WidgetPhoto) -> some View {
         GeometryReader { geometry in
             let size = geometry.size
-            let frame = WidgetPhotoFraming.frame(
-                imageWidth: Double(image.size.width),
-                imageHeight: Double(image.size.height),
-                tileWidth: Double(size.width),
-                tileHeight: Double(size.height),
-                maxZoom: maxZoom
-            )
-            ZStack {
-                if frame?.coversTile != true {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: size.width, height: size.height)
-                        .clipped()
-                        // `opaque` because a blur otherwise samples past the edge
-                        // and fades the border to transparent, which over the
-                        // black container reads as a vignette.
-                        .blur(radius: 20, opaque: true)
-                        .overlay(Color.black.opacity(0.3))
-                }
+            // Read from the file here, at draw time, so it is decoded only
+            // while this entry is being drawn. A file that has gone — cleaned
+            // up, or purged by iOS — falls back to the missing-photo icon.
+            if let image = UIImage(contentsOfFile: photo.url.path) {
+                let rect = CGRect(
+                    x: photo.placement.x * size.width,
+                    y: photo.placement.y * size.height,
+                    width: photo.placement.width * size.width,
+                    height: photo.placement.height * size.height
+                )
+                ZStack {
+                    if !photo.coversTile {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: size.width, height: size.height)
+                            .clipped()
+                            // `opaque` because a blur otherwise samples past the edge
+                            // and fades the border to transparent, which over the
+                            // black container reads as a vignette.
+                            .blur(radius: 20, opaque: true)
+                            .overlay(Color.black.opacity(0.3))
+                    }
 
-                if let frame {
                     Image(uiImage: image)
                         .resizable()
-                        .frame(width: CGFloat(frame.width), height: CGFloat(frame.height))
-                        .position(x: CGFloat(frame.centerX), y: CGFloat(frame.centerY))
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
                 }
+                .frame(width: size.width, height: size.height)
+                .clipped()
+            } else {
+                missingPhoto
+                    .frame(width: size.width, height: size.height)
             }
-            .frame(width: size.width, height: size.height)
-            .clipped()
         }
+    }
+
+    /// A memory whose photo could not be loaded locally.
+    ///
+    /// The widget never goes to the network, so an iCloud-only original with
+    /// no cached rendition lands here — and a plain black tile captioned "3
+    /// Years Ago" reads as a broken widget rather than as a photo it cannot
+    /// reach. Also covers the placeholder entry, which WidgetKit redacts
+    /// anyway.
+    private static var missingPhoto: some View {
+        Image(systemName: "photo")
+            .font(.system(size: 22, weight: .regular))
+            .foregroundStyle(.white.opacity(0.25))
     }
 
     @ViewBuilder
     private var home: some View {
         switch entry.content {
-        case .memory(let image, let yearsAgo):
+        case .memory(let photo, let yearsAgo):
             // The labels are the widget's *content*; everything visual is its
             // container background. That split is not cosmetic. Since iOS 17
             // a widget insets its content by a system margin, so a photo drawn
@@ -392,25 +525,16 @@ struct MemoryWidgetView: View {
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            #if ATTIC_SIDELOAD
+            .overlay(alignment: .topTrailing) { diagnostics }
+            #endif
             .containerBackground(for: .widget) {
                 ZStack {
                     Color.black
-                    if let image {
-                        Self.photo(
-                            image,
-                            maxZoom: family == .systemSmall ? .infinity : WidgetPhotoFraming.wideMaxZoom
-                        )
+                    if let photo {
+                        Self.photo(photo)
                     } else {
-                        // A memory whose photo could not be loaded locally.
-                        // The widget never goes to the network, so an
-                        // iCloud-only original with no cached rendition lands
-                        // here — and a plain black tile captioned "3 Years
-                        // Ago" reads as a broken widget rather than as a photo
-                        // it cannot reach. Also covers the placeholder entry,
-                        // which WidgetKit redacts anyway.
-                        Image(systemName: "photo")
-                            .font(.system(size: 22, weight: .regular))
-                            .foregroundStyle(.white.opacity(0.25))
+                        Self.missingPhoto
                     }
                     // A gradient rather than a solid scrim: the label has to
                     // stay legible over a bright sky and a dark room alike.
@@ -475,6 +599,26 @@ struct MemoryWidgetView: View {
         }
     }
 
+    #if ATTIC_SIDELOAD
+    /// Sideload builds only: photos loaded out of those picked, the least
+    /// free memory while loading them, and free memory now, while drawing.
+    /// iOS kills the extension at zero; this is how the phone reports how
+    /// close it came, with no Mac to profile on.
+    @ViewBuilder
+    private var diagnostics: some View {
+        if let diagnostics = entry.diagnostics {
+            Text("\(diagnostics) · now \(MemoryProvider.megabytes(MemoryProvider.availableMemory()))")
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(.black.opacity(0.45), in: Capsule())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+    }
+    #endif
+
     private func centred(title: String, detail: String) -> some View {
         VStack(spacing: 4) {
             Image(systemName: "photo.on.rectangle.angled")
@@ -497,5 +641,44 @@ struct MemoryWidgetView: View {
     /// Matches `YearGroup.label` rather than inventing a second wording.
     private static func label(yearsAgo: Int) -> String {
         yearsAgo == 1 ? "1 Year Ago" : "\(yearsAgo) Years Ago"
+    }
+}
+
+/// Where the widget keeps the photos its timelines point at.
+///
+/// Caches, because every file here can be rebuilt on the next reload; iOS
+/// may purge it, and a purged photo shows the missing-photo icon until then.
+nonisolated enum WidgetPhotoStore {
+    private static var root: URL? {
+        FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("WidgetPhotos", isDirectory: true)
+    }
+
+    /// A fresh folder for one timeline's photos, after clearing out batches
+    /// old enough that no timeline can still be showing them.
+    static func newBatch(now: Date) -> URL? {
+        guard let root else { return nil }
+        let fileManager = FileManager.default
+        let batches = (try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []
+        for batch in batches {
+            let modified = (try? batch.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            if WidgetRotation.isStale(modified: modified, now: now) {
+                try? fileManager.removeItem(at: batch)
+            }
+        }
+
+        let folder = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+            return folder
+        } catch {
+            return nil
+        }
     }
 }

@@ -211,7 +211,11 @@ verified only by the CI build.
       every 30 minutes, the photos look random rather than the first few of
       the day, and the widget is still changing the next morning (a widget
       killed for memory freezes on one photo). Check a sideways-shot photo
-      shows upright, since the widget re-encodes each one to save memory.
+      shows upright, since the widget crops and re-encodes each one to save
+      memory. Sideload builds print memory on the widget's top-right corner:
+      `loaded/picked · low <least free while loading> · now <free while
+      drawing>`. iOS kills the widget at zero free; below about 10 MB it
+      stops loading more photos and rotates through fewer instead.
 - [ ] **Widget empty and no-access states**, the second by revoking photo
       access in Settings.
 - [ ] **Widget freshness** — delete a memory in the app, background the app,
@@ -294,6 +298,8 @@ Widget
 - Reloads at the day boundary, and when the app is backgrounded
 - Rotates through twelve random memories, one every 30 minutes, drawing a
   fresh twelve every six hours; different years before repeats
+- Each photo cropped to what the tile shows and kept as a file, not in
+  memory; stops loading early rather than being killed if memory runs low
 
 Recap quality
 - Eased pan and zoom on every slide, anchored on faces via on-device Vision

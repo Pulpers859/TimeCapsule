@@ -12,12 +12,52 @@ import Foundation
 /// a loop. Four reloads a day is well inside what iOS budgets a widget.
 ///
 /// Twelve is also about the ceiling. Every photo in a timeline is fetched
-/// before the first one is shown, inside an extension with a small memory
-/// limit; the widget keeps each one compressed until it is drawn so that
-/// twelve costs roughly what four used to.
+/// before the first one is shown, inside an extension iOS kills at about
+/// 30 MB. So each photo is cropped to what the tile shows, written to a file
+/// and dropped from memory before the next is fetched; the timeline holds
+/// file locations, not pictures. And `shouldLoadAnother` stops early if
+/// memory runs low anyway, so a bad day costs photos rather than the widget.
 nonisolated enum WidgetRotation {
     static let slotCount = 12
     static let slotInterval: TimeInterval = 30 * 60
+
+    // MARK: - Memory
+
+    /// Free memory below which no further photo is fetched.
+    ///
+    /// One fetch briefly holds the decoded photo from Photos (up to about
+    /// 3.6 MB for the wide tile on the largest iPhone), its JPEG encoding,
+    /// and Photos' own working memory. Ten megabytes leaves that roughly
+    /// twice over, plus room for WidgetKit to draw afterwards.
+    static let memoryFloorBytes = 10 * 1024 * 1024
+
+    /// Whether to fetch one more photo, given the memory iOS says is left
+    /// before it kills the extension (`os_proc_available_memory`).
+    ///
+    /// The first photo is always fetched: a widget with no photo at all
+    /// reads as broken, and at that point nothing else is held. Zero means
+    /// the system reported no limit, which is not a reason to stop.
+    static func shouldLoadAnother(loadedSoFar: Int, availableBytes: Int) -> Bool {
+        if loadedSoFar == 0 { return true }
+        if availableBytes <= 0 { return true }
+        return availableBytes >= memoryFloorBytes
+    }
+
+    // MARK: - Photo files
+
+    /// How long a batch of photo files is kept.
+    ///
+    /// A timeline lives at most six hours before it is replaced, so twelve
+    /// is double that — room for iOS postponing a reload — without letting
+    /// old batches pile up. Deleting by age rather than "everything but the
+    /// newest batch" is deliberate: the small and wide widgets build their
+    /// timelines separately, and newest-only would let one delete the
+    /// other's photos while they are on screen.
+    static let photoFileLifetime: TimeInterval = 12 * 3600
+
+    static func isStale(modified: Date, now: Date) -> Bool {
+        now.timeIntervalSince(modified) > photoFileLifetime
+    }
 
     /// A uniformly random `capacity` of everything offered to it, holding no
     /// more than `capacity` at any time.

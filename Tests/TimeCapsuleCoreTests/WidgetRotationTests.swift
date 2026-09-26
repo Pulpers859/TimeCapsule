@@ -160,4 +160,47 @@ final class WidgetRotationTests: XCTestCase {
         let result = WidgetRotation.schedule([Int](), from: now, dayBoundary: now.addingTimeInterval(86_400))
         XCTAssertTrue(result.entries.isEmpty)
     }
+
+    // MARK: - Memory floor
+
+    func testTheFirstPhotoIsAlwaysLoaded() {
+        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 0, availableBytes: 1024))
+    }
+
+    func testLoadingStopsBelowTheFloor() {
+        let floor = WidgetRotation.memoryFloorBytes
+        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 5, availableBytes: floor))
+        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 5, availableBytes: floor * 2))
+        XCTAssertFalse(WidgetRotation.shouldLoadAnother(loadedSoFar: 5, availableBytes: floor - 1))
+    }
+
+    /// Zero is what the system reports for a process with no limit.
+    func testAnUnreportedLimitDoesNotStopLoading() {
+        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 11, availableBytes: 0))
+    }
+
+    /// The floor has to leave room for one more fetch of the largest photo
+    /// the widget asks for, or it protects nothing.
+    func testTheFloorCoversOneLargeFetch() {
+        let largestDecodedPhoto = 1_092 * 819 * 4
+        XCTAssertGreaterThan(WidgetRotation.memoryFloorBytes, largestDecodedPhoto * 2)
+    }
+
+    // MARK: - Photo files
+
+    func testPhotoFilesOutliveTheLongestTimeline() {
+        let rotation = Double(WidgetRotation.slotCount) * WidgetRotation.slotInterval
+        XCTAssertGreaterThan(WidgetRotation.photoFileLifetime, rotation)
+        XCTAssertFalse(WidgetRotation.isStale(modified: now, now: now.addingTimeInterval(rotation)))
+    }
+
+    func testOldPhotoFilesAreStale() {
+        XCTAssertTrue(
+            WidgetRotation.isStale(
+                modified: now,
+                now: now.addingTimeInterval(WidgetRotation.photoFileLifetime + 1)
+            )
+        )
+    }
 }
+

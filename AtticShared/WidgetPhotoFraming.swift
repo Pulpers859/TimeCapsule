@@ -78,4 +78,87 @@ nonisolated enum WidgetPhotoFraming {
             coversTile: covers
         )
     }
+
+    // MARK: - Cropping to what is shown
+
+    /// A rectangle in Doubles, for the same reason as the rest of this file.
+    nonisolated struct Rect: Equatable {
+        var x: Double
+        var y: Double
+        var width: Double
+        var height: Double
+    }
+
+    /// What of a photo the tile ever shows, and where.
+    ///
+    /// The widget loads each photo once, keeps it as a file and draws it at
+    /// render time. Anything outside `source` is pixels that would be
+    /// decoded on every render and then clipped away unseen — for a
+    /// landscape filling the wide tile, about a third of the photo. Cropping
+    /// to `source` first changes nothing on screen: the framing is the same
+    /// one `frame` decides, so a landscape still fills edge to edge and a
+    /// portrait keeps the same zoom. It only stops paying for the parts that
+    /// were never visible.
+    nonisolated struct Crop: Equatable {
+        /// The visible part, in the photo's own pixels.
+        var source: Rect
+        /// Where that part sits, as fractions of the tile's width and height.
+        var placement: Rect
+        /// Where the *whole* photo sits, in the same fractions — reaching
+        /// past 0...1 where it overflows. For a photo that could not be
+        /// cropped and has to be drawn whole and clipped by the tile.
+        var fullPlacement: Rect
+        var coversTile: Bool
+    }
+
+    static func crop(
+        imageWidth: Double,
+        imageHeight: Double,
+        tileWidth: Double,
+        tileHeight: Double,
+        maxZoom: Double
+    ) -> Crop? {
+        guard let frame = frame(
+            imageWidth: imageWidth,
+            imageHeight: imageHeight,
+            tileWidth: tileWidth,
+            tileHeight: tileHeight,
+            maxZoom: maxZoom
+        ) else { return nil }
+
+        let left = frame.centerX - frame.width / 2
+        let top = frame.centerY - frame.height / 2
+
+        let visibleLeft = max(left, 0)
+        let visibleTop = max(top, 0)
+        let visibleRight = min(left + frame.width, tileWidth)
+        let visibleBottom = min(top + frame.height, tileHeight)
+        guard visibleRight > visibleLeft, visibleBottom > visibleTop else { return nil }
+
+        // Tile units to photo pixels.
+        let scaleX = imageWidth / frame.width
+        let scaleY = imageHeight / frame.height
+
+        return Crop(
+            source: Rect(
+                x: (visibleLeft - left) * scaleX,
+                y: (visibleTop - top) * scaleY,
+                width: (visibleRight - visibleLeft) * scaleX,
+                height: (visibleBottom - visibleTop) * scaleY
+            ),
+            placement: Rect(
+                x: visibleLeft / tileWidth,
+                y: visibleTop / tileHeight,
+                width: (visibleRight - visibleLeft) / tileWidth,
+                height: (visibleBottom - visibleTop) / tileHeight
+            ),
+            fullPlacement: Rect(
+                x: left / tileWidth,
+                y: top / tileHeight,
+                width: frame.width / tileWidth,
+                height: frame.height / tileHeight
+            ),
+            coversTile: frame.coversTile
+        )
+    }
 }
