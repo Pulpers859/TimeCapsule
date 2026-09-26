@@ -54,34 +54,43 @@ nonisolated struct MemoryProvider: TimelineProvider {
 
     func getSnapshot(in context: Context, completion: @escaping (MemoryEntry) -> Void) {
         Task {
-            let entries = await timelineEntries(family: context.family, limit: 1)
+            let (entries, _) = await timelineEntries(family: context.family, limit: 1)
             completion(entries.first ?? MemoryEntry(date: Date(), content: .empty, totalCount: 0))
         }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<MemoryEntry>) -> Void) {
         Task {
-            let refresh = Self.nextDayBoundary(after: Date())
-            let entries = await timelineEntries(family: context.family, limit: 4)
+            let (entries, refresh) = await timelineEntries(
+                family: context.family,
+                limit: WidgetRotation.slotCount
+            )
             let timeline = Timeline(
                 entries: entries.isEmpty
                     ? [MemoryEntry(date: Date(), content: .empty, totalCount: 0)]
                     : entries,
-                // Reloading at the day boundary rather than on a fixed interval
-                // is what keeps the widget correct the moment "today" changes,
-                // including for someone whose day starts at 3am.
+                // The earlier of the end of the rotation and the day
+                // boundary. The boundary is what keeps the widget correct the
+                // moment "today" changes, including for someone whose day
+                // starts at 3am; the end of the rotation is what draws a
+                // fresh random twelve every six hours instead of looping.
                 policy: .after(refresh)
             )
             completion(timeline)
         }
     }
 
-    /// Up to `limit` memories, spread across the day so the widget rotates
-    /// instead of showing one photo until midnight.
-    private func timelineEntries(family: WidgetFamily, limit: Int) async -> [MemoryEntry] {
+    /// Up to `limit` random memories, one every thirty minutes, and when to
+    /// ask for the next batch. See `WidgetRotation` for the shape.
+    private func timelineEntries(
+        family: WidgetFamily,
+        limit: Int
+    ) async -> (entries: [MemoryEntry], refresh: Date) {
+        let now = Date()
+        let dayBoundary = Self.nextDayBoundary(after: now)
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         guard status == .authorized || status == .limited else {
-            return [MemoryEntry(date: Date(), content: .noAccess, totalCount: 0)]
+            return ([MemoryEntry(date: now, content: .noAccess, totalCount: 0)], dayBoundary)
         }
 
         // Exactly what the gallery asks for, through exactly the same service,
@@ -90,11 +99,11 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // Capped at the number of memories this widget can actually show. An
         // uncapped call retains a `PHAsset` for every match across the whole
         // lookback — a widened memory range makes that a 15-day window over
-        // 20 years — to use four of them, inside an extension small enough
+        // 20 years — to use twelve of them, inside an extension small enough
         // that the difference can get it killed. A killed timeline never
         // installs its next reload, so the home screen freezes on a stale
         // photo until the app is next backgrounded.
-        let queryDate = MemoryWindow.logicalDate(for: Date())
+        let queryDate = MemoryWindow.logicalDate(for: now)
 
         // Resolved once, and resolved *bounded*. Both halves matter and the
         // previous version only had the first.
@@ -117,59 +126,55 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // `exclusionContext(on:)` is the same context `yearGroups` and
         // `count` build privately, date-bounded, resolved once.
         let exclusions = MemoryLibrary.exclusionContext(on: queryDate)
+        // A random `limit` of each year rather than its earliest, so a busy
+        // day shows more than its first hour. Still capped, for the memory
+        // reasons above.
         let groups = MemoryLibrary.yearGroups(
             on: queryDate,
             exclusions: exclusions,
-            maxPerYear: limit
+            maxPerYear: limit,
+            randomSample: true
         )
-        guard !groups.isEmpty else { return [] }
+        guard !groups.isEmpty else { return ([], dayBoundary) }
 
         // From `count(on:)`, not by summing the groups, which are capped and
         // would undercount. That path answers from the fetch itself without
         // materialising anything.
         let total = MemoryLibrary.count(on: queryDate, exclusions: exclusions)
-        let picks = Self.picks(from: groups, limit: limit)
+        var generator = SystemRandomNumberGenerator()
+        let picks = WidgetRotation.picks(
+            from: groups.map { group in group.assets.map { (asset: $0, yearsAgo: group.yearsAgo) } },
+            limit: limit,
+            using: &generator
+        )
+        let schedule = WidgetRotation.schedule(picks, from: now, dayBoundary: dayBoundary)
 
-        let now = Date()
-        let span = Self.nextDayBoundary(after: now).timeIntervalSince(now)
         // `nil` for the accessory families, which draw no photo.
         let pixelSize = Self.thumbnailSize(for: family)
         let contentMode = Self.requestContentMode(for: family)
 
-        var entries: [MemoryEntry] = []
-        for (offset, pick) in picks.enumerated() {
-            var image: UIImage?
-            if let pixelSize {
-                image = await Self.thumbnail(for: pick.asset, size: pixelSize, contentMode: contentMode)
-            }
-            let stride = span * Double(offset) / Double(max(picks.count, 1))
-            entries.append(
-                MemoryEntry(
-                    date: now.addingTimeInterval(stride),
-                    content: .memory(image: image, yearsAgo: pick.yearsAgo),
-                    totalCount: total
+        // Fetched once per pick, not once per slot: a day with three photos
+        // cycles them through twelve slots and must not load each four times.
+        var images: [String: UIImage] = [:]
+        if let pixelSize {
+            for pick in picks where images[pick.asset.localIdentifier] == nil {
+                images[pick.asset.localIdentifier] = await Self.thumbnail(
+                    for: pick.asset, size: pixelSize, contentMode: contentMode
                 )
+            }
+        }
+
+        let entries = schedule.entries.map { slot in
+            MemoryEntry(
+                date: slot.date,
+                content: .memory(
+                    image: images[slot.item.asset.localIdentifier],
+                    yearsAgo: slot.item.yearsAgo
+                ),
+                totalCount: total
             )
         }
-        return entries
-    }
-
-    /// One photo per year first, so a rotation shows different years rather
-    /// than four frames from the same afternoon. Only once years run out does
-    /// it take more from the newest one.
-    private static func picks(from groups: [YearGroup], limit: Int) -> [(asset: PHAsset, yearsAgo: Int)] {
-        var picks: [(asset: PHAsset, yearsAgo: Int)] = []
-        for group in groups where picks.count < limit {
-            if let asset = group.assets.first {
-                picks.append((asset, group.yearsAgo))
-            }
-        }
-        if let newest = groups.first {
-            for asset in newest.assets.dropFirst() where picks.count < limit {
-                picks.append((asset, newest.yearsAgo))
-            }
-        }
-        return picks
+        return (entries, schedule.reload)
     }
 
     /// The next time the answer to "what is today" changes.
@@ -244,9 +249,31 @@ nonisolated struct MemoryProvider: TimelineProvider {
         if let image = await requestImage(
             for: asset, size: size, contentMode: contentMode, delivery: .highQualityFormat
         ) {
-            return image
+            return compressed(image)
         }
         return await requestImage(for: asset, size: size, contentMode: contentMode, delivery: .fastFormat)
+            .map(compressed)
+    }
+
+    /// The same picture, held as JPEG until it is drawn.
+    ///
+    /// Photos hands back a decoded bitmap: about 1 MB for the small tile and
+    /// up to 3 MB for the wide one. Twelve of those at once, before WidgetKit
+    /// has rendered any of them, is enough to get the extension killed — and
+    /// a killed timeline never installs its next reload, so the widget
+    /// freezes on one photo until the app is opened. A `UIImage` made from
+    /// JPEG data decodes when it is drawn, one at a time, so twelve cost
+    /// a few hundred kilobytes between them. Falls back to the bitmap if
+    /// encoding fails; one large photo is better than none.
+    ///
+    /// `jpegData` writes the image's orientation into the data and
+    /// `UIImage(data:)` reads it back, so a photo shot sideways stays upright.
+    private static func compressed(_ image: UIImage) -> UIImage {
+        guard let data = image.jpegData(compressionQuality: 0.85),
+              let small = UIImage(data: data) else {
+            return image
+        }
+        return small
     }
 
     private static func requestImage(

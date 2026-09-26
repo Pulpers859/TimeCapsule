@@ -207,6 +207,11 @@ verified only by the CI build.
 - [ ] **Widget with the App Group provisioned**, confirming a widened memory
       range in Settings actually changes what the widget shows. This is the
       silent-failure path described above.
+- [ ] **Widget rotation** — on a day with many photos, the photo changes
+      every 30 minutes, the photos look random rather than the first few of
+      the day, and the widget is still changing the next morning (a widget
+      killed for memory freezes on one photo). Check a sideways-shot photo
+      shows upright, since the widget re-encodes each one to save memory.
 - [ ] **Widget empty and no-access states**, the second by revoking photo
       access in Settings.
 - [ ] **Widget freshness** — delete a memory in the app, background the app,
@@ -287,7 +292,8 @@ Widget
   directly so it is correct without the app being opened
 - Shares `MemoryLibrary` with the gallery, so widget and grid cannot disagree
 - Reloads at the day boundary, and when the app is backgrounded
-- Rotates through up to four memories, one per year first
+- Rotates through twelve random memories, one every 30 minutes, drawing a
+  fresh twelve every six hours; different years before repeats
 
 Recap quality
 - Eased pan and zoom on every slide, anchored on faces via on-device Vision

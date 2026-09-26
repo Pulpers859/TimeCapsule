@@ -244,31 +244,50 @@ nonisolated enum MemoryLibrary {
 
     /// - Parameter maxPerYear: caps how many assets each year retains. The
     ///   gallery wants all of them and passes nil; the widget shows at most
-    ///   four and passes a small number.
+    ///   twelve and passes that.
     ///
     ///   Without a cap this holds on to a `PHAsset` for every match across
     ///   the whole lookback — with a widened memory range that is a 15-day
     ///   window across 20 years, which on a heavy library is a lot of
     ///   objects to build inside a widget extension's jetsam limit purely to
-    ///   use four of them. A capped caller must take its total from
+    ///   use twelve of them. A capped caller must take its total from
     ///   `count(on:)` rather than by summing the groups, which is what that
     ///   method is for.
+    /// - Parameter randomSample: with a cap, keep a random `maxPerYear` of
+    ///   each year instead of the earliest. The widget rotates through a
+    ///   random selection; keeping the earliest would mean a day with three
+    ///   hundred photos only ever showed its first hour. Still holds no more
+    ///   than `maxPerYear` per year at any moment. Membership is untouched —
+    ///   this only decides which members are kept.
     static func yearGroups(
         on date: Date,
         calendar: Calendar = .current,
         exclusions: MemoryExclusions.Context? = nil,
-        maxPerYear: Int? = nil
+        maxPerYear: Int? = nil,
+        randomSample: Bool = false
     ) -> [YearGroup] {
         let currentYear = MemoryWindow.anniversaryCalendar(calendar).component(.year, from: date)
         var assetsByYear: [Int: [PHAsset]] = [:]
+        var samples: [Int: WidgetRotation.Reservoir<PHAsset>] = [:]
+        var generator = SystemRandomNumberGenerator()
+        let sampling = randomSample && maxPerYear != nil
         let ranges = enumerateMemories(
             on: date,
             calendar: calendar,
             exclusions: exclusions,
-            sorted: true
+            // A random sample has no use for capture order, and sorting is
+            // work Photos does for nothing.
+            sorted: !sampling
         ) { asset, year in
+            if sampling, let maxPerYear {
+                samples[year, default: .init(capacity: maxPerYear)].offer(asset, using: &generator)
+                return
+            }
             if let maxPerYear, assetsByYear[year]?.count ?? 0 >= maxPerYear { return }
             assetsByYear[year, default: []].append(asset)
+        }
+        for (year, sample) in samples {
+            assetsByYear[year] = sample.elements
         }
 
         return ranges.compactMap { item in
