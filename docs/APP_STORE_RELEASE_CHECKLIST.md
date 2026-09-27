@@ -302,6 +302,8 @@ Widget
   fresh twelve every six hours; different years before repeats
 - Each photo cropped to what the tile shows and kept as a file, not in
   memory; stops loading early rather than being killed if memory runs low
+- Passes over photos that come back soft (only a small preview on the
+  phone, full photo in iCloud) for another from the same day
 
 Recap quality
 - Eased pan and zoom on every slide, anchored on faces via on-device Vision

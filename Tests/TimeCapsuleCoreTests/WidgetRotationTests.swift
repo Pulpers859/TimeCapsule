@@ -213,6 +213,37 @@ final class WidgetRotationTests: XCTestCase {
         XCTAssertLessThan(WidgetRotation.memoryFloorBytes, WidgetRotation.assumedLimitBytes / 2)
     }
 
+    // MARK: - Sharpness
+
+    func testAPhotoAtTheRequestedSizeIsSharp() {
+        XCTAssertTrue(WidgetRotation.isSharp(returnedWidth: 510, returnedHeight: 680, targetWidth: 510, targetHeight: 680))
+    }
+
+    /// The small preview kept on the phone for an iCloud photo, stretched
+    /// to fill a 3x tile.
+    func testASmallPreviewIsSoft() {
+        XCTAssertFalse(WidgetRotation.isSharp(returnedWidth: 256, returnedHeight: 341, targetWidth: 510, targetHeight: 680))
+    }
+
+    func testSlightlyUnderSizeStillCountsAsSharp() {
+        XCTAssertTrue(WidgetRotation.isSharp(returnedWidth: 400, returnedHeight: 533, targetWidth: 510, targetHeight: 680))
+    }
+
+    func testRotationPrefersSharpPhotos() {
+        let loaded: [(item: String, isSharp: Bool)] = [
+            ("soft1", false), ("sharp1", true), ("soft2", false), ("sharp2", true)
+        ]
+        XCTAssertEqual(WidgetRotation.rotation(loaded, limit: 12), ["sharp1", "sharp2"])
+        XCTAssertEqual(WidgetRotation.rotation(loaded, limit: 1), ["sharp1"])
+    }
+
+    /// A soft photo beats an empty widget.
+    func testSoftPhotosOnlyWhenNothingIsSharp() {
+        let loaded: [(item: String, isSharp: Bool)] = [("soft1", false), ("soft2", false)]
+        XCTAssertEqual(WidgetRotation.rotation(loaded, limit: 12), ["soft1", "soft2"])
+        XCTAssertTrue(WidgetRotation.rotation([(item: String, isSharp: Bool)](), limit: 12).isEmpty)
+    }
+
     // MARK: - Photo files
 
     func testPhotoFilesOutliveTheLongestTimeline() {

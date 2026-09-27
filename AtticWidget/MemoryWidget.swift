@@ -60,6 +60,12 @@ struct WidgetPhoto {
     let placement: WidgetPhotoFraming.Rect
     /// Nothing of the tile is left uncovered, so no blurred backdrop.
     let coversTile: Bool
+    /// Photos returned it at close to the size it is drawn. See
+    /// `WidgetRotation.isSharp`.
+    var isSharp = true
+    /// For the sideload readout: returned size, requested size, and which
+    /// delivery produced it.
+    var detail = ""
 }
 
 /// Marked `nonisolated` throughout on purpose.
@@ -156,10 +162,14 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // A random `limit` of each year rather than its earliest, so a busy
         // day shows more than its first hour. Still capped, for the memory
         // reasons above.
+        //
+        // Twice as many candidates as slots, so a photo that comes back soft
+        // can be passed over for another from the same day.
+        let candidateLimit = limit * WidgetRotation.candidatesPerSlot
         let groups = MemoryLibrary.yearGroups(
             on: queryDate,
             exclusions: exclusions,
-            maxPerYear: limit,
+            maxPerYear: candidateLimit,
             randomSample: true
         )
         guard !groups.isEmpty else { return ([], dayBoundary) }
@@ -171,7 +181,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
         var generator = SystemRandomNumberGenerator()
         let picks = WidgetRotation.picks(
             from: groups.map { group in group.assets.map { (asset: $0, yearsAgo: group.yearsAgo) } },
-            limit: limit,
+            limit: candidateLimit,
             using: &generator
         )
 
@@ -180,11 +190,16 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // `nil` tile for the accessory families, which draw no photo.
         var photos: [String: WidgetPhoto] = [:]
         var attempted = 0
+        var sharpCount = 0
         var peakUsed = Self.footprint()
+        var tileDetail = ""
         if let tile = await Self.tilePixels(for: family, displaySize: displaySize),
            let folder = WidgetPhotoStore.newBatch(now: now) {
+            tileDetail = "tile \(Int(tile.width))×\(Int(tile.height))"
             let maxZoom = family == .systemSmall ? .infinity : WidgetPhotoFraming.wideMaxZoom
-            for pick in picks {
+            // Until `limit` sharp photos are in hand; the spare candidates
+            // are only fetched to replace soft ones.
+            for pick in picks where sharpCount < limit {
                 // Checked before every fetch, not once: this is what makes
                 // a day that runs short of memory show eight photos instead
                 // of freezing on one.
@@ -202,25 +217,33 @@ nonisolated struct MemoryProvider: TimelineProvider {
                 peakUsed = max(peakUsed, usedAtPeak)
                 if let photo {
                     photos[pick.asset.localIdentifier] = photo
+                    if photo.isSharp { sharpCount += 1 }
                 }
             }
         }
 
-        // Rotate through the photos that actually loaded. One that could not
-        // be read locally, or was never fetched because memory ran short,
-        // is left out rather than shown as an empty tile. Only if none
+        // Rotate through the sharp photos that loaded, in the order picked.
+        // A soft one — the full photo is in iCloud and only a small preview
+        // is on the phone — is shown only if nothing sharp loaded at all. One
+        // that could not be read, or was never fetched because memory ran
+        // short, is left out rather than shown as an empty tile. Only if none
         // loaded at all — or this family draws no photo — do the picks stand
-        // as they are.
-        let loaded = picks.filter { photos[$0.asset.localIdentifier] != nil }
+        // as they are, up to `limit`.
+        let loaded = WidgetRotation.rotation(
+            picks.compactMap { pick in
+                photos[pick.asset.localIdentifier].map { (item: pick, isSharp: $0.isSharp) }
+            },
+            limit: limit
+        )
         let schedule = WidgetRotation.schedule(
-            loaded.isEmpty ? picks : loaded,
+            loaded.isEmpty ? Array(picks.prefix(limit)) : loaded,
             from: now,
             dayBoundary: dayBoundary
         )
 
         let diagnostics = attempted == 0
             ? nil
-            : "\(photos.count)/\(picks.count) · peak \(Self.megabytes(peakUsed))"
+            : "\(sharpCount) sharp · \(photos.count - sharpCount) soft · \(tileDetail)\npeak \(Self.megabytes(peakUsed))"
 
         let entries = schedule.entries.map { slot in
             MemoryEntry(
@@ -335,12 +358,26 @@ nonisolated struct MemoryProvider: TimelineProvider {
             target = CGSize(width: edge, height: edge)
         }
 
-        guard let image = await thumbnail(for: asset, target: target) else {
+        guard let fetched = await thumbnail(for: asset, target: target) else {
             return (nil, footprint())
         }
+        let (image, delivery) = fetched
         let usedAtPeak = footprint()
+        let returnedWidth = Double(image.size.width * image.scale)
+        let returnedHeight = Double(image.size.height * image.scale)
         let photo = autoreleasepool {
             save(image, tile: tile, maxZoom: maxZoom, to: url)
+        }.map { (saved: WidgetPhoto) -> WidgetPhoto in
+            var saved = saved
+            saved.isSharp = WidgetRotation.isSharp(
+                returnedWidth: returnedWidth,
+                returnedHeight: returnedHeight,
+                targetWidth: Double(target.width),
+                targetHeight: Double(target.height)
+            )
+            saved.detail = "got \(Int(returnedWidth))×\(Int(returnedHeight)) of "
+                + "\(Int(target.width))×\(Int(target.height)) · \(delivery)"
+            return saved
         }
         return (photo, usedAtPeak)
     }
@@ -406,11 +443,17 @@ nonisolated struct MemoryProvider: TimelineProvider {
     /// Neither delivery mode calls the result handler more than once, which
     /// is what makes resuming a continuation from it safe. `.opportunistic`
     /// is the mode that calls back twice, and using it here would crash.
-    private static func thumbnail(for asset: PHAsset, target: CGSize) async -> UIImage? {
+    ///
+    /// Also says which delivery produced it, for the sideload readout: a
+    /// `fast` photo is the small preview, and the likeliest to be soft.
+    private static func thumbnail(for asset: PHAsset, target: CGSize) async -> (UIImage, String)? {
         if let image = await requestImage(for: asset, target: target, delivery: .highQualityFormat) {
-            return image
+            return (image, "full")
         }
-        return await requestImage(for: asset, target: target, delivery: .fastFormat)
+        if let image = await requestImage(for: asset, target: target, delivery: .fastFormat) {
+            return (image, "fast")
+        }
+        return nil
     }
 
     private static func requestImage(
@@ -628,14 +671,20 @@ struct MemoryWidgetView: View {
     @ViewBuilder
     private var diagnostics: some View {
         if let diagnostics = entry.diagnostics {
-            Text("\(diagnostics) · now \(MemoryProvider.megabytes(MemoryProvider.footprint())) of 30")
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.85))
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .background(.black.opacity(0.45), in: Capsule())
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
+            VStack(alignment: .trailing, spacing: 0) {
+                Text("\(diagnostics) · now \(MemoryProvider.megabytes(MemoryProvider.footprint())) of 30")
+                if case .memory(let photo?, _) = entry.content {
+                    Text(photo.detail)
+                }
+            }
+            .font(.system(size: 8, weight: .medium, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.85))
+            .lineLimit(2)
+            .multilineTextAlignment(.trailing)
+            .minimumScaleFactor(0.5)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 4))
         }
     }
     #endif

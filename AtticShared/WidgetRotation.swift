@@ -71,6 +71,45 @@ nonisolated enum WidgetRotation {
         return headroomBytes >= memoryFloorBytes
     }
 
+    // MARK: - Sharpness
+
+    /// How many candidates to draw for each photo slot.
+    ///
+    /// Some photos come back soft — the full photo is in iCloud and only a
+    /// small preview is on the phone, which a widget cannot download past —
+    /// and those are passed over for another from the same day. Two per slot
+    /// is enough spare for an ordinary day without making every reload fetch
+    /// twice as much.
+    static let candidatesPerSlot = 2
+
+    /// The least of the requested size a returned photo may be and still
+    /// count as sharp. Below this it is being stretched by a third or more
+    /// to fill its space, which is where softness starts to show.
+    static let sharpnessThreshold = 0.75
+
+    static func isSharp(
+        returnedWidth: Double,
+        returnedHeight: Double,
+        targetWidth: Double,
+        targetHeight: Double
+    ) -> Bool {
+        guard targetWidth > 0, targetHeight > 0 else { return true }
+        let coverage = min(returnedWidth / targetWidth, returnedHeight / targetHeight)
+        return coverage >= sharpnessThreshold
+    }
+
+    /// Which loaded photos to rotate through: the sharp ones, in the order
+    /// picked, up to `limit`. Soft ones only when there is no sharp one at
+    /// all — a soft photo beats an empty widget, but not a sharp photo.
+    static func rotation<Item>(
+        _ loaded: [(item: Item, isSharp: Bool)],
+        limit: Int
+    ) -> [Item] {
+        let sharp = loaded.filter { $0.isSharp }.map { $0.item }
+        let chosen = sharp.isEmpty ? loaded.map { $0.item } : sharp
+        return Array(chosen.prefix(limit))
+    }
+
     // MARK: - Photo files
 
     /// How long a batch of photo files is kept.
