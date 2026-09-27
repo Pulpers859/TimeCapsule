@@ -193,9 +193,10 @@ nonisolated struct MemoryProvider: TimelineProvider {
         var sharpCount = 0
         var peakUsed = Self.footprint()
         var tileDetail = ""
-        if let tile = await Self.tilePixels(for: family, displaySize: displaySize),
+        if let tileInfo = await Self.tilePixels(for: family, displaySize: displaySize),
            let folder = WidgetPhotoStore.newBatch(now: now) {
-            tileDetail = "tile \(Int(tile.width))×\(Int(tile.height))"
+            let tile = tileInfo.size
+            tileDetail = "tile \(Int(tile.width))×\(Int(tile.height)) (scale said \(tileInfo.reportedScale))"
             let maxZoom = family == .systemSmall ? .infinity : WidgetPhotoFraming.wideMaxZoom
             // Until `limit` sharp photos are in hand; the spare candidates
             // are only fetched to replace soft ones.
@@ -302,17 +303,29 @@ nonisolated struct MemoryProvider: TimelineProvider {
             ?? date.addingTimeInterval(60 * 60)
     }
 
-    /// The tile's size in pixels, or `nil` for a family that shows no photo.
+    /// The tile's size in pixels, or `nil` for a family that shows no photo,
+    /// with the screen scale the system reported (for the sideload readout).
     ///
-    /// From the size WidgetKit reports for this phone, not a guess: photos
-    /// are fetched and cropped to exactly this, so a guess too large wastes
-    /// memory on every photo and one too small is soft. The fallbacks are the
-    /// largest iPhone's tiles, for the rare context that reports no size.
+    /// From the size WidgetKit reports for this phone: photos are fetched
+    /// and cropped to exactly this, so too large wastes memory on every
+    /// photo and too small is visibly soft. The fallbacks are the largest
+    /// iPhone's tiles, for the rare context that reports no size.
+    ///
+    /// The scale is never taken below 3. Every photo is fetched at the tile's
+    /// size times the scale, so a scale that comes back low makes every
+    /// photo that many times too small, and blurry — which is what the first
+    /// build of this code did on device, sharp in Photos and soft on the
+    /// widget. Floored at 3, the worst a wrong reading can do is fetch
+    /// photos half again larger than needed on a 2x iPhone: a little memory,
+    /// never blur.
     ///
     /// The accessory families return `nil`. Neither of them draws the image —
     /// they are a count and a line of text — so fetching one would be decoded
     /// and thrown away, inside the one process with a memory limit.
-    private static func tilePixels(for family: WidgetFamily, displaySize: CGSize) async -> CGSize? {
+    private static func tilePixels(
+        for family: WidgetFamily,
+        displaySize: CGSize
+    ) async -> (size: CGSize, reportedScale: CGFloat)? {
         let points: CGSize
         switch family {
         case .accessoryCircular, .accessoryRectangular:
@@ -322,12 +335,14 @@ nonisolated struct MemoryProvider: TimelineProvider {
         default:
             points = displaySize.width > 0 ? displaySize : CGSize(width: 170, height: 170)
         }
-        // `UIScreen.main` is deprecated for apps with scenes; an extension
-        // has none, and it is still the one reliable source of the scale.
-        let scale = await MainActor.run { UIScreen.main.scale }
-        return CGSize(
-            width: (points.width * scale).rounded(.up),
-            height: (points.height * scale).rounded(.up)
+        let reportedScale = await MainActor.run { UIScreen.main.scale }
+        let scale = max(reportedScale, 3)
+        return (
+            CGSize(
+                width: (points.width * scale).rounded(.up),
+                height: (points.height * scale).rounded(.up)
+            ),
+            reportedScale
         )
     }
 
