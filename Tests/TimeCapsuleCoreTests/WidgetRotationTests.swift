@@ -199,10 +199,44 @@ final class WidgetRotationTests: XCTestCase {
         )
     }
 
+    /// Seen on device: iOS reported a 60 MB limit. That is the limit the
+    /// process has, and the 30 MB assumption must not override it.
+    func testABelievableReportedLimitIsTrusted() {
+        XCTAssertEqual(
+            WidgetRotation.headroom(reportedAvailable: 36 * megabyte, footprint: 24 * megabyte),
+            36 * megabyte
+        )
+    }
+
     func testHeadroomFromWhicheverInputIsKnown() {
         XCTAssertEqual(WidgetRotation.headroom(reportedAvailable: 0, footprint: 10 * megabyte), 20 * megabyte)
         XCTAssertEqual(WidgetRotation.headroom(reportedAvailable: 8 * megabyte, footprint: 0), 8 * megabyte)
         XCTAssertNil(WidgetRotation.headroom(reportedAvailable: 0, footprint: 0))
+    }
+
+    // MARK: - Settling
+
+    func testTheFirstBuildDoesNotWait() {
+        XCTAssertFalse(
+            WidgetRotation.shouldKeepSettling(current: 8 * megabyte, lowestStart: 8 * megabyte, waited: 0)
+        )
+    }
+
+    /// The wide widget started at 23.9 MB right after the small one.
+    func testABuildOnTopOfLeftoversWaits() {
+        XCTAssertTrue(
+            WidgetRotation.shouldKeepSettling(current: 24 * megabyte, lowestStart: 8 * megabyte, waited: 0.5)
+        )
+    }
+
+    func testWaitingIsCapped() {
+        XCTAssertFalse(
+            WidgetRotation.shouldKeepSettling(
+                current: 24 * megabyte,
+                lowestStart: 8 * megabyte,
+                waited: WidgetRotation.settleLimit
+            )
+        )
     }
 
     /// The floor has to leave room for one more fetch of the largest photo

@@ -221,9 +221,12 @@ verified only by the CI build.
       build — the whole phone — so the check uses the widget's own usage.)
       Measured on device (sideload-33): the widget system itself ~3 MB,
       library search ~2 MB, drawing ~0.5 MB; photo loading left ~1 MB
-      (small) to ~3 MB (wide) per photo behind, which is being fixed. In one
-      process iOS reported a 60 MB limit, not 30 — confirm on a TestFlight
-      build before relying on either.
+      (small) to ~3 MB (wide) per photo behind. That memory is held inside
+      the system frameworks, not Attic's code (sideload-34: a synchronous,
+      pooled fetch and a fresh PHImageManager per photo both still left
+      +2 MB each), and is freed later — so builds wait for it to settle, and
+      the check trusts the limit iOS reports when it is believable (60 MB on
+      device, not the 30 assumed). Confirm the limit on a TestFlight build.
 - [ ] **Widget empty and no-access states**, the second by revoking photo
       access in Settings.
 - [ ] **Widget freshness** — delete a memory in the app, background the app,

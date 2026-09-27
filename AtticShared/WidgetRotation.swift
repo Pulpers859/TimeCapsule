@@ -30,8 +30,8 @@ nonisolated enum WidgetRotation {
     /// everywhere. `os_proc_available_memory` was the first version of this
     /// check, and on a sideloaded build it reported about 6,600 MB free —
     /// the whole phone, not the widget's allowance — so a check against it
-    /// could never trip. Seen on device. Whichever of the two is stricter
-    /// wins, so a phone that does report the real limit is still respected.
+    /// could never trip. Seen on device. Used only when the system's figure
+    /// is not believable; see `headroom`.
     static let assumedLimitBytes = 30 * 1024 * 1024
 
     /// Headroom below which no further photo is fetched, at the least.
@@ -42,18 +42,49 @@ nonisolated enum WidgetRotation {
     /// further when a build sees a costlier photo.
     static let memoryFloorBytes = 10 * 1024 * 1024
 
-    /// Memory left before iOS kills the extension, from what the system
-    /// reports (`os_proc_available_memory`) and from what the extension is
-    /// using against `assumedLimitBytes` — the smaller of the two it has.
-    /// `nil` when it has neither.
+    /// The largest limit reported by the system that is believed.
+    ///
+    /// A widget extension's real limit is tens of megabytes. On a sideloaded
+    /// build the system has also reported about 6,600 MB — the whole phone —
+    /// which is not a limit anything will enforce on an App Store install,
+    /// so a figure past this falls back to `assumedLimitBytes`.
+    static let believableLimitBytes = 1024 * 1024 * 1024
+
+    /// Memory left before iOS kills the extension, or `nil` if unknown.
+    ///
+    /// The system's own figure (`os_proc_available_memory`) when the limit
+    /// it implies is believable: it is the limit this process actually has,
+    /// and on device it read 60 MB where the assumption said 30 — the
+    /// assumption is what cut the wide widget to a single photo. Otherwise
+    /// the extension's own use against `assumedLimitBytes`.
     ///
     /// Either input is zero when unknown: the system reports zero for no
     /// limit, and a footprint that could not be read comes back as zero.
     static func headroom(reportedAvailable: Int, footprint: Int) -> Int? {
-        var candidates: [Int] = []
-        if reportedAvailable > 0 { candidates.append(reportedAvailable) }
-        if footprint > 0 { candidates.append(assumedLimitBytes - footprint) }
-        return candidates.min()
+        if reportedAvailable > 0, footprint + reportedAvailable <= believableLimitBytes {
+            return reportedAvailable
+        }
+        if footprint > 0 { return assumedLimitBytes - footprint }
+        return nil
+    }
+
+    // MARK: - Settling
+
+    /// Memory left over from the previous build that is worth waiting out.
+    static let settleMarginBytes = 4 * 1024 * 1024
+    /// The longest a build waits for it.
+    static let settleLimit: TimeInterval = 2
+
+    /// Whether a build should wait longer before fetching.
+    ///
+    /// Seen on device: fetching leaves memory behind that the system frees
+    /// only later — a process 18 builds old started its next at 7.9 MB — but
+    /// the small and wide widgets are built back to back, so the second
+    /// started on top of the first's leftovers and fit one photo. Waiting
+    /// briefly for memory to come back near the lowest a build has started
+    /// at in this process lets the second begin clean.
+    static func shouldKeepSettling(current: Int, lowestStart: Int, waited: TimeInterval) -> Bool {
+        waited < settleLimit && current > lowestStart + settleMarginBytes
     }
 
     /// Whether to fetch one more photo.

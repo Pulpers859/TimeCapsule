@@ -124,9 +124,12 @@ nonisolated struct MemoryProvider: TimelineProvider {
     ) async -> (entries: [MemoryEntry], refresh: Date) {
         // Sideload readout: memory at each step of this build, and whether
         // another build was running in the same process at the same time.
-        var stages = MemoryProbe.Stages()
         let overlapping = MemoryProbe.shared.beginBuild()
         defer { MemoryProbe.shared.endBuild() }
+        // Wait out the previous build's leftovers first; see
+        // `WidgetRotation.shouldKeepSettling`.
+        let settled = await MemoryProbe.shared.settle()
+        var stages = MemoryProbe.Stages()
         let now = Date()
         let dayBoundary = Self.nextDayBoundary(after: now)
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -207,9 +210,9 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // just after its save — because freed memory is not always handed
         // back, so the difference between stages can hide or inflate it.
         var photoDeltas: [Int] = []
-        // Side-by-side test: what each fetch method leaves behind once it
-        // has returned, and its peak. See `LoadMethod`.
-        var kept: [LoadMethod: [Int]] = [:]
+        // What each photo leaves behind once it has returned and the main
+        // thread has had a moment — the figure that decides how many fit.
+        var kept: [Int] = []
         var largestCost = 0
         if let tileInfo = await Self.tilePixels(for: family, displaySize: displaySize),
            let folder = WidgetPhotoStore.newBatch(now: now) {
@@ -227,20 +230,25 @@ nonisolated struct MemoryProvider: TimelineProvider {
                     headroomBytes: Self.headroom(),
                     largestPhotoCost: largestCost
                 ) else { break }
-                let method: LoadMethod = attempted % 2 == 0 ? .pooled : .freshManager
                 attempted += 1
                 let before = Self.footprint()
                 let (photo, usedAtPeak) = await Self.savedPhoto(
                     for: pick.asset,
                     tile: tile,
                     maxZoom: maxZoom,
-                    to: folder.appendingPathComponent("\(attempted).jpg"),
-                    method: method
+                    to: folder.appendingPathComponent("\(attempted).jpg")
                 )
                 stages.observe(usedAtPeak)
                 photoDeltas.append(usedAtPeak - before)
                 largestCost = max(largestCost, usedAtPeak - before)
-                kept[method, default: []].append(Self.footprint() - before)
+                // A pause on the main thread between photos. The memory a
+                // fetch leaves behind is freed by the system later rather
+                // than when the fetch returns — seen on device — and if that
+                // is waiting on the main thread, this lets it happen here
+                // instead of piling up across all twelve.
+                await MainActor.run {}
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                kept.append(Self.footprint() - before)
                 if let photo {
                     photos[pick.asset.localIdentifier] = photo
                     if photo.isSharp { sharpCount += 1 }
@@ -268,6 +276,14 @@ nonisolated struct MemoryProvider: TimelineProvider {
         )
 
         stages.mark("photos")
+        // Whether what is left is freed with time alone.
+        var later = ""
+        if attempted > 0 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let half = Self.footprint()
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            later = "then +0.5s \(MemoryProbe.mb(half)) · +1.5s \(MemoryProbe.mb(Self.footprint()))"
+        }
         let perPhoto = photoDeltas.isEmpty
             ? ""
             : " (each +\(MemoryProbe.mb(photoDeltas.reduce(0, +) / photoDeltas.count)), "
@@ -277,11 +293,9 @@ nonisolated struct MemoryProvider: TimelineProvider {
             : [
                 "\(sharpCount) sharp · \(photos.count - sharpCount) soft · \(tileDetail)",
                 stages.summary + perPhoto,
-                [LoadMethod.pooled, .freshManager].compactMap { method -> String? in
-                    guard let values = kept[method], !values.isEmpty else { return nil }
-                    let average = values.reduce(0, +) / values.count
-                    return "\(method.rawValue) kept +\(MemoryProbe.mb(average)) ×\(values.count)"
-                }.joined(separator: " · "),
+                (kept.isEmpty ? "" : "kept +\(MemoryProbe.mb(kept.reduce(0, +) / kept.count)) each · ")
+                    + later,
+                settled ?? "no settle wait",
                 "build #\(MemoryProbe.shared.buildCount)\(overlapping ? " OVERLAPPED" : "") · "
                     + "process began at \(MemoryProbe.mb(MemoryProbe.shared.processStart))"
             ].joined(separator: "\n")
@@ -386,27 +400,6 @@ nonisolated struct MemoryProvider: TimelineProvider {
         )
     }
 
-    /// How a photo is fetched, for the side-by-side test in sideload builds.
-    ///
-    /// On device, every photo left roughly its own decoded size behind —
-    /// twelve photos, 13 MB that should have been freed — when it was
-    /// fetched through an asynchronous Photos request and cropped across
-    /// several suspension points. Two causes fit, with different fixes, so
-    /// both are tried, alternating photo by photo, and the readout reports
-    /// what each leaves behind:
-    ///
-    /// - `pooled`: the whole job — request, crop, write — synchronously on
-    ///   one thread inside one autorelease pool. If the memory was objects
-    ///   waiting on a pool that drained late, this frees it before the next
-    ///   photo starts.
-    /// - `freshManager`: the same, through a new `PHImageManager` made for
-    ///   this photo and discarded after it. If the memory was a cache inside
-    ///   the shared manager, this frees it too.
-    enum LoadMethod: String {
-        case pooled = "A"
-        case freshManager = "B"
-    }
-
     /// Serial, so one photo at a time is ever in memory.
     private static let loadQueue = DispatchQueue(label: "Attic.widget.photo-load", qos: .userInitiated)
 
@@ -414,13 +407,12 @@ nonisolated struct MemoryProvider: TimelineProvider {
     ///
     /// Also returns the memory in use while the fetched photo was held —
     /// the high point of the whole job — for the readout and for the
-    /// memory check, and which method produced it.
+    /// memory check.
     private static func savedPhoto(
         for asset: PHAsset,
         tile: CGSize,
         maxZoom: Double,
-        to url: URL,
-        method: LoadMethod
+        to url: URL
     ) async -> (photo: WidgetPhoto?, usedAtPeak: Int) {
         // Asked for at the size it will be drawn, no larger. `pixelWidth`
         // and `pixelHeight` only guide the request; the crop is worked out
@@ -439,14 +431,14 @@ nonisolated struct MemoryProvider: TimelineProvider {
             target = CGSize(width: edge, height: edge)
         }
 
-        // Start to finish on one thread, inside one pool: everything the
-        // job made is released before this returns and the next photo
-        // starts.
+        // Start to finish on one thread, inside one pool, so nothing of ours
+        // outlives the job. Measured on device this did not by itself stop
+        // memory accumulating — that is held inside the system frameworks,
+        // and freed by them later — but it keeps our own part of it zero.
         let pooled: (photo: WidgetPhoto?, usedAtPeak: Int)? = await withCheckedContinuation { continuation in
             loadQueue.async {
                 let result = autoreleasepool { () -> (photo: WidgetPhoto?, usedAtPeak: Int)? in
-                    let manager = method == .freshManager ? PHImageManager() : PHImageManager.default()
-                    guard let image = synchronousImage(for: asset, target: target, manager: manager) else {
+                    guard let image = synchronousImage(for: asset, target: target) else {
                         return nil
                     }
                     let usedAtPeak = footprint()
@@ -456,7 +448,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
                         tile: tile,
                         maxZoom: maxZoom,
                         to: url,
-                        delivery: "full \(method.rawValue)"
+                        delivery: "full"
                     )
                     return (photo, usedAtPeak)
                 }
@@ -484,18 +476,14 @@ nonisolated struct MemoryProvider: TimelineProvider {
     /// Synchronous on purpose, and only ever called on `loadQueue`: see
     /// `savedPhoto`. A synchronous request calls its handler once, before
     /// returning.
-    private static func synchronousImage(
-        for asset: PHAsset,
-        target: CGSize,
-        manager: PHImageManager
-    ) -> UIImage? {
+    private static func synchronousImage(for asset: PHAsset, target: CGSize) -> UIImage? {
         let options = PHImageRequestOptions()
         options.isSynchronous = true
         options.deliveryMode = .highQualityFormat
         options.resizeMode = .exact
         options.isNetworkAccessAllowed = false
         var result: UIImage?
-        manager.requestImage(
+        PHImageManager.default().requestImage(
             for: asset,
             targetSize: target,
             contentMode: .aspectFit,
@@ -900,6 +888,7 @@ nonisolated final class MemoryProbe: @unchecked Sendable {
     private var inFlight = 0
     private var builds = 0
     private var drawMax = 0
+    private var lowestStart: Int?
 
     private init() {
         processStart = MemoryProvider.footprint()
@@ -940,6 +929,39 @@ nonisolated final class MemoryProbe: @unchecked Sendable {
         let seen = drawMax
         lock.unlock()
         return (now, seen, limit)
+    }
+
+    /// Waits, briefly, for memory left by the previous build to be freed,
+    /// and describes the wait for the readout — `nil` if there was none.
+    func settle() async -> String? {
+        let from = MemoryProvider.footprint()
+        let lowest = lowestStartSoFar() ?? from
+
+        var current = from
+        var waited: TimeInterval = 0
+        while WidgetRotation.shouldKeepSettling(current: current, lowestStart: lowest, waited: waited) {
+            await MainActor.run {}
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            waited += 0.25
+            current = MemoryProvider.footprint()
+        }
+
+        recordStart(current)
+        guard waited > 0 else { return nil }
+        return "settled \(Self.mb(from)) → \(Self.mb(current)) in \(waited)s"
+    }
+
+    // Synchronous, so the lock is never held across a suspension point.
+    private func lowestStartSoFar() -> Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return lowestStart
+    }
+
+    private func recordStart(_ bytes: Int) {
+        lock.lock()
+        lowestStart = min(lowestStart ?? bytes, bytes)
+        lock.unlock()
     }
 
     static func mb(_ bytes: Int) -> String {
