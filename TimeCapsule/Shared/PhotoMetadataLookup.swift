@@ -85,6 +85,9 @@ private nonisolated final class MetadataRequestState: @unchecked Sendable {
 @concurrent
 nonisolated func photoEXIF(for asset: PHAsset) async -> PhotoEXIF? {
     guard asset.mediaType == .image else { return nil }
+    // Read here rather than inside the Photos callback, so nothing but a
+    // `Date` crosses into it.
+    let creationDate = asset.creationDate
     let state = MetadataRequestState()
     return await withTaskCancellationHandler(operation: {
         await withCheckedContinuation { (continuation: CheckedContinuation<PhotoEXIF?, Never>) in
@@ -108,7 +111,7 @@ nonisolated func photoEXIF(for asset: PHAsset) async -> PhotoEXIF? {
             ) { data, _, _, info in
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                 if isDegraded { return }
-                state.resume(returning: parsedEXIF(from: data))
+                state.resume(returning: parsedEXIF(from: data, creationDate: creationDate))
             }
             state.setRequestID(requestID)
         }
@@ -117,7 +120,7 @@ nonisolated func photoEXIF(for asset: PHAsset) async -> PhotoEXIF? {
     })
 }
 
-private nonisolated func parsedEXIF(from data: Data?) -> PhotoEXIF? {
+private nonisolated func parsedEXIF(from data: Data?, creationDate: Date?) -> PhotoEXIF? {
     guard let data,
           let source = CGImageSourceCreateWithData(data as CFData, nil),
           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
@@ -127,7 +130,7 @@ private nonisolated func parsedEXIF(from data: Data?) -> PhotoEXIF? {
     let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
     let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
 
-    return PhotoEXIF(
+    var parsed = PhotoEXIF(
         make: tiff?[kCGImagePropertyTIFFMake] as? String,
         model: tiff?[kCGImagePropertyTIFFModel] as? String,
         lensModel: exif?[kCGImagePropertyExifLensModel] as? String,
@@ -158,4 +161,19 @@ private nonisolated func parsedEXIF(from data: Data?) -> PhotoEXIF? {
                 return Int(value.rounded())
             }
     )
+
+    // The camera's own clock, so times read as they do in Apple Photos.
+    // `OffsetTimeOriginal` is the offset for the moment of capture; some
+    // cameras only write the general `OffsetTime`, which is the same value
+    // on every camera that writes both.
+    if let creationDate {
+        let offset = exif?[kCGImagePropertyExifOffsetTimeOriginal] as? String
+            ?? exif?[kCGImagePropertyExifOffsetTime] as? String
+        parsed?.captureTimeZone = CaptureClock.recordedTimeZone(
+            dateTimeOriginal: exif?[kCGImagePropertyExifDateTimeOriginal] as? String,
+            offset: offset,
+            creationDate: creationDate
+        )
+    }
+    return parsed
 }

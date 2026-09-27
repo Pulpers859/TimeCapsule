@@ -1155,6 +1155,9 @@ struct MemoryInfoSheet: View {
     @State private var mapPosition: MapCameraPosition
     @State private var handoff: HandoffState = .idle
     @State private var exif: PhotoEXIF? = nil
+    /// False until the file has been read, so the time is not shown on the
+    /// phone's clock and then jump to the camera's a moment later.
+    @State private var timesReady = false
     @State private var exclusionConfirmation: String? = nil
     @State private var pendingAction: PendingExclusion? = nil
     @State private var containingAlbums: [PHAssetCollection] = []
@@ -1210,6 +1213,21 @@ struct MemoryInfoSheet: View {
         _mapPosition = State(initialValue: .region(region))
     }
 
+    /// `date` on the camera's clock when the file says what that was, so it
+    /// reads as it does in Apple Photos; otherwise on the phone's. See
+    /// `CaptureClock` for the photo that showed the two an hour apart.
+    private func captureFormatted(
+        _ date: Date,
+        date dateStyle: Date.FormatStyle.DateStyle,
+        time timeStyle: Date.FormatStyle.TimeStyle
+    ) -> String {
+        var style = Date.FormatStyle(date: dateStyle, time: timeStyle)
+        if let zone = exif?.captureTimeZone {
+            style.timeZone = zone
+        }
+        return date.formatted(style)
+    }
+
     private var yearsAgoLabel: String? {
         guard let date = asset.creationDate else { return nil }
         let yearsAgo = MemoryWindow.yearsAgo(for: date)
@@ -1228,12 +1246,14 @@ struct MemoryInfoSheet: View {
                             .foregroundStyle(Color.accentColor)
                     }
                     if let date = asset.creationDate {
-                        Text(date.formatted(date: .complete, time: .omitted))
+                        Text(captureFormatted(date, date: .complete, time: .omitted))
                             .font(.system(.title3, design: .rounded, weight: .bold))
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(date.formatted(date: .omitted, time: .shortened))
+                            .opacity(timesReady ? 1 : 0)
+                        Text(captureFormatted(date, date: .omitted, time: .shortened))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                            .opacity(timesReady ? 1 : 0)
                     }
                 }
 
@@ -1293,14 +1313,18 @@ struct MemoryInfoSheet: View {
         .background(Color(.systemGroupedBackground))
         .task(id: asset.localIdentifier) {
             exif = nil
+            timesReady = false
             // Reset alongside `exif`, which this already did. Leaving it
             // behind meant a previous photo's "Pinned." could sit under a
             // different memory if the sheet were ever reused for another
             // asset.
             handoff = .idle
+            // The file first: the times at the top of the sheet wait on it.
+            if asset.mediaType == .image {
+                exif = await photoEXIF(for: asset)
+            }
+            timesReady = true
             containingAlbums = await albumsContaining(asset)
-            guard asset.mediaType == .image else { return }
-            exif = await photoEXIF(for: asset)
         }
         .confirmationDialog(
             confirmationTitle,
@@ -1556,7 +1580,7 @@ struct MemoryInfoSheet: View {
                 if let date = asset.creationDate {
                     infoRow(
                         label: "Taken",
-                        value: date.formatted(date: .abbreviated, time: .shortened),
+                        value: timesReady ? captureFormatted(date, date: .abbreviated, time: .shortened) : " ",
                         icon: "calendar"
                     )
                     Divider().padding(.leading, 40)

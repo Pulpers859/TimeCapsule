@@ -15,6 +15,10 @@ nonisolated struct PhotoEXIF: Equatable, Sendable {
     let exposureTime: Double?
     let iso: Int?
     let focalLength35mm: Int?
+    /// The zone the camera's clock was in, when the file records one and it
+    /// agrees with the library — see `CaptureClock`. Times are shown in it
+    /// so they read as they do in Apple Photos.
+    var captureTimeZone: TimeZone? = nil
 
     /// Fails when every field is empty, so a caller can use the initializer
     /// itself as the "is there anything worth showing" check.
