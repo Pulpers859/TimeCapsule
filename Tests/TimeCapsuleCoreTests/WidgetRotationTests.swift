@@ -213,6 +213,33 @@ final class WidgetRotationTests: XCTestCase {
         XCTAssertLessThan(WidgetRotation.memoryFloorBytes, WidgetRotation.assumedLimitBytes / 2)
     }
 
+    /// Seen on device: one fetch cost 7.3 MB at its peak, more than the old
+    /// 6 MB floor.
+    func testTheFloorCoversTheCostliestFetchSeenOnDevice() {
+        XCTAssertGreaterThan(WidgetRotation.memoryFloorBytes, Int(7.3 * 1024 * 1024))
+    }
+
+    /// A build that has seen a costly photo asks for more room before the
+    /// next one.
+    func testACostlyPhotoRaisesTheBar() {
+        let costly = 8 * megabyte
+        XCTAssertTrue(WidgetRotation.shouldLoadAnother(loadedSoFar: 3, headroomBytes: 11 * megabyte))
+        XCTAssertFalse(
+            WidgetRotation.shouldLoadAnother(
+                loadedSoFar: 3,
+                headroomBytes: 11 * megabyte,
+                largestPhotoCost: costly
+            )
+        )
+        XCTAssertTrue(
+            WidgetRotation.shouldLoadAnother(
+                loadedSoFar: 3,
+                headroomBytes: 12 * megabyte,
+                largestPhotoCost: costly
+            )
+        )
+    }
+
     // MARK: - Sharpness
 
     func testAPhotoAtTheRequestedSizeIsSharp() {

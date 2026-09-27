@@ -34,17 +34,13 @@ nonisolated enum WidgetRotation {
     /// wins, so a phone that does report the real limit is still respected.
     static let assumedLimitBytes = 30 * 1024 * 1024
 
-    /// Headroom below which no further photo is fetched.
+    /// Headroom below which no further photo is fetched, at the least.
     ///
-    /// One fetch briefly holds the decoded photo from Photos (up to about
-    /// 3.6 MB for the wide tile on the largest iPhone) plus its JPEG
-    /// encoding. Six megabytes covers that with room to spare, and stops
-    /// fetching once the widget is using 24 MB of its 30.
-    ///
-    /// Not higher on purpose: the floor is paid on every reload, and one set
-    /// too cautious would quietly cut the rotation to a photo or two on a
-    /// phone that was never in danger.
-    static let memoryFloorBytes = 6 * 1024 * 1024
+    /// Measured on device, one fetch cost 7.3 MB at its peak — more than the
+    /// 6 MB this used to be, so it could not have protected against the
+    /// very fetch it was for. Ten covers that; `shouldLoadAnother` raises it
+    /// further when a build sees a costlier photo.
+    static let memoryFloorBytes = 10 * 1024 * 1024
 
     /// Memory left before iOS kills the extension, from what the system
     /// reports (`os_proc_available_memory`) and from what the extension is
@@ -65,10 +61,18 @@ nonisolated enum WidgetRotation {
     /// The first photo is always fetched: a widget with no photo at all
     /// reads as broken, and at that point nothing else is held. Unknown
     /// headroom is not a reason to stop either.
-    static func shouldLoadAnother(loadedSoFar: Int, headroomBytes: Int?) -> Bool {
+    ///
+    /// The headroom asked for is the floor, or half again the costliest
+    /// photo this build has fetched, whichever is more: a day whose photos
+    /// are large needs more room than a fixed figure guessed in advance.
+    static func shouldLoadAnother(
+        loadedSoFar: Int,
+        headroomBytes: Int?,
+        largestPhotoCost: Int = 0
+    ) -> Bool {
         if loadedSoFar == 0 { return true }
         guard let headroomBytes else { return true }
-        return headroomBytes >= memoryFloorBytes
+        return headroomBytes >= max(memoryFloorBytes, largestPhotoCost * 3 / 2)
     }
 
     // MARK: - Sharpness

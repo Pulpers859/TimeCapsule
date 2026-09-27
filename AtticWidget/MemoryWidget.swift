@@ -207,6 +207,10 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // just after its save — because freed memory is not always handed
         // back, so the difference between stages can hide or inflate it.
         var photoDeltas: [Int] = []
+        // Side-by-side test: what each fetch method leaves behind once it
+        // has returned, and its peak. See `LoadMethod`.
+        var kept: [LoadMethod: [Int]] = [:]
+        var largestCost = 0
         if let tileInfo = await Self.tilePixels(for: family, displaySize: displaySize),
            let folder = WidgetPhotoStore.newBatch(now: now) {
             let tile = tileInfo.size
@@ -220,18 +224,23 @@ nonisolated struct MemoryProvider: TimelineProvider {
                 // of freezing on one.
                 guard WidgetRotation.shouldLoadAnother(
                     loadedSoFar: attempted,
-                    headroomBytes: Self.headroom()
+                    headroomBytes: Self.headroom(),
+                    largestPhotoCost: largestCost
                 ) else { break }
+                let method: LoadMethod = attempted % 2 == 0 ? .pooled : .freshManager
                 attempted += 1
                 let before = Self.footprint()
                 let (photo, usedAtPeak) = await Self.savedPhoto(
                     for: pick.asset,
                     tile: tile,
                     maxZoom: maxZoom,
-                    to: folder.appendingPathComponent("\(attempted).jpg")
+                    to: folder.appendingPathComponent("\(attempted).jpg"),
+                    method: method
                 )
                 stages.observe(usedAtPeak)
                 photoDeltas.append(usedAtPeak - before)
+                largestCost = max(largestCost, usedAtPeak - before)
+                kept[method, default: []].append(Self.footprint() - before)
                 if let photo {
                     photos[pick.asset.localIdentifier] = photo
                     if photo.isSharp { sharpCount += 1 }
@@ -268,6 +277,11 @@ nonisolated struct MemoryProvider: TimelineProvider {
             : [
                 "\(sharpCount) sharp · \(photos.count - sharpCount) soft · \(tileDetail)",
                 stages.summary + perPhoto,
+                [LoadMethod.pooled, .freshManager].compactMap { method -> String? in
+                    guard let values = kept[method], !values.isEmpty else { return nil }
+                    let average = values.reduce(0, +) / values.count
+                    return "\(method.rawValue) kept +\(MemoryProbe.mb(average)) ×\(values.count)"
+                }.joined(separator: " · "),
                 "build #\(MemoryProbe.shared.buildCount)\(overlapping ? " OVERLAPPED" : "") · "
                     + "process began at \(MemoryProbe.mb(MemoryProbe.shared.processStart))"
             ].joined(separator: "\n")
@@ -372,19 +386,45 @@ nonisolated struct MemoryProvider: TimelineProvider {
         )
     }
 
+    /// How a photo is fetched, for the side-by-side test in sideload builds.
+    ///
+    /// On device, every photo left roughly its own decoded size behind —
+    /// twelve photos, 13 MB that should have been freed — when it was
+    /// fetched through an asynchronous Photos request and cropped across
+    /// several suspension points. Two causes fit, with different fixes, so
+    /// both are tried, alternating photo by photo, and the readout reports
+    /// what each leaves behind:
+    ///
+    /// - `pooled`: the whole job — request, crop, write — synchronously on
+    ///   one thread inside one autorelease pool. If the memory was objects
+    ///   waiting on a pool that drained late, this frees it before the next
+    ///   photo starts.
+    /// - `freshManager`: the same, through a new `PHImageManager` made for
+    ///   this photo and discarded after it. If the memory was a cache inside
+    ///   the shared manager, this frees it too.
+    enum LoadMethod: String {
+        case pooled = "A"
+        case freshManager = "B"
+    }
+
+    /// Serial, so one photo at a time is ever in memory.
+    private static let loadQueue = DispatchQueue(label: "Attic.widget.photo-load", qos: .userInitiated)
+
     /// Fetches one photo, crops it to what the tile shows, and saves it.
     ///
     /// Also returns the memory in use while the fetched photo was held —
-    /// the high point of the whole job — for the sideload readout.
+    /// the high point of the whole job — for the readout and for the
+    /// memory check, and which method produced it.
     private static func savedPhoto(
         for asset: PHAsset,
         tile: CGSize,
         maxZoom: Double,
-        to url: URL
+        to url: URL,
+        method: LoadMethod
     ) async -> (photo: WidgetPhoto?, usedAtPeak: Int) {
         // Asked for at the size it will be drawn, no larger. `pixelWidth`
-        // and `pixelHeight` only guide the request; the crop below is worked
-        // out from the image Photos actually returns.
+        // and `pixelHeight` only guide the request; the crop is worked out
+        // from the image Photos actually returns.
         let target: CGSize
         if let frame = WidgetPhotoFraming.frame(
             imageWidth: Double(asset.pixelWidth),
@@ -399,28 +439,94 @@ nonisolated struct MemoryProvider: TimelineProvider {
             target = CGSize(width: edge, height: edge)
         }
 
-        guard let fetched = await thumbnail(for: asset, target: target) else {
+        // Start to finish on one thread, inside one pool: everything the
+        // job made is released before this returns and the next photo
+        // starts.
+        let pooled: (photo: WidgetPhoto?, usedAtPeak: Int)? = await withCheckedContinuation { continuation in
+            loadQueue.async {
+                let result = autoreleasepool { () -> (photo: WidgetPhoto?, usedAtPeak: Int)? in
+                    let manager = method == .freshManager ? PHImageManager() : PHImageManager.default()
+                    guard let image = synchronousImage(for: asset, target: target, manager: manager) else {
+                        return nil
+                    }
+                    let usedAtPeak = footprint()
+                    let photo = finish(
+                        image,
+                        target: target,
+                        tile: tile,
+                        maxZoom: maxZoom,
+                        to: url,
+                        delivery: "full \(method.rawValue)"
+                    )
+                    return (photo, usedAtPeak)
+                }
+                continuation.resume(returning: result)
+            }
+        }
+        if let pooled { return pooled }
+
+        // The full photo is not on the phone. A synchronous request cannot
+        // ask for the small preview — it always behaves as high quality — so
+        // this one fallback stays asynchronous, and the preview is shown only
+        // if nothing sharp loads (see `WidgetRotation.rotation`).
+        guard let image = await requestImage(for: asset, target: target, delivery: .fastFormat) else {
             return (nil, footprint())
         }
-        let (image, delivery) = fetched
         let usedAtPeak = footprint()
-        let returnedWidth = Double(image.size.width * image.scale)
-        let returnedHeight = Double(image.size.height * image.scale)
         let photo = autoreleasepool {
-            save(image, tile: tile, maxZoom: maxZoom, to: url)
-        }.map { (saved: WidgetPhoto) -> WidgetPhoto in
-            var saved = saved
-            saved.isSharp = WidgetRotation.isSharp(
-                returnedWidth: returnedWidth,
-                returnedHeight: returnedHeight,
-                targetWidth: Double(target.width),
-                targetHeight: Double(target.height)
-            )
-            saved.detail = "got \(Int(returnedWidth))×\(Int(returnedHeight)) of "
-                + "\(Int(target.width))×\(Int(target.height)) · \(delivery)"
-            return saved
+            finish(image, target: target, tile: tile, maxZoom: maxZoom, to: url, delivery: "fast")
         }
         return (photo, usedAtPeak)
+    }
+
+    /// The photo at `target`, from what is on the phone, or `nil`.
+    ///
+    /// Synchronous on purpose, and only ever called on `loadQueue`: see
+    /// `savedPhoto`. A synchronous request calls its handler once, before
+    /// returning.
+    private static func synchronousImage(
+        for asset: PHAsset,
+        target: CGSize,
+        manager: PHImageManager
+    ) -> UIImage? {
+        let options = PHImageRequestOptions()
+        options.isSynchronous = true
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .exact
+        options.isNetworkAccessAllowed = false
+        var result: UIImage?
+        manager.requestImage(
+            for: asset,
+            targetSize: target,
+            contentMode: .aspectFit,
+            options: options
+        ) { image, _ in
+            result = image
+        }
+        return result
+    }
+
+    /// Crops and saves `image`, and records how sharp it came back.
+    private static func finish(
+        _ image: UIImage,
+        target: CGSize,
+        tile: CGSize,
+        maxZoom: Double,
+        to url: URL,
+        delivery: String
+    ) -> WidgetPhoto? {
+        let returnedWidth = Double(image.size.width * image.scale)
+        let returnedHeight = Double(image.size.height * image.scale)
+        guard var saved = save(image, tile: tile, maxZoom: maxZoom, to: url) else { return nil }
+        saved.isSharp = WidgetRotation.isSharp(
+            returnedWidth: returnedWidth,
+            returnedHeight: returnedHeight,
+            targetWidth: Double(target.width),
+            targetHeight: Double(target.height)
+        )
+        saved.detail = "got \(Int(returnedWidth))×\(Int(returnedHeight)) of "
+            + "\(Int(target.width))×\(Int(target.height)) · \(delivery)"
+        return saved
     }
 
     /// Crops to the visible part and writes it out as JPEG.
@@ -465,38 +571,14 @@ nonisolated struct MemoryProvider: TimelineProvider {
         return WidgetPhoto(url: url, placement: placement, coversTile: crop.coversTile)
     }
 
-    /// The photo, as sharp as can be had without going to the network.
+    /// The small preview Photos keeps on the phone, for a photo whose full
+    /// version is only in iCloud. A widget must not go to the network: the
+    /// round trip would blow its time budget. So a soft photo beats an empty
+    /// tile, and it is only ever used when nothing sharp loads.
     ///
-    /// Quality is requested first and a fast rendition is the fallback rather
-    /// than the default. `.fastFormat` returns whatever is already cached,
-    /// which for a large photo is often a couple of hundred pixels — fine as
-    /// a grid thumbnail, visibly soft blown up to fill a home screen tile.
-    /// But it is also all that exists locally for an asset whose original
-    /// lives in iCloud, and a widget must not go to the network: the round
-    /// trip would blow its time budget. So a soft photo beats an empty tile,
-    /// and it is only ever reached when the sharp one is genuinely absent.
-    ///
-    /// `.aspectFit` at the size the photo will be drawn: the whole frame,
-    /// which `save` then crops to what the tile shows. Photos does the
-    /// resizing in its own process, which is what keeps a 12-megapixel
-    /// original from ever being decoded in this one.
-    ///
-    /// Neither delivery mode calls the result handler more than once, which
-    /// is what makes resuming a continuation from it safe. `.opportunistic`
-    /// is the mode that calls back twice, and using it here would crash.
-    ///
-    /// Also says which delivery produced it, for the sideload readout: a
-    /// `fast` photo is the small preview, and the likeliest to be soft.
-    private static func thumbnail(for asset: PHAsset, target: CGSize) async -> (UIImage, String)? {
-        if let image = await requestImage(for: asset, target: target, delivery: .highQualityFormat) {
-            return (image, "full")
-        }
-        if let image = await requestImage(for: asset, target: target, delivery: .fastFormat) {
-            return (image, "fast")
-        }
-        return nil
-    }
-
+    /// `.fastFormat` calls its handler once, which is what makes resuming a
+    /// continuation from it safe. `.opportunistic` is the mode that calls
+    /// back twice, and using it here would crash.
     private static func requestImage(
         for asset: PHAsset,
         target: CGSize,

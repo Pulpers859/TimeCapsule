@@ -214,10 +214,16 @@ verified only by the CI build.
       shows upright, since the widget crops and re-encodes each one to save
       memory. Sideload builds print memory on the widget's top-right corner:
       `loaded/picked · peak <most used while loading> · now <used while
-      drawing> of 30`. iOS kills the widget at about 30 MB; past 24 MB it
+      drawing> of 30`. Assumed limit 30 MB; with under 10 MB (or 1.5x the costliest
+      photo so far) left, it
       stops loading more photos and rotates through fewer instead. (The
       system's own "memory left" figure read about 6,600 MB on a sideloaded
       build — the whole phone — so the check uses the widget's own usage.)
+      Measured on device (sideload-33): the widget system itself ~3 MB,
+      library search ~2 MB, drawing ~0.5 MB; photo loading left ~1 MB
+      (small) to ~3 MB (wide) per photo behind, which is being fixed. In one
+      process iOS reported a 60 MB limit, not 30 — confirm on a TestFlight
+      build before relying on either.
 - [ ] **Widget empty and no-access states**, the second by revoking photo
       access in Settings.
 - [ ] **Widget freshness** — delete a memory in the app, background the app,
