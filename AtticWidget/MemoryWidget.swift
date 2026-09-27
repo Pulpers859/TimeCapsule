@@ -76,10 +76,12 @@ struct WidgetPhoto {
 /// cannot become a mismatch.
 nonisolated struct MemoryProvider: TimelineProvider {
     func placeholder(in context: Context) -> MemoryEntry {
-        MemoryEntry(date: Date(), content: .memory(photo: nil, yearsAgo: 3), totalCount: 4)
+        MemoryProbe.shared.touch()
+        return MemoryEntry(date: Date(), content: .memory(photo: nil, yearsAgo: 3), totalCount: 4)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (MemoryEntry) -> Void) {
+        MemoryProbe.shared.touch()
         Task {
             let (entries, _) = await timelineEntries(
                 family: context.family,
@@ -91,6 +93,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<MemoryEntry>) -> Void) {
+        MemoryProbe.shared.touch()
         Task {
             let (entries, refresh) = await timelineEntries(
                 family: context.family,
@@ -119,6 +122,11 @@ nonisolated struct MemoryProvider: TimelineProvider {
         displaySize: CGSize,
         limit: Int
     ) async -> (entries: [MemoryEntry], refresh: Date) {
+        // Sideload readout: memory at each step of this build, and whether
+        // another build was running in the same process at the same time.
+        var stages = MemoryProbe.Stages()
+        let overlapping = MemoryProbe.shared.beginBuild()
+        defer { MemoryProbe.shared.endBuild() }
         let now = Date()
         let dayBoundary = Self.nextDayBoundary(after: now)
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -159,6 +167,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // `exclusionContext(on:)` is the same context `yearGroups` and
         // `count` build privately, date-bounded, resolved once.
         let exclusions = MemoryLibrary.exclusionContext(on: queryDate)
+        stages.mark("excl")
         // A random `limit` of each year rather than its earliest, so a busy
         // day shows more than its first hour. Still capped, for the memory
         // reasons above.
@@ -173,11 +182,13 @@ nonisolated struct MemoryProvider: TimelineProvider {
             randomSample: true
         )
         guard !groups.isEmpty else { return ([], dayBoundary) }
+        stages.mark("groups")
 
         // From `count(on:)`, not by summing the groups, which are capped and
         // would undercount. That path answers from the fetch itself without
         // materialising anything.
         let total = MemoryLibrary.count(on: queryDate, exclusions: exclusions)
+        stages.mark("count")
         var generator = SystemRandomNumberGenerator()
         let picks = WidgetRotation.picks(
             from: groups.map { group in group.assets.map { (asset: $0, yearsAgo: group.yearsAgo) } },
@@ -191,8 +202,11 @@ nonisolated struct MemoryProvider: TimelineProvider {
         var photos: [String: WidgetPhoto] = [:]
         var attempted = 0
         var sharpCount = 0
-        var peakUsed = Self.footprint()
         var tileDetail = ""
+        // Cost of each photo measured directly — just before its fetch and
+        // just after its save — because freed memory is not always handed
+        // back, so the difference between stages can hide or inflate it.
+        var photoDeltas: [Int] = []
         if let tileInfo = await Self.tilePixels(for: family, displaySize: displaySize),
            let folder = WidgetPhotoStore.newBatch(now: now) {
             let tile = tileInfo.size
@@ -209,13 +223,15 @@ nonisolated struct MemoryProvider: TimelineProvider {
                     headroomBytes: Self.headroom()
                 ) else { break }
                 attempted += 1
+                let before = Self.footprint()
                 let (photo, usedAtPeak) = await Self.savedPhoto(
                     for: pick.asset,
                     tile: tile,
                     maxZoom: maxZoom,
                     to: folder.appendingPathComponent("\(attempted).jpg")
                 )
-                peakUsed = max(peakUsed, usedAtPeak)
+                stages.observe(usedAtPeak)
+                photoDeltas.append(usedAtPeak - before)
                 if let photo {
                     photos[pick.asset.localIdentifier] = photo
                     if photo.isSharp { sharpCount += 1 }
@@ -242,9 +258,19 @@ nonisolated struct MemoryProvider: TimelineProvider {
             dayBoundary: dayBoundary
         )
 
+        stages.mark("photos")
+        let perPhoto = photoDeltas.isEmpty
+            ? ""
+            : " (each +\(MemoryProbe.mb(photoDeltas.reduce(0, +) / photoDeltas.count)), "
+                + "max +\(MemoryProbe.mb(photoDeltas.max() ?? 0)))"
         let diagnostics = attempted == 0
             ? nil
-            : "\(sharpCount) sharp · \(photos.count - sharpCount) soft · \(tileDetail)\npeak \(Self.megabytes(peakUsed))"
+            : [
+                "\(sharpCount) sharp · \(photos.count - sharpCount) soft · \(tileDetail)",
+                stages.summary + perPhoto,
+                "build #\(MemoryProbe.shared.buildCount)\(overlapping ? " OVERLAPPED" : "") · "
+                    + "process began at \(MemoryProbe.mb(MemoryProbe.shared.processStart))"
+            ].joined(separator: "\n")
 
         let entries = schedule.entries.map { slot in
             MemoryEntry(
@@ -686,15 +712,21 @@ struct MemoryWidgetView: View {
     @ViewBuilder
     private var diagnostics: some View {
         if let diagnostics = entry.diagnostics {
+            let drawing = MemoryProbe.shared.noteDraw()
             VStack(alignment: .trailing, spacing: 0) {
-                Text("\(diagnostics) · now \(MemoryProvider.megabytes(MemoryProvider.footprint())) of 30")
+                Text(diagnostics)
+                Text(
+                    "draw \(MemoryProbe.mb(drawing.now)) (max \(MemoryProbe.mb(drawing.max))) · "
+                        + "iOS limit \(MemoryProbe.mb(drawing.reportedLimit))"
+                )
                 if case .memory(let photo?, _) = entry.content {
                     Text(photo.detail)
                 }
             }
-            .font(.system(size: 8, weight: .medium, design: .monospaced))
+            .font(.system(size: 7, weight: .medium, design: .monospaced))
             .foregroundStyle(.white.opacity(0.85))
-            .lineLimit(2)
+            // Wraps rather than truncates: this build exists to be read.
+            .fixedSize(horizontal: false, vertical: true)
             .multilineTextAlignment(.trailing)
             .minimumScaleFactor(0.5)
             .padding(.horizontal, 4)
@@ -764,6 +796,92 @@ nonisolated enum WidgetPhotoStore {
             return folder
         } catch {
             return nil
+        }
+    }
+}
+
+/// Sideload diagnostics: where the widget's memory goes.
+///
+/// One process serves every widget on the home screen, so the small and
+/// wide widgets' timelines are built — possibly at the same time — and drawn
+/// in the same place. A single reading of that process cannot say which of
+/// them, or which step, the memory belongs to; this records the steps, the
+/// overlap, and the drawing separately.
+nonisolated final class MemoryProbe: @unchecked Sendable {
+    static let shared = MemoryProbe()
+
+    /// Memory in use when this process first ran any of Attic's code —
+    /// the widget system and frameworks, before anything of ours.
+    let processStart: Int
+
+    private let lock = NSLock()
+    private var inFlight = 0
+    private var builds = 0
+    private var drawMax = 0
+
+    private init() {
+        processStart = MemoryProvider.footprint()
+    }
+
+    /// Forces `shared` into existence, so `processStart` is taken as early
+    /// as possible rather than whenever the readout first asks for it.
+    func touch() {}
+
+    /// Returns whether another build was already running.
+    func beginBuild() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        inFlight += 1
+        builds += 1
+        return inFlight > 1
+    }
+
+    func endBuild() {
+        lock.lock()
+        inFlight -= 1
+        lock.unlock()
+    }
+
+    var buildCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return builds
+    }
+
+    /// Memory now, the most seen while drawing in this process, and the
+    /// limit iOS reports (in use plus what it says is left).
+    func noteDraw() -> (now: Int, max: Int, reportedLimit: Int) {
+        let now = MemoryProvider.footprint()
+        let limit = now + Int(os_proc_available_memory())
+        lock.lock()
+        drawMax = max(drawMax, now)
+        let seen = drawMax
+        lock.unlock()
+        return (now, seen, limit)
+    }
+
+    static func mb(_ bytes: Int) -> String {
+        String(format: "%.1f", Double(bytes) / 1_048_576)
+    }
+
+    /// Memory at each named step of one build, plus the highest point.
+    struct Stages {
+        private var marks: [(String, Int)] = [("start", MemoryProvider.footprint())]
+        private var high = 0
+
+        mutating func mark(_ name: String) {
+            let now = MemoryProvider.footprint()
+            marks.append((name, now))
+            high = max(high, now)
+        }
+
+        mutating func observe(_ bytes: Int) {
+            high = max(high, bytes)
+        }
+
+        var summary: String {
+            marks.map { "\($0.0) \(MemoryProbe.mb($0.1))" }.joined(separator: " · ")
+                + " · high \(MemoryProbe.mb(max(high, marks.map { $0.1 }.max() ?? 0)))"
         }
     }
 }
