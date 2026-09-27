@@ -70,6 +70,17 @@ nonisolated enum WidgetRotation {
 
     // MARK: - Settling
 
+    /// The longest one build waits, in total, for memory to be freed
+    /// part-way through fetching.
+    ///
+    /// Seen on device: fetched photos leave memory that the system frees on
+    /// its own schedule — once 22.2 MB fell to 7.9 within a second and a
+    /// half, once 17.1 MB had not moved after the same wait. Stopping at the
+    /// first low reading cut the wide widget to five photos a moment before
+    /// the memory came back. Waiting instead, up to this long, lets it carry
+    /// on; if the memory never comes back it still stops.
+    static let memoryWaitLimit: TimeInterval = 4
+
     /// Memory left over from the previous build that is worth waiting out.
     static let settleMarginBytes = 4 * 1024 * 1024
     /// The longest a build waits for it.

@@ -214,6 +214,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
         // thread has had a moment — the figure that decides how many fit.
         var kept: [Int] = []
         var largestCost = 0
+        var waitedForMemory: TimeInterval = 0
         if let tileInfo = await Self.tilePixels(for: family, displaySize: displaySize),
            let folder = WidgetPhotoStore.newBatch(now: now) {
             let tile = tileInfo.size
@@ -225,11 +226,25 @@ nonisolated struct MemoryProvider: TimelineProvider {
                 // Checked before every fetch, not once: this is what makes
                 // a day that runs short of memory show eight photos instead
                 // of freezing on one.
-                guard WidgetRotation.shouldLoadAnother(
+                var allowed = WidgetRotation.shouldLoadAnother(
                     loadedSoFar: attempted,
                     headroomBytes: Self.headroom(),
                     largestPhotoCost: largestCost
-                ) else { break }
+                )
+                // Short of room: wait for the system to free what earlier
+                // fetches left, rather than stopping. See
+                // `WidgetRotation.memoryWaitLimit`.
+                while !allowed, waitedForMemory < WidgetRotation.memoryWaitLimit {
+                    await MainActor.run {}
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    waitedForMemory += 0.25
+                    allowed = WidgetRotation.shouldLoadAnother(
+                        loadedSoFar: attempted,
+                        headroomBytes: Self.headroom(),
+                        largestPhotoCost: largestCost
+                    )
+                }
+                guard allowed else { break }
                 attempted += 1
                 let before = Self.footprint()
                 let (photo, usedAtPeak) = await Self.savedPhoto(
@@ -241,13 +256,6 @@ nonisolated struct MemoryProvider: TimelineProvider {
                 stages.observe(usedAtPeak)
                 photoDeltas.append(usedAtPeak - before)
                 largestCost = max(largestCost, usedAtPeak - before)
-                // A pause on the main thread between photos. The memory a
-                // fetch leaves behind is freed by the system later rather
-                // than when the fetch returns — seen on device — and if that
-                // is waiting on the main thread, this lets it happen here
-                // instead of piling up across all twelve.
-                await MainActor.run {}
-                try? await Task.sleep(nanoseconds: 100_000_000)
                 kept.append(Self.footprint() - before)
                 if let photo {
                     photos[pick.asset.localIdentifier] = photo
@@ -276,14 +284,9 @@ nonisolated struct MemoryProvider: TimelineProvider {
         )
 
         stages.mark("photos")
-        // Whether what is left is freed with time alone.
-        var later = ""
-        if attempted > 0 {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            let half = Self.footprint()
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            later = "then +0.5s \(MemoryProbe.mb(half)) · +1.5s \(MemoryProbe.mb(Self.footprint()))"
-        }
+        let later = waitedForMemory > 0
+            ? "waited \(waitedForMemory)s mid-load"
+            : "no mid-load wait"
         let perPhoto = photoDeltas.isEmpty
             ? ""
             : " (each +\(MemoryProbe.mb(photoDeltas.reduce(0, +) / photoDeltas.count)), "

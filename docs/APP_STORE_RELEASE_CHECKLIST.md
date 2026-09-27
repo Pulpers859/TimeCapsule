@@ -224,7 +224,10 @@ verified only by the CI build.
       (small) to ~3 MB (wide) per photo behind. That memory is held inside
       the system frameworks, not Attic's code (sideload-34: a synchronous,
       pooled fetch and a fresh PHImageManager per photo both still left
-      +2 MB each), and is freed later — so builds wait for it to settle, and
+      +2 MB each), and is freed later on the system's own schedule
+      (sideload-35: 18.6 → 7.9 MB between builds; 22.2 → 7.9 within 1.5 s
+      once, no change after 1.5 s another time) — so builds wait for it to
+      settle before starting and, when short, part-way through, and
       the check trusts the limit iOS reports when it is believable (60 MB on
       device, not the 30 assumed). Confirm the limit on a TestFlight build.
 - [ ] **Widget empty and no-access states**, the second by revoking photo

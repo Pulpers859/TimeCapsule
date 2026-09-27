@@ -229,6 +229,13 @@ final class WidgetRotationTests: XCTestCase {
         )
     }
 
+    /// Waiting for memory must stay a small part of a build, which iOS
+    /// expects to finish in seconds.
+    func testMidLoadWaitingIsBounded() {
+        XCTAssertGreaterThan(WidgetRotation.memoryWaitLimit, 1.5, "Shorter than the release seen on device.")
+        XCTAssertLessThanOrEqual(WidgetRotation.memoryWaitLimit + WidgetRotation.settleLimit, 6)
+    }
+
     func testWaitingIsCapped() {
         XCTAssertFalse(
             WidgetRotation.shouldKeepSettling(
