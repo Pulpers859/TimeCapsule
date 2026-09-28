@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -16,6 +17,13 @@ struct PhotoZoomScrollView: UIViewRepresentable {
     /// Mirrors the video branch's `.accessibilityValue`, so VoiceOver can
     /// tell the focused page apart from its neighbours either side.
     let isCurrentMemory: Bool
+    /// The moving part, when this is a Live Photo and it has loaded. See
+    /// `ZoomingImageScrollView.updateLivePhoto`.
+    var livePhoto: PHLivePhoto? = nil
+    /// Bumped by the viewer's LIVE button. Only a change is acted on.
+    var livePlaybackRequest = 0
+    /// False while a sheet or alert is over the viewer.
+    var isPlaybackAllowed = true
     let onZoomStateChange: (Bool) -> Void
     let onSingleTap: () -> Void
 
@@ -30,6 +38,11 @@ struct PhotoZoomScrollView: UIViewRepresentable {
             description: accessibilityDescription,
             isCurrentMemory: isCurrentMemory
         )
+        scrollView.updateLivePhoto(
+            livePhoto,
+            playRequest: livePlaybackRequest,
+            canPlay: isCurrentMemory && isPlaybackAllowed
+        )
         return scrollView
     }
 
@@ -43,11 +56,40 @@ struct PhotoZoomScrollView: UIViewRepresentable {
             description: accessibilityDescription,
             isCurrentMemory: isCurrentMemory
         )
+        uiView.updateLivePhoto(
+            livePhoto,
+            playRequest: livePlaybackRequest,
+            canPlay: isCurrentMemory && isPlaybackAllowed
+        )
     }
 }
 
-final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
+final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate, PHLivePhotoViewDelegate {
     private let imageView = UIImageView()
+    /// A Live Photo's motion, inside the image view so it zooms with it.
+    ///
+    /// Invisible except while playing. The still underneath is the one the
+    /// viewer already loaded at full size, so a Live Photo at rest looks
+    /// exactly like any other photo, and shows up as fast. Three placements
+    /// were weighed: replacing the image view would hold every Live Photo
+    /// back until its video had loaded; laying a separate view over the page
+    /// would not follow a zoom, so a zoomed photo would jump when it played,
+    /// and would take the taps and pinches. Inside the image view it scales
+    /// with every zoom for free, and with interaction off it takes no
+    /// gestures from anything.
+    private let livePhotoView = PHLivePhotoView()
+    /// Press and hold plays the Live Photo, as it does in Photos.
+    ///
+    /// Ours rather than `PHLivePhotoView`'s own recogniser, which would need
+    /// the live view to take touches and so sit in the way of the zoom and
+    /// the chrome tap.
+    private let livePressGesture = UILongPressGestureRecognizer()
+    private let singleTapGesture = UITapGestureRecognizer()
+    private let singleTapPolicy = WaitForLivePress()
+    private var livePhotoIdentifier: ObjectIdentifier?
+    private var livePlaybackState = LivePhotoPlayback.State()
+    private var canPlayLivePhoto = false
+    private var lastNamedLiveAction: Bool?
     private var currentImageIdentifier: ObjectIdentifier?
     private var configuredBoundsSize: CGSize = .zero
     private var onZoomStateChange: ((Bool) -> Void)?
@@ -129,15 +171,34 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
     /// than a snapshot taken before it.
     private func refreshZoomAction() {
         let zoomedIn = isZoomedIn
-        guard lastNamedZoomAction != zoomedIn || accessibilityCustomActions?.isEmpty != false else { return }
+        let hasLivePhoto = livePhotoView.livePhoto != nil
+        guard lastNamedZoomAction != zoomedIn
+            || lastNamedLiveAction != hasLivePhoto
+            || accessibilityCustomActions?.isEmpty != false else { return }
         lastNamedZoomAction = zoomedIn
-        accessibilityCustomActions = [
+        lastNamedLiveAction = hasLivePhoto
+        var actions = [
             UIAccessibilityCustomAction(
                 name: zoomedIn ? "Zoom out" : "Zoom in",
                 target: self,
                 selector: #selector(accessibilityToggleZoom)
             )
         ]
+        // Press and hold is not a gesture VoiceOver can make.
+        if hasLivePhoto {
+            actions.append(UIAccessibilityCustomAction(
+                name: "Play Live Photo",
+                target: self,
+                selector: #selector(accessibilityPlayLivePhoto)
+            ))
+        }
+        accessibilityCustomActions = actions
+    }
+
+    @objc private func accessibilityPlayLivePhoto() -> Bool {
+        guard canPlayLivePhoto, livePhotoView.livePhoto != nil else { return false }
+        livePhotoView.startPlayback(with: .full)
+        return true
     }
 
     /// VoiceOver's activate gesture maps onto the single tap, which is the
@@ -261,8 +322,18 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         imageView.isUserInteractionEnabled = true
         addSubview(imageView)
 
-        let singleTap = UITapGestureRecognizer(target: self, action: #selector(handleSingleTap))
+        livePhotoView.contentMode = .scaleAspectFit
+        livePhotoView.isUserInteractionEnabled = false
+        livePhotoView.playbackGestureRecognizer.isEnabled = false
+        livePhotoView.alpha = 0
+        livePhotoView.delegate = self
+        imageView.addSubview(livePhotoView)
+
+        let singleTap = singleTapGesture
+        singleTap.addTarget(self, action: #selector(handleSingleTap))
         singleTap.numberOfTapsRequired = 1
+        singleTapPolicy.livePress = livePressGesture
+        singleTap.delegate = singleTapPolicy
 
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
@@ -270,7 +341,82 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         singleTap.require(toFail: doubleTap)
         addGestureRecognizer(singleTap)
         addGestureRecognizer(doubleTap)
+
+        livePressGesture.addTarget(self, action: #selector(handleLivePress(_:)))
+        livePressGesture.minimumPressDuration = 0.25
+        livePressGesture.isEnabled = false
+        addGestureRecognizer(livePressGesture)
     }
+
+    // MARK: - Live Photo
+
+    /// Hands this page its Live Photo, if it has one, and plays it when
+    /// asked.
+    ///
+    /// Called on every SwiftUI update, so everything here only acts on a
+    /// change: a different Live Photo, or a new press of the LIVE button.
+    ///
+    /// When the motion first arrives it plays Photos' short, silent hint,
+    /// which is how Photos says "this one moves" as you swipe onto it —
+    /// unless the photo is zoomed, where a sudden movement is only a
+    /// distraction.
+    func updateLivePhoto(_ livePhoto: PHLivePhoto?, playRequest: Int, canPlay: Bool) {
+        canPlayLivePhoto = canPlay
+
+        let identifier = livePhoto.map(ObjectIdentifier.init)
+        let arrived = identifier != nil && identifier != livePhotoIdentifier
+        if identifier != livePhotoIdentifier {
+            livePhotoIdentifier = identifier
+            livePhotoView.stopPlayback()
+            livePhotoView.alpha = 0
+            livePhotoView.livePhoto = livePhoto
+            livePressGesture.isEnabled = livePhoto != nil
+            refreshZoomAction()
+        }
+
+        switch LivePhotoPlayback.update(
+            &livePlaybackState,
+            request: playRequest,
+            motionArrived: arrived,
+            hasMotion: livePhoto != nil,
+            canPlay: canPlay,
+            isZoomed: isZoomedIn
+        ) {
+        case .nothing:
+            break
+        case .stop:
+            livePhotoView.stopPlayback()
+        case .hint:
+            livePhotoView.startPlayback(with: .hint)
+        case .full:
+            livePhotoView.startPlayback(with: .full)
+        }
+    }
+
+    @objc private func handleLivePress(_ gesture: UILongPressGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            guard canPlayLivePhoto, livePhotoView.livePhoto != nil else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            livePhotoView.startPlayback(with: .full)
+        case .ended, .cancelled, .failed:
+            // Letting go stops it, as in Photos.
+            livePhotoView.stopPlayback()
+        default:
+            break
+        }
+    }
+
+    /// Shown only while moving, so at rest the full-size still is what is
+    /// on screen.
+    func livePhotoView(_ livePhotoView: PHLivePhotoView, willBeginPlaybackWith playbackStyle: PHLivePhotoViewPlaybackStyle) {
+        livePhotoView.alpha = 1
+    }
+
+    func livePhotoView(_ livePhotoView: PHLivePhotoView, didEndPlaybackWith playbackStyle: PHLivePhotoViewPlaybackStyle) {
+        livePhotoView.alpha = 0
+    }
+
 
     private func configureForCurrentBounds(using image: UIImage) {
         // Reset zoom before assigning frame: Apple states frame is undefined when
@@ -280,6 +426,10 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
         maximumZoomScale = 4
         let fittedSize = aspectFitSize(for: image.size, in: bounds.size)
         imageView.frame = CGRect(origin: .zero, size: fittedSize)
+        // Set here rather than by autoresizing, which scales from the image
+        // view's first, zero size. A zoom transforms the image view without
+        // changing its bounds, so this holds at every zoom.
+        livePhotoView.frame = imageView.bounds
         contentSize = fittedSize
         contentOffset = .zero
         centerImage()
@@ -360,5 +510,28 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate {
             width: width,
             height: height
         )
+    }
+}
+
+/// Makes the chrome tap wait for a press-and-hold to fail, but only on a Live
+/// Photo.
+///
+/// Without it, letting go after holding a Live Photo also counted as a tap
+/// and hid the controls. Asked on every touch rather than set once with
+/// `require(toFail:)`, so an ordinary photo, where the press is switched off,
+/// never waits on it.
+///
+/// Its own object rather than the scroll view: a `UIScrollView` is already
+/// the delegate of its own pan and pinch recognisers, and answering this for
+/// them from the subclass would be answering for UIKit.
+private final class WaitForLivePress: NSObject, UIGestureRecognizerDelegate {
+    weak var livePress: UILongPressGestureRecognizer?
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard let livePress else { return false }
+        return otherGestureRecognizer === livePress && livePress.isEnabled
     }
 }

@@ -20,10 +20,14 @@ struct FullResAssetView: View {
     let isPlaybackAllowed: Bool
     let shouldRender: Bool
     let showControls: Bool
+    /// Bumped by the viewer's LIVE button; see `PhotoZoomScrollView`.
+    var livePlaybackRequest = 0
     let onToggleChrome: () -> Void
     let onZoomStateChange: (Bool) -> Void
     let onScrubbingChanged: (Bool) -> Void
     @State private var image: UIImage? = nil
+    /// The current page's Live Photo motion. Never held for a neighbour.
+    @State private var livePhoto: PHLivePhoto? = nil
     @State private var player: AVPlayer? = nil
     @State private var progressObserver = PlayerProgressObserver()
     @State private var currentTime: Double = 0
@@ -140,6 +144,9 @@ struct FullResAssetView: View {
                             image: image,
                             accessibilityDescription: spokenMediaLabel,
                             isCurrentMemory: isCurrent,
+                            livePhoto: livePhoto,
+                            livePlaybackRequest: livePlaybackRequest,
+                            isPlaybackAllowed: isPlaybackAllowed,
                             onZoomStateChange: onZoomStateChange,
                             onSingleTap: onToggleChrome
                         )
@@ -161,6 +168,10 @@ struct FullResAssetView: View {
             }
         }
         .task(id: mediaTaskID) {
+            // Every run starts without one. The task re-runs whenever this
+            // page stops or starts being the current one, and a neighbour
+            // should never hold a Live Photo's video.
+            livePhoto = nil
             guard shouldRender else {
                 releasePlayer()
                 image = nil
@@ -246,6 +257,16 @@ struct FullResAssetView: View {
                 guard !Task.isCancelled else { return }
                 image = loadedImage
                 didFail = loadedImage == nil
+
+                // After the still, never before it — see `loadLivePhoto`.
+                // Same size as the still, so the motion lines up with it.
+                guard isCurrent, loadedImage != nil, asset.mediaSubtypes.contains(.photoLive) else { return }
+                let loadedLivePhoto = await loadLivePhoto(
+                    from: asset,
+                    targetSize: CGSize(width: 2732, height: 2732)
+                )
+                guard !Task.isCancelled else { return }
+                livePhoto = loadedLivePhoto
             }
         }
         .onChange(of: isCurrent) { _, current in
@@ -273,6 +294,7 @@ struct FullResAssetView: View {
             onScrubbingChanged(false)
             releasePlayer()
             image = nil
+            livePhoto = nil
             didFail = false
             resetPlaybackState()
         }

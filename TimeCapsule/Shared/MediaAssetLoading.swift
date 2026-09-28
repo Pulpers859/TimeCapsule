@@ -64,6 +64,69 @@ private nonisolated final class ImageRequestState: @unchecked Sendable {
     }
 }
 
+/// Same shape as `ImageRequestState`, for `requestLivePhoto`.
+private nonisolated final class LivePhotoRequestState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<PHLivePhoto?, Never>?
+    private var requestID = PHInvalidImageRequestID
+    private var didFinish = false
+
+    func setContinuation(_ continuation: CheckedContinuation<PHLivePhoto?, Never>) -> Bool {
+        lock.lock()
+        if didFinish {
+            lock.unlock()
+            continuation.resume(returning: nil)
+            return false
+        }
+        self.continuation = continuation
+        lock.unlock()
+        return true
+    }
+
+    func setRequestID(_ requestID: PHImageRequestID) {
+        lock.lock()
+        if didFinish {
+            lock.unlock()
+            PHImageManager.default().cancelImageRequest(requestID)
+            return
+        }
+        self.requestID = requestID
+        lock.unlock()
+    }
+
+    func resume(returning value: PHLivePhoto?) {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return
+        }
+        didFinish = true
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+
+        continuation?.resume(returning: value)
+    }
+
+    func cancel() {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return
+        }
+        didFinish = true
+        let requestID = requestID
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+
+        if requestID != PHInvalidImageRequestID {
+            PHImageManager.default().cancelImageRequest(requestID)
+        }
+        continuation?.resume(returning: nil)
+    }
+}
+
 private nonisolated final class PlayerRequestState: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<AVPlayer?, Never>?
@@ -316,6 +379,51 @@ nonisolated func loadImage(
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                 if isDegraded { return }
                 state.resume(returning: image)
+            }
+            state.setRequestID(requestID)
+        }
+    }, onCancel: {
+        state.cancel()
+    })
+}
+
+/// The moving part of a Live Photo, for the viewer to play over the still.
+///
+/// Asked for only after the still has loaded, and only for the page on
+/// screen: this brings the paired video with it, and waiting on it before
+/// showing anything would make every Live Photo slower to appear than any
+/// other photo. `nil` for anything that is not a Live Photo, or that cannot
+/// be fetched.
+///
+/// Network allowed, as for video: an iCloud-only Live Photo is otherwise a
+/// still that never moves, with no way to tell why.
+///
+/// A degraded result is skipped, as in `loadImage`, so the continuation is
+/// resumed exactly once, with the full one.
+@concurrent
+nonisolated func loadLivePhoto(
+    from asset: PHAsset,
+    targetSize: CGSize
+) async -> PHLivePhoto? {
+    guard asset.mediaSubtypes.contains(.photoLive) else { return nil }
+    let state = LivePhotoRequestState()
+    return await withTaskCancellationHandler(operation: {
+        await withCheckedContinuation { (continuation: CheckedContinuation<PHLivePhoto?, Never>) in
+            guard state.setContinuation(continuation) else { return }
+
+            let options = PHLivePhotoRequestOptions()
+            options.deliveryMode = .highQualityFormat
+            options.isNetworkAccessAllowed = true
+
+            let requestID = PHImageManager.default().requestLivePhoto(
+                for: asset,
+                targetSize: targetSize,
+                contentMode: .aspectFit,
+                options: options
+            ) { livePhoto, info in
+                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+                if isDegraded { return }
+                state.resume(returning: livePhoto)
             }
             state.setRequestID(requestID)
         }

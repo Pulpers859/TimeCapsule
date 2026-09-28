@@ -65,6 +65,9 @@ struct FullScreenPhotoView: View {
     @State private var isDeleting = false
     @State private var isPreparingShare = false
     @State private var shareError: String? = nil
+    /// Bumped by the LIVE button. The page on screen plays its Live Photo
+    /// when this changes; see `ZoomingImageScrollView.updateLivePhoto`.
+    @State private var livePlaybackRequest = 0
     private enum PagerSource: Equatable {
         case memories
         case day
@@ -95,6 +98,11 @@ struct FullScreenPhotoView: View {
         let upper = min(currentIndex + 1, visibleAssets.count - 1)
         guard lower <= upper else { return [] }
         return Array(lower...upper)
+    }
+
+    private var currentAssetIsLivePhoto: Bool {
+        visibleAssets.indices.contains(currentIndex)
+            && visibleAssets[currentIndex].mediaSubtypes.contains(.photoLive)
     }
 
     private var currentAssetIsVideo: Bool {
@@ -183,6 +191,7 @@ struct FullScreenPhotoView: View {
                                 isPlaybackAllowed: !isPlaybackBlocked,
                                 shouldRender: abs(index - currentIndex) <= 1,
                                 showControls: showChrome,
+                                livePlaybackRequest: livePlaybackRequest,
                                 onToggleChrome: {
                                     withAnimation {
                                         showChrome.toggle()
@@ -320,6 +329,25 @@ struct FullScreenPhotoView: View {
                                 .disabled(isDeleting || isPreparingShare)
 
                                 Spacer(minLength: 6)
+
+                                // Press and hold on the photo plays it too,
+                                // as in Photos. This is the way to find out
+                                // that it can, and the way to play it
+                                // without holding a finger over it.
+                                if currentAssetIsLivePhoto {
+                                    Button {
+                                        livePlaybackRequest += 1
+                                    } label: {
+                                        Label("LIVE", systemImage: "livephoto")
+                                            .font(.footnote.weight(.semibold))
+                                            .padding(.horizontal, 14)
+                                            .frame(minHeight: 44)
+                                            .tcGlass(in: Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Play Live Photo")
+                                    .disabled(isDeleting || isPreparingShare)
+                                }
                             }
                             // The button is layered above the counter so it
                             // still wins hit testing if the capsule ever grows
