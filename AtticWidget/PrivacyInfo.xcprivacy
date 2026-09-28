@@ -12,9 +12,9 @@
 
         The declaration is deliberately minimal. Every required-reason API
         family was checked against this target's entire compiled source set —
-        AtticWidget/ plus AtticShared/ — and UserDefaults is the only one
-        present. There is no file-timestamp use here: MediaAssetLoading.swift
-        belongs to the app target and the widget never compiles it.
+        AtticWidget/ plus AtticShared/ — and two are present: UserDefaults,
+        and file timestamps (below). MediaAssetLoading.swift's timestamp use
+        belongs to the app target; the widget has its own.
 
         1C8F.1 is the designed access: AtticDefaults reads the App Group
         suite the app shares with this extension. CA92.1 is included because
@@ -32,6 +32,24 @@
             <array>
                 <string>1C8F.1</string>
                 <string>CA92.1</string>
+            </array>
+        </dict>
+        <!--
+            WidgetPhotoStore in MemoryWidget.swift reads
+            contentModificationDateKey to delete batches of saved widget
+            photos once no timeline can still be showing them. Added with the
+            rotating widget; before it, this target had no timestamp use and
+            this manifest said so, which would have been refused at upload.
+
+            C617.1 for the same reason as the app's: file metadata inside the
+            extension's own container (its Caches), never shown to anyone.
+        -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
             </array>
         </dict>
     </array>

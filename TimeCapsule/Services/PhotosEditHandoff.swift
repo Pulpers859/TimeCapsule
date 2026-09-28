@@ -165,25 +165,38 @@ nonisolated enum PhotosEditHandoff {
                 withLocalIdentifiers: [identifier],
                 options: nil
               ).firstObject else {
-            // Re-fetch by title as a last resort: the placeholder can fail to
-            // resolve if another change landed in between.
-            guard let recovered = existingAlbum() else {
-                throw HandoffError.albumUnavailable
-            }
-            return recovered
+            throw HandoffError.albumUnavailable
         }
+        UserDefaults.standard.set(identifier, forKey: albumIdentifierKey)
         return album
     }
 
+    /// The album this app created, found by the identifier recorded when it
+    /// was made — never by its title.
+    ///
+    /// It used to be looked up by title, and `pin` empties the album before
+    /// adding to it. So anyone who already had an album of their own called
+    /// "Attic" — photos of an actual attic, a renovation — would have had
+    /// every photo taken out of it the first time they used this button.
+    /// The photos stayed in the library, but the album's contents were gone
+    /// with no undo. An identifier can only ever name the album Attic made.
+    ///
+    /// `nil` once the user deletes that album, and after a restore to a new
+    /// phone, where identifiers do not carry over; a fresh one is then made.
+    /// Two albums with the same title is a far smaller cost than emptying
+    /// someone else's.
     private static func existingAlbum() -> PHAssetCollection? {
-        let options = PHFetchOptions()
-        options.predicate = NSPredicate(format: "localizedTitle == %@", albumTitle)
+        guard let identifier = UserDefaults.standard.string(forKey: albumIdentifierKey) else {
+            return nil
+        }
         return PHAssetCollection.fetchAssetCollections(
-            with: .album,
-            subtype: .albumRegular,
-            options: options
+            withLocalIdentifiers: [identifier],
+            options: nil
         ).firstObject
     }
+
+    /// App-only defaults, not the shared suite: the widget never pins.
+    private static let albumIdentifierKey = "Attic.pinAlbumIdentifier"
 
     /// Enumerated rather than fetched with a `localIdentifier` predicate:
     /// PhotoKit only supports predicates over a documented subset of

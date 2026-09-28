@@ -134,6 +134,21 @@ jobs:
           fi
           echo "Found $app_manifest"
           echo "Found $widget_manifest"
+          # Present is not enough: each manifest has to declare what its own
+          # binary uses. The widget's said it read no file timestamps, and
+          # then the rotating widget started ageing out its photo files by
+          # modification date. Only the timestamp family is checked, as the
+          # one this project actually uses beyond UserDefaults.
+          timestamp_apis='contentModificationDateKey|creationDateKey|contentAccessDateKey|FileAttributeKey\.(creationDate|modificationDate)|\.getattrlist|fstat\('
+          for target in "TimeCapsule:$app_manifest" "AtticWidget:$widget_manifest"; do
+            dir=${target%%:*}
+            manifest=${target#*:}
+            if grep -rqE "$timestamp_apis" --include='*.swift' "$dir" AtticShared \
+              && ! grep -q 'NSPrivacyAccessedAPICategoryFileTimestamp' "$manifest"; then
+              echo "$dir reads file timestamps but its PrivacyInfo.xcprivacy does not declare NSPrivacyAccessedAPICategoryFileTimestamp" >&2
+              exit 1
+            fi
+          done
 
       - name: Upload Xcode diagnostics
         if: failure()
