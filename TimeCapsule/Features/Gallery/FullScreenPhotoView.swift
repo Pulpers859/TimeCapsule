@@ -336,13 +336,25 @@ struct FullScreenPhotoView: View {
                                 // without holding a finger over it.
                                 if currentAssetIsLivePhoto {
                                     Button {
+                                        // Felt, because the motion can take
+                                        // a moment to load and a press with
+                                        // no answer reads as a missed one.
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                         livePlaybackRequest += 1
                                     } label: {
                                         Label("LIVE", systemImage: "livephoto")
-                                            .font(.footnote.weight(.semibold))
-                                            .padding(.horizontal, 14)
-                                            .frame(minHeight: 44)
+                                            .font(.subheadline.weight(.semibold))
+                                            .padding(.horizontal, 18)
+                                            .frame(minHeight: 48)
                                             .tcGlass(in: Capsule())
+                                            // The whole capsule, not just the
+                                            // icon and letters. On iOS 26 the
+                                            // glass is a visual effect rather
+                                            // than a background, so without
+                                            // this the padding took no taps —
+                                            // seen on device as a button that
+                                            // only sometimes worked.
+                                            .contentShape(Capsule())
                                     }
                                     .buttonStyle(.plain)
                                     .accessibilityLabel("Play Live Photo")
