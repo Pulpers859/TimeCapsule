@@ -7,16 +7,14 @@ final class LivePhotoPlaybackTests: XCTestCase {
         request: Int = 0,
         arrived: Bool = false,
         hasMotion: Bool = false,
-        canPlay: Bool = true,
-        isZoomed: Bool = false
+        canPlay: Bool = true
     ) -> LivePhotoPlayback.Action {
         LivePhotoPlayback.update(
             &state,
             request: request,
             motionArrived: arrived,
             hasMotion: hasMotion,
-            canPlay: canPlay,
-            isZoomed: isZoomed
+            canPlay: canPlay
         )
     }
 
@@ -36,21 +34,17 @@ final class LivePhotoPlaybackTests: XCTestCase {
         XCTAssertEqual(update(&state, request: 1, hasMotion: true), .nothing)
     }
 
-    func testArrivingShowsTheHint() {
+    /// Seen on device: playing on arrival read as the photo moving on its
+    /// own. It moves only when asked.
+    func testArrivingPlaysNothing() {
         var state = LivePhotoPlayback.State()
         _ = update(&state)
-        XCTAssertEqual(update(&state, arrived: true, hasMotion: true), .hint)
+        XCTAssertEqual(update(&state, arrived: true, hasMotion: true), .nothing)
         XCTAssertEqual(update(&state, hasMotion: true), .nothing)
     }
 
-    func testNoHintOnAZoomedPhoto() {
-        var state = LivePhotoPlayback.State()
-        _ = update(&state)
-        XCTAssertEqual(update(&state, arrived: true, hasMotion: true, isZoomed: true), .nothing)
-    }
-
     /// Pressed while the motion was still downloading: it plays in full as
-    /// soon as it lands, instead of the hint or nothing.
+    /// soon as it lands.
     func testAPressBeforeTheMotionLoadsPlaysWhenItArrives() {
         var state = LivePhotoPlayback.State()
         _ = update(&state, request: 0)
@@ -68,7 +62,7 @@ final class LivePhotoPlaybackTests: XCTestCase {
         XCTAssertTrue(state.isFullPending)
         XCTAssertEqual(update(&state, request: 1, canPlay: false), .stop)
         XCTAssertFalse(state.isFullPending)
-        XCTAssertEqual(update(&state, request: 1, arrived: true, hasMotion: true), .hint)
+        XCTAssertEqual(update(&state, request: 1, arrived: true, hasMotion: true), .nothing)
     }
 
     /// A press while blocked is used up, not saved for later.

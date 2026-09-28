@@ -355,11 +355,7 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate, PHLivePh
     ///
     /// Called on every SwiftUI update, so everything here only acts on a
     /// change: a different Live Photo, or a new press of the LIVE button.
-    ///
-    /// When the motion first arrives it plays Photos' short, silent hint,
-    /// which is how Photos says "this one moves" as you swipe onto it —
-    /// unless the photo is zoomed, where a sudden movement is only a
-    /// distraction.
+    /// Nothing plays on arrival; see `LivePhotoPlayback`.
     func updateLivePhoto(_ livePhoto: PHLivePhoto?, playRequest: Int, canPlay: Bool) {
         canPlayLivePhoto = canPlay
 
@@ -379,15 +375,12 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate, PHLivePh
             request: playRequest,
             motionArrived: arrived,
             hasMotion: livePhoto != nil,
-            canPlay: canPlay,
-            isZoomed: isZoomedIn
+            canPlay: canPlay
         ) {
         case .nothing:
             break
         case .stop:
             livePhotoView.stopPlayback()
-        case .hint:
-            livePhotoView.startPlayback(with: .hint)
         case .full:
             livePhotoView.startPlayback(with: .full)
         }

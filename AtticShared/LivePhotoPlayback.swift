@@ -6,6 +6,10 @@ import Foundation
 /// thing that actually happens, so the rules have to hold up to being asked
 /// again and again with nothing changed. Framework-free, so they are tested
 /// on every CI run rather than only ever seen on a phone.
+///
+/// Only ever on request: a press of the LIVE button, or holding the photo
+/// (which the view handles itself). It used to play Photos' short hint on
+/// every arrival, and on device that read as the photo moving on its own.
 nonisolated enum LivePhotoPlayback {
     nonisolated enum Action: Equatable {
         /// Nothing new to do.
@@ -13,8 +17,6 @@ nonisolated enum LivePhotoPlayback {
         /// Not allowed to play now: the page is not the current one, or a
         /// sheet or alert is over the viewer.
         case stop
-        /// Photos' short, silent movement that says "this one is live".
-        case hint
         /// The whole Live Photo, with its sound.
         case full
     }
@@ -37,15 +39,12 @@ nonisolated enum LivePhotoPlayback {
     ///   - motionArrived: the motion for this page has just loaded.
     ///   - hasMotion: it is loaded now.
     ///   - canPlay: this is the current page and nothing is over it.
-    ///   - isZoomed: a sudden movement on a zoomed photo is only a
-    ///     distraction, so it gets no hint.
     static func update(
         _ state: inout State,
         request: Int,
         motionArrived: Bool,
         hasMotion: Bool,
-        canPlay: Bool,
-        isZoomed: Bool
+        canPlay: Bool
     ) -> Action {
         let isNewRequest = state.lastRequest.map { $0 != request } ?? false
         state.lastRequest = request
@@ -62,10 +61,11 @@ nonisolated enum LivePhotoPlayback {
             state.isFullPending = false
             return .full
         }
-        if motionArrived {
-            defer { state.isFullPending = false }
-            if state.isFullPending { return .full }
-            return isZoomed ? .nothing : .hint
+        // Arriving plays nothing by itself — only a press still waiting on
+        // the download.
+        if motionArrived, state.isFullPending {
+            state.isFullPending = false
+            return .full
         }
         return .nothing
     }

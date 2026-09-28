@@ -2,30 +2,29 @@ import AVFoundation
 
 /// Owns the audio session while a memory's video is on screen.
 ///
-/// The app previously never configured one, so it ran on the default
-/// `.soloAmbient` category. That has two consequences, and they pull in
-/// opposite directions:
+/// `.ambient`: a video autoplays with sound only when the ring/silent switch
+/// allows it, and never stops what the user is already listening to.
 ///
-/// 1. `.soloAmbient` obeys the ring/silent switch, so every user browsing with
-///    the switch flicked to silent — which is most of them — heard nothing and
-///    would reasonably report that video memories have no sound.
-/// 2. `.soloAmbient` is still *exclusive*, so it stopped whatever the user was
-///    listening to anyway. The worst of both: their podcast stopped and the
-///    video was silent.
+/// It was `.playback`, chosen so that nobody with the switch on silent would
+/// think video memories had no sound. On device that was the wrong call:
+/// swiping onto a video with the phone silenced played it out loud, which
+/// is exactly what silencing a phone is meant to prevent. The note here said
+/// muted autoplay was "a product decision, not a technical one"; it has been
+/// made, and silent means silent.
 ///
-/// `.playback` fixes (1) and is the category Photos itself uses for the same
-/// job, so the behaviour matches what people already expect from a memory
-/// viewer: opening a video takes over audio.
+/// Not `.soloAmbient`, the default, which also obeys the switch but is
+/// exclusive: opening a video with the phone silenced would stop the user's
+/// podcast to play a video they cannot hear. `.ambient` mixes instead, so
+/// with the ringer on a video's sound plays over whatever else is playing
+/// rather than pausing it — the smaller of the two costs.
 ///
-/// (2) is handled by *when* the session is activated rather than by the
-/// category. Nothing is activated until a video actually starts playing, and
-/// the session stands down with `.notifyOthersOnDeactivation` when the viewer
-/// closes, which is the flag that lets the user's music resume instead of
-/// staying stopped.
+/// Live Photos in the viewer share this session, so they obey the switch
+/// too. Under `.playback` a Live Photo held after watching a video played
+/// its sound on a silenced phone.
 ///
-/// Note this still means auto-play on swipe interrupts background audio. The
-/// alternative — auto-play muted with a tap to unmute — is a product decision,
-/// not a technical one, and is deliberately not made here.
+/// The mode is `.default` because `.moviePlayback` is only valid with
+/// `.playback`. Asked for with `.ambient`, `setCategory` fails, and under
+/// `try?` that failure is silent — the category would never have changed.
 nonisolated enum VideoAudioSession {
     /// Both calls run here, in the order they were made.
     ///
@@ -57,7 +56,7 @@ nonisolated enum VideoAudioSession {
         // fires on every swipe onto a video.
         queue.async {
             let session = AVAudioSession.sharedInstance()
-            try? session.setCategory(.playback, mode: .moviePlayback)
+            try? session.setCategory(.ambient, mode: .default)
             try? session.setActive(true)
         }
     }
