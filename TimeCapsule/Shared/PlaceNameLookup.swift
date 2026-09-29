@@ -116,13 +116,24 @@ actor PlaceNameLookup {
                     continuation.resume(returning: .unavailable)
                     return
                 }
-                let bestMatch = items?.first
+                let items = items ?? []
                 // `cityWithContext` lets MapKit decide how much context the
                 // reader needs, instead of us stitching city/state/country
                 // together and getting it wrong outside the US. The
                 // point-of-interest name is the fallback, which keeps somewhere
-                // like a national park readable when there is no city to name.
-                let name = bestMatch?.addressRepresentations?.cityWithContext ?? bestMatch?.name
+                // like a national park readable when there is no city to name,
+                // then the short address, then the other matches in order.
+                //
+                // Each is skipped when blank, not only when missing: see
+                // `PlaceNameText`. With `??` an empty city ended the search
+                // and was shown as the place.
+                let name = PlaceNameText.best(items.flatMap { item in
+                    [
+                        item.addressRepresentations?.cityWithContext,
+                        item.name,
+                        item.address?.shortAddress
+                    ]
+                })
                 continuation.resume(returning: .answered(name))
             }
         }
@@ -150,17 +161,18 @@ actor PlaceNameLookup {
     /// Approximates what `cityWithContext` does: enough context to place the
     /// city, without reciting a postal address.
     private static func composedName(from placemark: CLPlacemark) -> String? {
-        guard let city = placemark.locality ?? placemark.subAdministrativeArea else {
+        // Blank counts as missing throughout; see `PlaceNameText`.
+        guard let city = PlaceNameText.best([placemark.locality, placemark.subAdministrativeArea]) else {
             // Somewhere with no town at all — a national park, open water.
             // The point-of-interest name is the best available, which is the
             // same fallback the iOS 26 path uses.
-            return placemark.name ?? placemark.areasOfInterest?.first
+            return PlaceNameText.best([placemark.name, placemark.areasOfInterest?.first])
         }
 
         // At home the reader wants the state; abroad they want the country.
         // That is the distinction MapKit makes for us on iOS 26.
         let isHomeCountry = placemark.isoCountryCode == Locale.current.region?.identifier
-        if let context = isHomeCountry ? placemark.administrativeArea : placemark.country {
+        if let context = PlaceNameText.best([isHomeCountry ? placemark.administrativeArea : placemark.country]) {
             return "\(city), \(context)"
         }
         return city
