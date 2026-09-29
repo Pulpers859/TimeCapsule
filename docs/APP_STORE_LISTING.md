@@ -80,6 +80,10 @@ ALSO
 See the rest of that day. Tap through from a memory and you get everything
 else you shot that day.
 
+Live Photos move. Press and hold one, or tap LIVE, and it plays with its
+sound, the way it does in Photos. Videos and Live Photos stay quiet when your
+phone is on silent.
+
 Map and camera details. Where the photo was taken, and the camera, lens,
 aperture, shutter and ISO. The location comes out of the photo itself. Attic
 never asks for yours.
@@ -196,8 +200,10 @@ Ordered by what a rival cannot show, after the one promise people search for.
     (`MemoryRecapExporter.swift`), so nothing from the source file is carried at all.
     **If that is ever rewritten to use `AVAssetExportSession`, this claim breaks
     silently.**
-- **Live Photos are not claimed.** Attic shows them as stills. A rival plays them; do not
-  imply otherwise in a screenshot.
+- **"Live Photos move"** — only when asked: the LIVE button or press and hold
+  (`LivePhotoPlayback`). Nothing plays on its own, so do not caption a screenshot as if
+  it does. **"Quiet when your phone is on silent"** is the `.ambient` audio session in
+  `VideoAudioSession.swift`; switching it back to `.playback` breaks this claim.
 - **"No ads"** rather than "no ads ever". A forward-looking promise is the kind of
   unverifiable claim 2.3.7 bars from a subtitle, and it is weak positioning regardless:
   Apple Photos, Google Photos and most of the small apps in this category show no ads
@@ -226,6 +232,7 @@ difference.
 - *On This Day Rewind* (reviewed by MacStories; 5.0 from 24 ratings): free for the last
   **three** years, then $4.99 once. Map and camera details, widgets up to Extra Large, a
   daily reminder, hiding whole albums (Pro), date captions on shared photos, Live Photos.
+  (Attic plays Live Photos too, since sideload-41.)
   Requires iOS 26.
 - *PhotoSift*: 7-day trial, then £2.99 once. Best-shot scoring and duplicate finding.
 - *On This Day Photos*, *Photos On This Day*: free, basic, a widget, few features.
@@ -248,6 +255,5 @@ difference.
   less from Attic. That was a deliberate choice (the locked years show up sooner), but it
   is the one line of this comparison Attic loses outright.
 - No Large or Extra Large widget; small and medium only.
-- Live Photos do not play.
 - No date caption or watermark option on shared photos.
 - No ratings yet, and no press. Rewind has both.
