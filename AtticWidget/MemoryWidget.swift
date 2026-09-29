@@ -43,8 +43,8 @@ struct MemoryEntry: TimelineEntry {
     let totalCount: Int
     /// The memory this entry shows, so a tap opens it; see `MemoryLink`.
     var assetID: String? = nil
-    /// Memory figures from building this timeline, shown on the widget in
-    /// sideload builds only. There is no Mac to profile on, so the phone
+    /// Memory figures from building this timeline, shown on the widget only
+    /// in a sideload build made with `widget_readout` on. There is no Mac to profile on, so the phone
     /// has to report its own numbers.
     var diagnostics: String? = nil
 }
@@ -715,7 +715,7 @@ struct MemoryWidgetView: View {
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-            #if ATTIC_SIDELOAD
+            #if ATTIC_SIDELOAD_WIDGET_READOUT
             .overlay(alignment: .topTrailing) { diagnostics }
             #endif
             .containerBackground(for: .widget) {
@@ -789,11 +789,16 @@ struct MemoryWidgetView: View {
         }
     }
 
-    #if ATTIC_SIDELOAD
-    /// Sideload builds only: photos loaded out of those picked, the most
-    /// memory used while loading them, and the memory in use now, while
-    /// drawing. iOS kills the extension at about 30 MB; this is how the
-    /// phone reports how close it came, with no Mac to profile on.
+    #if ATTIC_SIDELOAD_WIDGET_READOUT
+    /// Only in a sideload build made with `widget_readout` on: photos
+    /// loaded out of those picked, the most memory used while loading them,
+    /// and the memory in use now, while drawing. iOS kills the extension at
+    /// about 30 MB; this is how the phone reports how close it came, with no
+    /// Mac to profile on.
+    ///
+    /// Off by default since sideload-42, where both widgets loaded all
+    /// twelve photos at a peak of 24.8 MB and the readout had done its job.
+    /// It sits over the photo, so it is built only when asked for.
     @ViewBuilder
     private var diagnostics: some View {
         if let diagnostics = entry.diagnostics {

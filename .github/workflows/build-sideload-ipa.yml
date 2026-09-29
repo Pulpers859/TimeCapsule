@@ -9,6 +9,10 @@ on:
         description: 'Start with Pro on. Either way it can be switched in Settings > Sideload Build.'
         type: boolean
         default: true
+      widget_readout:
+        description: 'Print the widget memory readout over its photo. Only for chasing a widget memory problem.'
+        type: boolean
+        default: false
 
 permissions:
   # write, because the IPA is published as a release so it has a
@@ -68,6 +72,10 @@ jobs:
             echo 'Building with Pro on by default.'
           else
             echo 'Building with Pro off by default.'
+          fi
+          if [[ "${{ inputs.widget_readout }}" == "true" ]]; then
+            flags="$flags ATTIC_SIDELOAD_WIDGET_READOUT"
+            echo 'Building with the widget memory readout.'
           fi
           xcodebuild archive \
             -project 'TimeCapsule.xcodeproj' \

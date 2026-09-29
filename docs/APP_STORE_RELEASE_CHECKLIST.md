@@ -212,9 +212,9 @@ verified only by the CI build.
       the day, and the widget is still changing the next morning (a widget
       killed for memory freezes on one photo). Check a sideways-shot photo
       shows upright, since the widget crops and re-encodes each one to save
-      memory. Sideload builds print memory on the widget's top-right corner:
-      `loaded/picked · peak <most used while loading> · now <used while
-      drawing> of 30`. Assumed limit 30 MB; with under 10 MB (or 1.5x the costliest
+      memory. A sideload build dispatched with `widget_readout: true` prints
+      memory on the widget's top-right corner (off by default since
+      sideload-42). Assumed limit 30 MB; with under 10 MB (or 1.5x the costliest
       photo so far) left, it
       stops loading more photos and rotates through fewer instead. (The
       system's own "memory left" figure read about 6,600 MB on a sideloaded
@@ -229,7 +229,9 @@ verified only by the CI build.
       once, no change after 1.5 s another time) — so builds wait for it to
       settle before starting and, when short, part-way through, and
       the check trusts the limit iOS reports when it is believable (60 MB on
-      device, not the 30 assumed). Confirm the limit on a TestFlight build.
+      device, not the 30 assumed). sideload-42: both widgets loaded all 12
+      photos, peak 24.8 MB, with no mid-load wait — inside even the 30 MB
+      figure. Confirm the limit on a TestFlight build.
 - [ ] **Widget empty and no-access states**, the second by revoking photo
       access in Settings.
 - [ ] **Widget freshness** — delete a memory in the app, background the app,
