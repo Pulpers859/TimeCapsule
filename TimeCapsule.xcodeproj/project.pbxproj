@@ -427,6 +427,7 @@
 				DEVELOPMENT_TEAM = R4L58G49L2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Attic-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Attic";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Attic shows photos and videos from this day in past years. From a memory you can also delete it to Recently Deleted, or pin it in an album called Attic so you can find it in the Photos app.";
@@ -465,6 +466,7 @@
 				DEVELOPMENT_TEAM = R4L58G49L2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Attic-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Attic";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Attic shows photos and videos from this day in past years. From a memory you can also delete it to Recently Deleted, or pin it in an album called Attic so you can find it in the Photos app.";

@@ -8,6 +8,9 @@ struct ContentView: View {
     @StateObject private var model = PhotoLibraryModel()
     @State private var isRequestingPhotoAccess = false
     @State private var showSettings = false
+    /// A photo a widget tap asked for, waiting for the gallery to open it.
+    /// See `TimeCapsuleView.openRequestedMemory`.
+    @State private var requestedMemoryID: String? = nil
 
     var body: some View {
         ZStack {
@@ -52,6 +55,7 @@ struct ContentView: View {
                                     yearGroups: model.yearGroups,
                                     lockedYears: model.lockedYears,
                                     emptyFreeYears: model.emptyFreeYears,
+                                    requestedMemoryID: $requestedMemoryID,
                                     onOpenSettings: { showSettings = true }
                                 )
                             }
@@ -85,6 +89,27 @@ struct ContentView: View {
                 Task {
                     await model.refreshAuthorizationAndMemories()
                 }
+            }
+        }
+        // A tap on a widget photo. Today's memories are fetched first, so
+        // an app left in the background since yesterday opens the photo
+        // among today's rather than failing to find it in yesterday's.
+        .onOpenURL { url in
+            guard let identifier = MemoryLink.assetID(from: url) else { return }
+            Task {
+                // A sheet over the gallery would stop the viewer from
+                // presenting, so Settings goes first, with a moment for it
+                // to finish leaving.
+                if showSettings {
+                    showSettings = false
+                    try? await Task.sleep(for: .milliseconds(450))
+                }
+                await model.refreshAuthorizationAndMemories()
+                // With no gallery on screen there is nothing to open it
+                // from, and a request left waiting would fire whenever the
+                // gallery next appeared, perhaps hours later.
+                guard !(model.yearGroups.isEmpty && model.lockedYears.isEmpty) else { return }
+                requestedMemoryID = identifier
             }
         }
     }

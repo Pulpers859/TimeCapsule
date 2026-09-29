@@ -10,11 +10,16 @@ struct TimeCapsuleView: View {
     /// Years in the free window that turned up nothing, interleaved with the
     /// memories so the two years the free version promises are both visible.
     let emptyFreeYears: [EmptyYear]
+    /// A photo a widget tap asked for. Cleared once it is opened.
+    @Binding var requestedMemoryID: String?
     let onOpenSettings: () -> Void
     @State private var isSelecting = false
     @State private var selectedIDs: Set<String> = []
     /// Owned here rather than per year section — see `MemoryGridBody.onOpen`.
     @State private var selectedAsset: IdentifiableAsset? = nil
+    /// What the viewer pages through when it is not today's memories: a
+    /// widget photo that is no longer among them opens on its own.
+    @State private var viewerAssetsOverride: [PHAsset]? = nil
     @State private var showDeleteConfirm = false
     @State private var deleteError: String? = nil
     @State private var isDeleting = false
@@ -269,12 +274,17 @@ struct TimeCapsuleView: View {
             }
             .onChange(of: selectedFilterRawValue) { _, _ in
                 pruneSelectionToVisibleItems()
+                openRequestedMemory()
             }
             .onChange(of: visibleIdentifierSignature) { _, _ in
                 pruneSelectionToVisibleItems()
+                openRequestedMemory()
             }
-            .fullScreenCover(item: $selectedAsset) { wrapper in
-                FullScreenPhotoView(asset: wrapper.asset, allAssets: allFilteredAssets)
+            .onChange(of: requestedMemoryID, initial: true) { _, _ in
+                openRequestedMemory()
+            }
+            .fullScreenCover(item: $selectedAsset, onDismiss: { viewerAssetsOverride = nil }) { wrapper in
+                FullScreenPhotoView(asset: wrapper.asset, allAssets: viewerAssetsOverride ?? allFilteredAssets)
             }
             .sheet(isPresented: $showPaywall) {
                 PaywallView().environmentObject(purchaseStore)
@@ -413,6 +423,58 @@ struct TimeCapsuleView: View {
                 }
             }
         }
+    }
+
+    /// Opens the photo a widget was showing when it was tapped.
+    ///
+    /// Among today's memories when it is one, so swiping carries on through
+    /// the rest of the day, exactly as if it had been tapped in the grid.
+    /// If the Photos or Videos filter is hiding it, the filter goes back to
+    /// All first, and the grid catching up calls back here. If it is not
+    /// among today's memories at all — hidden with Feature Less Often since
+    /// the widget last refreshed, say — it opens on its own, because that is
+    /// still the photo that was tapped. If it has been deleted, nothing
+    /// opens and the gallery is where the user lands.
+    private func openRequestedMemory() {
+        guard let identifier = requestedMemoryID else { return }
+        // A sheet over the gallery would stop the viewer presenting.
+        if showPaywall {
+            showPaywall = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { openRequestedMemory() }
+            return
+        }
+        if let asset = allFilteredAssets.first(where: { $0.localIdentifier == identifier }) {
+            requestedMemoryID = nil
+            presentViewer(on: asset, alone: false)
+            return
+        }
+        if selectedFilter != .all,
+           yearGroups.contains(where: { group in
+               group.assets.contains { $0.localIdentifier == identifier }
+           }) {
+            selectedFilter = .all
+            return
+        }
+        requestedMemoryID = nil
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject,
+              AssetEligibility.isBrowsable(asset) else { return }
+        presentViewer(on: asset, alone: true)
+    }
+
+    /// Replacing a viewer that is already open goes through closing it:
+    /// swapping the cover's item in place would run the old viewer's
+    /// `onDismiss` after the new one's assets were set, and clear them.
+    private func presentViewer(on asset: PHAsset, alone: Bool) {
+        guard selectedAsset == nil else {
+            guard selectedAsset?.id != asset.localIdentifier || alone != (viewerAssetsOverride != nil) else { return }
+            selectedAsset = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                presentViewer(on: asset, alone: alone)
+            }
+            return
+        }
+        viewerAssetsOverride = alone ? [asset] : nil
+        selectedAsset = IdentifiableAsset(asset)
     }
 
     private func matchesCurrentFilters(_ asset: PHAsset) -> Bool {

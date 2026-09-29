@@ -41,6 +41,8 @@ struct MemoryEntry: TimelineEntry {
     let date: Date
     let content: Content
     let totalCount: Int
+    /// The memory this entry shows, so a tap opens it; see `MemoryLink`.
+    var assetID: String? = nil
     /// Memory figures from building this timeline, shown on the widget in
     /// sideload builds only. There is no Mac to profile on, so the phone
     /// has to report its own numbers.
@@ -311,6 +313,7 @@ nonisolated struct MemoryProvider: TimelineProvider {
                     yearsAgo: slot.item.yearsAgo
                 ),
                 totalCount: total,
+                assetID: slot.item.asset.localIdentifier,
                 diagnostics: diagnostics
             )
         }
@@ -599,6 +602,15 @@ struct MemoryWidgetView: View {
     let entry: MemoryEntry
 
     var body: some View {
+        content
+            // A tap opens the memory on screen, not just the app. `nil` for
+            // the empty and no-access states, where opening the app is the
+            // whole answer.
+            .widgetURL(entry.assetID.flatMap(MemoryLink.url(forAssetID:)))
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch family {
         case .accessoryRectangular, .accessoryCircular:
             accessory

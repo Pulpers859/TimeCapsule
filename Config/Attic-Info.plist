@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+		Only what build settings cannot express. `GENERATE_INFOPLIST_FILE`
+		stays on and merges everything else in, the same arrangement as
+		AtticWidget-Info.plist.
+
+		The attic:// scheme is how a widget photo opens that photo in the app
+		(`MemoryLink`). A widget's own URL reaches its app without this, but
+		registering it means the link does not depend on that, and it is the
+		scheme `MemoryLink` checks for.
+	-->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Patrick-App.TimeCapsule.memory</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>attic</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
