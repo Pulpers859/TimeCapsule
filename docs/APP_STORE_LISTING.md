@@ -69,8 +69,8 @@ you would rather not see, a hospital, an old address, tell Attic once and
 nothing taken there shows up again. Change your mind any time in Settings.
 
 A widget that changes through the day. Up to twelve photos from today, a new
-one every half hour, on your home screen. The lock screen shows how many
-memories are waiting.
+one every half hour, on your home screen. Tap it and that photo opens. The
+lock screen shows how many memories are waiting.
 
 A reminder that tells the truth. It says how many memories are waiting, and on
 a day with none, it says so instead of sending you in for nothing.
