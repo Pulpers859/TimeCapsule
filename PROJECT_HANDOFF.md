@@ -269,6 +269,31 @@ a per-millisecond velocity multiplier), and SwiftUI's `.smooth` / `.snappy` /
 iOS. Nothing is published about the paging animation itself, or about
 Photos specifically. `.smooth` is the most defensible untried option.
 
+### Place names do not match what Apple Photos shows
+
+Status: parked by the user as a future improvement. The current rule is the
+one they judged closest to Photos: Maps' `cityWithContext`, else the
+placemark's village, province, landmark or region — never a street address
+or postcode (`PlaceNameLookup`, `PlaceNameText`). It still names the
+municipality where Photos names the place itself: "Villnöß, Italy" for a
+photo Photos files under Seceda, "Nova Levante, Italy" for Carezza al Lago.
+
+What has already been tried, so nobody repeats it: naming the photo after
+the closest landmark from an `MKLocalPointsOfInterestRequest` within 500m
+(commit 891e92a). The user checked it against Photos on device and it was
+further off than the town rule, so it was reverted (13bdddf). Apple Photos
+uses its own place data, which no public API exposes; there is no call that
+returns "the place Photos shows".
+
+How to work on it: **compare, do not guess.** Build with the
+`place_readout` input on; the info sheet then has "Show What Maps Returns",
+listing every answer Maps gives for the photo — reverse geocode items,
+placemark fields (including `areasOfInterest` and `inlandWater`), points of
+interest within 1 km with distances, and physical-feature searches. Ask the
+user for pairs of screenshots: the place Photos shows, and that readout for
+the same photo. Only change the rule once a few pairs show where in Maps'
+answers Photos' name actually appears, if it appears at all.
+
 ## Git / Release Notes
 - Preferred everyday flow:
   - `git st`
