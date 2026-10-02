@@ -77,6 +77,11 @@ actor PlaceNameLookup {
             }
             resolved[key] = name
             return name
+        case .provisional(let name):
+            // Half an answer: the town came back but the landmark search
+            // failed, or the other way round. Shown, but not cached, so the
+            // next visit asks again and can find the landmark.
+            return name
         case .unavailable:
             // Offline, rate limited, or otherwise transient. Caching this would
             // turn a bad minute into a permanent blank for that place: nothing
@@ -88,6 +93,7 @@ actor PlaceNameLookup {
 
     private enum LookupOutcome {
         case answered(String?)
+        case provisional(String?)
         case unavailable
     }
 
@@ -95,25 +101,54 @@ actor PlaceNameLookup {
         String(format: "%.4f,%.4f", coordinate.latitude, coordinate.longitude)
     }
 
+    /// The landmark the photo was taken at if there is one — "Lago di
+    /// Carezza, Italy" — otherwise the town, "Nova Levante, Italy". The two
+    /// questions go to Maps at the same time; neither waits on the other.
     private static func reverseGeocodedPlaceName(
         for coordinate: CLLocationCoordinate2D
     ) async -> LookupOutcome {
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        async let townLookup = town(at: location)
+        async let landmarkLookup = nearbyLandmarks(around: location)
+        let (town, landmarks) = await (townLookup, landmarkLookup)
+
+        let landmark = landmarks.flatMap(PlaceNameText.landmark(among:))
+        switch (town, landmark) {
+        case (.some(let town), .some(let landmark)):
+            return .answered(PlaceNameText.name(landmark: landmark, context: town.context))
+        case (.some(let town), nil):
+            return landmarks == nil ? .provisional(town.name) : .answered(town.name)
+        case (nil, .some(let landmark)):
+            return .provisional(landmark)
+        case (nil, nil):
+            return landmarks == nil ? .unavailable : .provisional(nil)
+        }
+    }
+
+    /// What reverse geocoding says: the town's display name, and the
+    /// context after it that a landmark should carry too.
+    private struct Town: Sendable {
+        var name: String?
+        var context: String?
+    }
+
+    /// `nil` when Maps could not be asked: offline or rate limited.
+    private static func town(at location: CLLocation) async -> Town? {
         if #available(iOS 26.0, *) {
-            return await mapKitPlaceName(for: location)
+            return await mapKitTown(at: location)
         } else {
-            return await placemarkPlaceName(for: location)
+            return await placemarkTown(at: location)
         }
     }
 
     @available(iOS 26.0, *)
-    private static func mapKitPlaceName(for location: CLLocation) async -> LookupOutcome {
-        guard let request = MKReverseGeocodingRequest(location: location) else { return .unavailable }
+    private static func mapKitTown(at location: CLLocation) async -> Town? {
+        guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
 
-        let outcome = await withCheckedContinuation { (continuation: CheckedContinuation<LookupOutcome, Never>) in
+        let found = await withCheckedContinuation { (continuation: CheckedContinuation<Town?, Never>) in
             request.getMapItems { items, error in
                 guard error == nil else {
-                    continuation.resume(returning: .unavailable)
+                    continuation.resume(returning: nil)
                     return
                 }
                 // `cityWithContext` lets MapKit decide how much context the
@@ -127,46 +162,53 @@ actor PlaceNameLookup {
                 // code, and showed as "Via Principale 3C" and "39056" under
                 // photos from villages Maps had no city for. Blank counts as
                 // missing; see `PlaceNameText`.
-                let city = PlaceNameText.best((items ?? []).map {
-                    $0.addressRepresentations?.cityWithContext
-                })
-                continuation.resume(returning: .answered(city))
+                for item in items ?? [] {
+                    guard let representations = item.addressRepresentations,
+                          let city = PlaceNameText.best([representations.cityWithContext]) else { continue }
+                    let context = PlaceNameText.context(
+                        cityWithContext: city,
+                        city: representations.cityName
+                    ) ?? PlaceNameText.best([representations.regionName])
+                    continuation.resume(returning: Town(name: city, context: context))
+                    return
+                }
+                continuation.resume(returning: Town(name: nil, context: nil))
             }
         }
 
         // No city: ask for the place's areas instead — village, province,
         // landmark, region — and name the smallest one that exists.
-        if case .answered(nil) = outcome {
-            return await placemarkPlaceName(for: location)
+        if let found, found.name == nil {
+            return await placemarkTown(at: location)
         }
-        return outcome
+        return found
     }
 
     /// The pre-iOS 26 path, and the iOS 26 one's fallback when Maps has no
     /// city for a place. `MKReverseGeocodingRequest` and `cityWithContext`
     /// are both iOS 26, and a placemark is the only way to reach the larger
     /// areas around somewhere with no town.
-    private static func placemarkPlaceName(for location: CLLocation) async -> LookupOutcome {
+    private static func placemarkTown(at location: CLLocation) async -> Town? {
         do {
             let placemarks = try await CLGeocoder().reverseGeocodeLocation(location)
-            guard let placemark = placemarks.first else { return .answered(nil) }
-            return .answered(composedName(from: placemark))
+            guard let placemark = placemarks.first else { return Town(name: nil, context: nil) }
+            let area = area(of: placemark)
+            return Town(name: PlaceNameText.name(for: area), context: PlaceNameText.context(for: area))
         } catch let error as CLError where error.code == .geocodeFoundNoResult {
-            // A definite verdict of "nothing is here", which is worth caching
-            // exactly like the iOS 26 path's nil answer.
-            return .answered(nil)
+            // A definite verdict of "nothing is here", which is worth caching.
+            return Town(name: nil, context: nil)
         } catch {
             // Offline, rate limited, or cancelled. Must NOT be cached: doing so
             // would turn one bad minute into a permanently blank place name.
-            return .unavailable
+            return nil
         }
     }
 
     /// Approximates what `cityWithContext` does: enough context to place the
     /// town, without reciting a postal address. The rule itself is
     /// `PlaceNameText.name(for:)`, where it is tested.
-    private static func composedName(from placemark: CLPlacemark) -> String? {
-        PlaceNameText.name(for: PlaceNameText.Area(
+    private static func area(of placemark: CLPlacemark) -> PlaceNameText.Area {
+        PlaceNameText.Area(
             locality: placemark.locality,
             subLocality: placemark.subLocality,
             subAdministrativeArea: placemark.subAdministrativeArea,
@@ -174,6 +216,71 @@ actor PlaceNameLookup {
             administrativeArea: placemark.administrativeArea,
             country: placemark.country,
             isHomeCountry: placemark.isoCountryCode == Locale.current.region?.identifier
-        ))
+        )
+    }
+
+    /// Places people go *to* within reach of the photo, measured from it.
+    /// `[]` when Maps answered with nothing; `nil` when it could not be
+    /// asked, so the town is shown but not remembered as the final word.
+    private static func nearbyLandmarks(around location: CLLocation) async -> [PlaceNameText.Landmark]? {
+        let request = MKLocalPointsOfInterestRequest(
+            center: location.coordinate,
+            radius: PlaceNameText.landmarkSearchRadius
+        )
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: landmarkCategories)
+
+        let response: MKLocalSearch.Response
+        do {
+            response = try await MKLocalSearch(request: request).start()
+        } catch let error as MKError where error.code == .placemarkNotFound {
+            return []
+        } catch {
+            return nil
+        }
+        return response.mapItems.compactMap { item in
+            guard let category = item.pointOfInterestCategory,
+                  let kind = landmarkKind(for: category),
+                  let point = itemLocation(item) else { return nil }
+            return PlaceNameText.Landmark(
+                name: item.name,
+                kind: kind,
+                distance: point.distance(from: location)
+            )
+        }
+    }
+
+    /// The kinds of place a memory is *at*. Everything else — restaurants,
+    /// shops, car parks, stations — is a place you pass, and naming a photo
+    /// after the nearest café would be worse than naming the town.
+    private nonisolated static let landmarkCategories: [MKPointOfInterestCategory] = [
+        .landmark, .nationalMonument, .scenicView, .castle, .fortress,
+        .beach, .hiking, .skiing, .rockClimbing, .surfing, .kayaking, .nationalPark,
+        .park, .campground,
+        .museum, .stadium, .zoo, .aquarium, .amusementPark, .planetarium, .theater, .musicVenue
+    ]
+
+    private nonisolated static func landmarkKind(
+        for category: MKPointOfInterestCategory
+    ) -> PlaceNameText.Landmark.Kind? {
+        switch category {
+        case .landmark, .nationalMonument, .scenicView, .castle, .fortress:
+            return .sight
+        case .beach, .hiking, .skiing, .rockClimbing, .surfing, .kayaking, .nationalPark:
+            return .outdoors
+        case .park, .campground:
+            return .park
+        case .museum, .stadium, .zoo, .aquarium, .amusementPark, .planetarium, .theater, .musicVenue:
+            return .venue
+        default:
+            return nil
+        }
+    }
+
+    private nonisolated static func itemLocation(_ item: MKMapItem) -> CLLocation? {
+        if #available(iOS 26.0, *) {
+            return item.location
+        } else {
+            return item.placemark.location
+        }
     }
 }

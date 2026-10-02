@@ -13,6 +13,10 @@ on:
         description: 'Print the widget memory readout over its photo. Only for chasing a widget memory problem.'
         type: boolean
         default: false
+      place_readout:
+        description: 'Add "Show What Maps Returns" to the info sheet. Only for tuning how places are named.'
+        type: boolean
+        default: false
 
 permissions:
   # write, because the IPA is published as a release so it has a
@@ -76,6 +80,10 @@ jobs:
           if [[ "${{ inputs.widget_readout }}" == "true" ]]; then
             flags="$flags ATTIC_SIDELOAD_WIDGET_READOUT"
             echo 'Building with the widget memory readout.'
+          fi
+          if [[ "${{ inputs.place_readout }}" == "true" ]]; then
+            flags="$flags ATTIC_SIDELOAD_PLACE_READOUT"
+            echo 'Building with the Maps place readout.'
           fi
           xcodebuild archive \
             -project 'TimeCapsule.xcodeproj' \

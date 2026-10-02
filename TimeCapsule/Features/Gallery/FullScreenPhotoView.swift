@@ -1342,6 +1342,10 @@ struct MemoryInfoSheet: View {
                     Text("The location name is requested from Apple's Maps service using this photo's coordinates. The coordinates come from the photo itself — Attic never asks for your current location.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+
+                    #if ATTIC_SIDELOAD_PLACE_READOUT
+                    PlaceLookupReadout(coordinate: coordinate)
+                    #endif
                 }
 
                 if allowsExclusions {

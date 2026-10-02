@@ -102,4 +102,53 @@ final class PlaceNameTextTests: XCTestCase {
     func testNoAreaAtAllIsNil() {
         XCTAssertNil(PlaceNameText.name(for: .init(isHomeCountry: false)))
     }
+
+    // MARK: - Landmarks
+
+    /// The device case: Seceda, not the municipality it sits in.
+    func testALandmarkInReachIsChosen() {
+        let found = PlaceNameText.landmark(among: [
+            .init(name: "Seceda", kind: .sight, distance: 180)
+        ])
+        XCTAssertEqual(found, "Seceda")
+        XCTAssertEqual(PlaceNameText.name(landmark: "Seceda", context: "Italy"), "Seceda, Italy")
+    }
+
+    func testNothingInReachMeansTheTown() {
+        XCTAssertNil(PlaceNameText.landmark(among: [
+            .init(name: "Far Viewpoint", kind: .sight, distance: 450),
+            .init(name: "Corner Park", kind: .park, distance: 260)
+        ]))
+        XCTAssertNil(PlaceNameText.landmark(among: []))
+    }
+
+    /// Closeness is relative to each kind's reach: a viewpoint well within
+    /// its reach beats a park only just within its own.
+    func testTheClosestForItsKindWins() {
+        let found = PlaceNameText.landmark(among: [
+            .init(name: "Corner Park", kind: .park, distance: 180),
+            .init(name: "Lago di Carezza", kind: .sight, distance: 120)
+        ])
+        XCTAssertEqual(found, "Lago di Carezza")
+    }
+
+    func testABlankLandmarkNameIsSkipped() {
+        let found = PlaceNameText.landmark(among: [
+            .init(name: " ", kind: .sight, distance: 10),
+            .init(name: "Seceda", kind: .outdoors, distance: 300)
+        ])
+        XCTAssertEqual(found, "Seceda")
+    }
+
+    func testContextIsWhatFollowsTheCity() {
+        XCTAssertEqual(PlaceNameText.context(cityWithContext: "Villnöß, Italy", city: "Villnöß"), "Italy")
+        XCTAssertEqual(PlaceNameText.context(cityWithContext: "Boston, MA", city: "Boston"), "MA")
+        XCTAssertNil(PlaceNameText.context(cityWithContext: "Boston", city: "Boston"))
+        XCTAssertNil(PlaceNameText.context(cityWithContext: "Boston, MA", city: nil))
+    }
+
+    func testALandmarkNamedLikeItsContextIsNotRepeated() {
+        XCTAssertEqual(PlaceNameText.name(landmark: "Monaco", context: "Monaco"), "Monaco")
+        XCTAssertEqual(PlaceNameText.name(landmark: "Fenway Park", context: nil), "Fenway Park")
+    }
 }
