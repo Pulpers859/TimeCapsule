@@ -253,7 +253,7 @@ actor PlaceNameLookup {
     /// shops, car parks, stations — is a place you pass, and naming a photo
     /// after the nearest café would be worse than naming the town.
     private nonisolated static let landmarkCategories: [MKPointOfInterestCategory] = [
-        .landmark, .nationalMonument, .scenicView, .castle, .fortress,
+        .landmark, .nationalMonument, .castle, .fortress,
         .beach, .hiking, .skiing, .rockClimbing, .surfing, .kayaking, .nationalPark,
         .park, .campground,
         .museum, .stadium, .zoo, .aquarium, .amusementPark, .planetarium, .theater, .musicVenue
@@ -263,7 +263,7 @@ actor PlaceNameLookup {
         for category: MKPointOfInterestCategory
     ) -> PlaceNameText.Landmark.Kind? {
         switch category {
-        case .landmark, .nationalMonument, .scenicView, .castle, .fortress:
+        case .landmark, .nationalMonument, .castle, .fortress:
             return .sight
         case .beach, .hiking, .skiing, .rockClimbing, .surfing, .kayaking, .nationalPark:
             return .outdoors
