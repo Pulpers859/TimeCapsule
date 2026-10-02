@@ -66,7 +66,7 @@ nonisolated enum PlaceNameText {
     /// "Town, State" at home, "Town, Country" abroad; failing a town, the
     /// landmark, then the region. `nil` only when Maps named no area at all.
     static func name(for area: Area) -> String? {
-        let context = Self.context(for: area)
+        let context = best([area.isHomeCountry ? area.administrativeArea : area.country])
 
         if let town = best([area.locality, area.subLocality, area.subAdministrativeArea]) {
             guard let context, context != town else { return town }
@@ -82,95 +82,5 @@ nonisolated enum PlaceNameText {
             return "\(region), \(country)"
         }
         return best([area.country])
-    }
-
-    // MARK: - A landmark you were at
-
-    /// A named place near the photo that people go *to*: a viewpoint, a
-    /// lake, a peak, a castle, a park.
-    ///
-    /// The town is right but rarely what you remember. Two photos from the
-    /// Dolomites read "Villnöß, Italy" and "Nova Levante, Italy" — the
-    /// municipalities — when they were taken at Seceda and at Lake Carezza.
-    /// Reverse geocoding only ever answers with the administrative area, so
-    /// a landmark has to come from a separate search around the photo.
-    nonisolated struct Landmark: Equatable, Sendable {
-        var name: String?
-        var kind: Kind
-        /// Metres from where the photo was taken to the landmark's point.
-        var distance: Double
-
-        init(name: String?, kind: Kind, distance: Double) {
-            self.name = name
-            self.kind = kind
-            self.distance = distance
-        }
-
-        /// How far from a landmark's point a photo can be and still have
-        /// been taken *at* it. Maps gives each landmark a single point, not
-        /// its outline, so this stands in for its size.
-        nonisolated enum Kind: Equatable, Sendable {
-            /// Viewpoints, monuments, castles: you photograph them from a
-            /// little way off.
-            case sight
-            /// Beaches, ski areas, trails, climbing: spread out.
-            case outdoors
-            /// Parks and campgrounds. Kept tight on purpose: near home there
-            /// is often a park around the corner, and a photo in your own
-            /// garden is not a photo of it.
-            case park
-            /// Museums, stadiums, zoos: you are inside, near its point.
-            case venue
-
-            var reach: Double {
-                switch self {
-                case .sight: return 400
-                case .outdoors: return 500
-                case .park: return 200
-                case .venue: return 250
-                }
-            }
-        }
-    }
-
-    /// The farthest any landmark can be and still be chosen; what to search
-    /// within.
-    static let landmarkSearchRadius: Double = 500
-
-    /// The landmark the photo was taken at, or `nil` to use the town.
-    ///
-    /// Each candidate is measured against its own reach, so a viewpoint
-    /// 300m away beats a park 150m away — the viewpoint is well within its
-    /// reach, the park only just within its.
-    static func landmark(among candidates: [Landmark]) -> String? {
-        let inReach = candidates.compactMap { candidate -> (name: String, closeness: Double)? in
-            guard let name = best([candidate.name]),
-                  candidate.distance >= 0,
-                  candidate.distance <= candidate.kind.reach else { return nil }
-            return (name, candidate.distance / candidate.kind.reach)
-        }
-        return inReach.min { $0.closeness < $1.closeness }?.name
-    }
-
-    /// "Lago di Carezza, Italy": the landmark in place of the town, with the
-    /// same context the town would have had.
-    static func name(landmark: String, context: String?) -> String {
-        guard let context = best([context]), context != landmark else { return landmark }
-        return "\(landmark), \(context)"
-    }
-
-    /// The context Maps put after the city — "Italy" from "Villnöß, Italy",
-    /// "MA" from "Boston, MA" — so a landmark can carry it too.
-    static func context(cityWithContext: String?, city: String?) -> String? {
-        guard let full = best([cityWithContext]), let city = best([city]) else { return nil }
-        let prefix = city + ", "
-        guard full.hasPrefix(prefix) else { return nil }
-        return best([String(full.dropFirst(prefix.count))])
-    }
-
-    /// The context for a placemark-based name: state at home, country
-    /// abroad.
-    static func context(for area: Area) -> String? {
-        best([area.isHomeCountry ? area.administrativeArea : area.country])
     }
 }
