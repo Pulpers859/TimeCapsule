@@ -293,6 +293,14 @@ private struct PermissionPoint: View {
     }
 }
 
+/// Attic's own page in the Settings app, where Photos access is changed.
+/// Changing it there relaunches the app, which then reads the new access.
+@MainActor
+func openAppSettings() {
+    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+    UIApplication.shared.open(url)
+}
+
 struct PermissionDeniedView: View {
     var body: some View {
         EmptyStateScaffold(
@@ -300,11 +308,7 @@ struct PermissionDeniedView: View {
             title: "Photos Access Required",
             message: "Attic needs access to your library to find memories from this day. Enable it in Settings → Privacy → Photos → Attic."
         ) {
-            Button {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            } label: {
+            Button(action: openAppSettings) {
                 Text("Open Settings")
                     .font(.headline)
                     .frame(minWidth: 200)
@@ -338,10 +342,27 @@ struct LimitedLibraryBanner: View {
 
             Spacer(minLength: 8)
 
-            Button("Manage", action: onManageAccess)
-                .font(.footnote.weight(.semibold))
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
+            // Both routes, because the picker alone is a dead end for
+            // someone who wants everything: it can add photos to the
+            // selection but cannot grant full access. Only the Settings app
+            // can, so the banner has to say so and take them there.
+            Menu {
+                Button {
+                    openAppSettings()
+                } label: {
+                    Label("Allow Full Access", systemImage: "photo.on.rectangle")
+                }
+                Button {
+                    onManageAccess()
+                } label: {
+                    Label("Choose More Photos", systemImage: "plus.circle")
+                }
+            } label: {
+                Text("Manage")
+                    .font(.footnote.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -389,7 +410,7 @@ struct EmptyStateView: View {
             // the memory range was worse than merely unhelpful — that is a
             // paid feature, and buying it would not have helped, because the
             // limit is the selection rather than the date window.
-            return "None of the photos you've shared with Attic were taken on this date. Choosing more will give it something to find."
+            return "Attic can only see the photos you've picked, and none of them were taken on this date. Allow full access to find every memory from today."
         }
         return MemoryWindow.dayWindow == 0
             ? "Nothing was captured on this date in previous years. Widening the memory range will look at nearby days too."
@@ -405,7 +426,7 @@ struct EmptyStateView: View {
     /// route the message named was the one route not offered.
     private var actionTitle: String {
         if hiddenByExclusions { return "Open Settings" }
-        return isLimitedAccess ? "Choose More Photos" : "Adjust Memory Range"
+        return isLimitedAccess ? "Allow Full Access" : "Adjust Memory Range"
     }
 
     var body: some View {
@@ -414,14 +435,33 @@ struct EmptyStateView: View {
             title: "No Memories Today",
             message: message
         ) {
-            Button(action: (isLimitedAccess && !hiddenByExclusions) ? onManageAccess : onOpenSettings) {
-                Text(actionTitle)
-                    .font(.headline)
-                    .frame(minWidth: 220)
-                    .frame(minHeight: 50)
+            // Under limited access the main button goes to the Settings app,
+            // the only place full access can be granted. It used to open the
+            // photo picker, which can add photos to the selection but never
+            // lift the limit, so there was no way back from "Limit Access"
+            // anywhere in the app.
+            VStack(spacing: 12) {
+                Button {
+                    if isLimitedAccess && !hiddenByExclusions {
+                        openAppSettings()
+                    } else {
+                        onOpenSettings()
+                    }
+                } label: {
+                    Text(actionTitle)
+                        .font(.headline)
+                        .frame(minWidth: 220)
+                        .frame(minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+
+                if isLimitedAccess && !hiddenByExclusions {
+                    Button("Choose More Photos Instead", action: onManageAccess)
+                        .font(.subheadline.weight(.semibold))
+                        .frame(minHeight: 44)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.capsule)
         }
         .task { hiddenByExclusions = await dayIsEmptyOnlyBecauseOfExclusions() }
         // Restoring an exclusion from Settings usually repopulates the day
