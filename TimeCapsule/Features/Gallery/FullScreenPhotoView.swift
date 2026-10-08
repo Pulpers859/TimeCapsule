@@ -1348,6 +1348,10 @@ struct MemoryInfoSheet: View {
                     #endif
                 }
 
+                #if ATTIC_SIDELOAD_MEDIA_READOUT
+                MediaLoadReadout(asset: asset)
+                #endif
+
                 if allowsExclusions {
                     featureLessOftenSection
                 }
