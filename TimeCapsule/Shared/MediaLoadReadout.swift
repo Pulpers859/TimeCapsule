@@ -274,7 +274,6 @@ nonisolated enum MediaLoadProbe {
     static func readiness(of item: AVPlayerItem) async -> String {
         let player = AVPlayer(playerItem: item)
         player.isMuted = true
-        let layer = AVPlayerLayer(player: player)
         let start = Date()
         var lines: [String] = []
 
@@ -310,7 +309,7 @@ nonisolated enum MediaLoadProbe {
             return String(format: "%.1f-%.1fs", r.start.seconds, (r.start + r.duration).seconds)
         }.joined(separator: ",")
         lines.append(String(format: "after 5s of play: %@ (waiting reason: %@), time %.2fs", status, reason, item.currentTime().seconds))
-        lines.append("keepUp=\(item.isPlaybackLikelyToKeepUp) bufferEmpty=\(item.isPlaybackBufferEmpty) loaded=\(loaded.isEmpty ? "none" : loaded) firstFrameReady=\(layer.isReadyForDisplay)")
+        lines.append("keepUp=\(item.isPlaybackLikelyToKeepUp) bufferEmpty=\(item.isPlaybackBufferEmpty) loaded=\(loaded.isEmpty ? "none" : loaded)")
         if let event = item.errorLog()?.events.last {
             lines.append("errorLog: \(event.errorDomain) \(event.errorStatusCode) \(event.errorComment ?? "")")
         }

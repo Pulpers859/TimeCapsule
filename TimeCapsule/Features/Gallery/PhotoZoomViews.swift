@@ -236,6 +236,16 @@ final class ZoomingImageScrollView: UIScrollView, UIScrollViewDelegate, PHLivePh
         guard currentImageIdentifier != identifier else { return }
 
         currentImageIdentifier = identifier
+        // A sharper copy of the same photo — the full-quality image
+        // replacing the quick preview — keeps the zoom and position. The
+        // fitted frame depends only on the aspect ratio, so re-fitting would
+        // only snap a user who had pinched in back out to 1x.
+        if let previous = imageView.image,
+           previous.size.height > 0, image.size.height > 0,
+           abs(previous.size.width / previous.size.height - image.size.width / image.size.height) < 0.01 {
+            imageView.image = image
+            return
+        }
         imageView.image = image
         configuredBoundsSize = .zero
         // `layoutIfNeeded` runs `layoutSubviews` *synchronously*, and

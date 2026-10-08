@@ -397,7 +397,9 @@ nonisolated private func requestImage(
 
             let manager = PHImageManager.default()
             let options = PHImageRequestOptions()
-            options.deliveryMode = quickPreview ? .opportunistic : .highQualityFormat
+            // `.fastFormat` answers once with whatever is quickest, and does
+            // no high-quality pass alongside `loadImage`'s own.
+            options.deliveryMode = quickPreview ? .fastFormat : .highQualityFormat
             options.isNetworkAccessAllowed = !quickPreview
             options.isSynchronous = false
 
@@ -409,10 +411,10 @@ nonisolated private func requestImage(
                     return
                 }
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-                // A preview takes the first picture it gets, degraded or not.
-                // The full-quality request waits for the final one. The state
-                // resumes once, so later callbacks are ignored.
-                if isDegraded && !(quickPreview && image != nil) { return }
+                // A preview takes its one answer, degraded or not, image or
+                // not. The full-quality request waits for the final one. The
+                // state resumes once, so later callbacks are ignored.
+                if isDegraded && !quickPreview { return }
                 state.resume(returning: image)
             }
             state.setRequestID(requestID)

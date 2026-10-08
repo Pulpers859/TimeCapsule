@@ -319,6 +319,9 @@ final class PlayerProgressObserver {
         var observations = [
             player.observe(\.timeControlStatus, options: [.initial, .new]) { _, _ in
                 Task { @MainActor in changed() }
+            },
+            player.observe(\.reasonForWaitingToPlay, options: [.new]) { _, _ in
+                Task { @MainActor in changed() }
             }
         ]
         if let item = player.currentItem {
@@ -337,7 +340,13 @@ final class PlayerProgressObserver {
             onFailure?(player.currentItem?.error?.localizedDescription ?? "The video could not be played.")
             return
         }
-        onWaitingChange?(player.timeControlStatus == .waitingToPlayAtSpecifiedRate)
+        // Every start and every seek waits briefly while the player gauges
+        // its buffer, even for a file on the phone. That is not being held
+        // up, and counting it flashed "Loading video…" on every video.
+        onWaitingChange?(
+            player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+                && player.reasonForWaitingToPlay != .evaluatingBufferingRate
+        )
         publishSnapshot(for: player)
     }
 

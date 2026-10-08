@@ -41,6 +41,12 @@ struct FullResAssetView: View {
     @State private var isVideoWaiting = false
     /// Why the video could not play, from the player itself.
     @State private var videoFailure: String? = nil
+    /// `isVideoWaiting` once it has lasted long enough to be worth saying.
+    @State private var showsVideoWaiting = false
+    /// Bumped when a page whose photo failed comes back into focus, so the
+    /// load is tried again. Taking `isCurrent` out of a photo's task id
+    /// removed the retry that used to come with every return to the page.
+    @State private var stillRetry = 0
     /// Bumped whenever a newly loaded player is installed, purely so
     /// `onChange` has something to react to.
     @State private var playerGeneration = 0
@@ -57,7 +63,7 @@ struct FullResAssetView: View {
     private var mediaTaskID: String {
         asset.mediaType == .video
             ? "\(asset.localIdentifier)|render:\(shouldRender)|current:\(isCurrent)"
-            : "\(asset.localIdentifier)|render:\(shouldRender)"
+            : "\(asset.localIdentifier)|render:\(shouldRender)|retry:\(stillRetry)"
     }
 
     /// Restarts when the page becomes current or stops being it, and once
@@ -113,7 +119,7 @@ struct FullResAssetView: View {
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .background(Color.black)
-                            } else if isVideoWaiting && isCurrent && isPlaybackAllowed {
+                            } else if showsVideoWaiting && isCurrent && isPlaybackAllowed {
                                 // Black with a pause button and 0:00 was all
                                 // a stalled iCloud video ever showed.
                                 VStack(spacing: 12) {
@@ -128,7 +134,9 @@ struct FullResAssetView: View {
                                 .accessibilityElement(children: .combine)
                             }
 
-                            if showControls && isCurrent && isPlaybackAllowed {
+                            // Not over a failure: play and scrub do nothing
+                            // for a video that cannot play.
+                            if showControls && isCurrent && isPlaybackAllowed && videoFailure == nil {
                                 VideoPlaybackControls(
                                     currentTime: isScrubbing ? scrubPosition : currentTime,
                                     duration: duration,
@@ -311,7 +319,21 @@ struct FullResAssetView: View {
             guard !Task.isCancelled else { return }
             livePhoto = loadedLivePhoto
         }
+        // Shown only once a wait passes half a second, so a short buffer at
+        // the start does not flash a spinner over a video that is fine.
+        .task(id: isVideoWaiting) {
+            guard isVideoWaiting else {
+                showsVideoWaiting = false
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            showsVideoWaiting = true
+        }
         .onChange(of: isCurrent) { _, current in
+            if current, didFail, asset.mediaType != .video {
+                stillRetry += 1
+            }
             // Leaving the focused page is the only thing that releases the
             // player. Blocking playback no longer does.
             guard !current else { return }
@@ -394,6 +416,7 @@ struct FullResAssetView: View {
 
     private func resetPlaybackState() {
         isVideoWaiting = false
+        showsVideoWaiting = false
         videoFailure = nil
         scrubPosition = 0
         currentTime = 0
