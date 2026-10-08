@@ -364,6 +364,32 @@ nonisolated func loadImage(
     targetSize: CGSize = CGSize(width: 800, height: 800),
     contentMode: PHImageContentMode = .aspectFill
 ) async -> UIImage? {
+    await requestImage(from: asset, targetSize: targetSize, contentMode: contentMode, quickPreview: false)
+}
+
+/// Whatever the phone already holds for this photo, without going to iCloud:
+/// usually a smaller copy, in a fraction of a second.
+///
+/// The viewer shows this first and then swaps in `loadImage`'s full-quality
+/// result. Before, it waited for the full-quality image alone, and with
+/// "Optimize iPhone Storage" that can be an iCloud download of the whole
+/// original — seconds of a spinner over a photo the phone could have shown at
+/// once. `nil` if the phone holds nothing for it.
+@concurrent
+nonisolated func loadQuickPreview(
+    from asset: PHAsset,
+    targetSize: CGSize
+) async -> UIImage? {
+    await requestImage(from: asset, targetSize: targetSize, contentMode: .aspectFit, quickPreview: true)
+}
+
+@concurrent
+nonisolated private func requestImage(
+    from asset: PHAsset,
+    targetSize: CGSize,
+    contentMode: PHImageContentMode,
+    quickPreview: Bool
+) async -> UIImage? {
     let state = ImageRequestState()
     return await withTaskCancellationHandler(operation: {
         await withCheckedContinuation { (continuation: CheckedContinuation<UIImage?, Never>) in
@@ -371,13 +397,22 @@ nonisolated func loadImage(
 
             let manager = PHImageManager.default()
             let options = PHImageRequestOptions()
-            options.deliveryMode = .highQualityFormat
-            options.isNetworkAccessAllowed = true
+            options.deliveryMode = quickPreview ? .opportunistic : .highQualityFormat
+            options.isNetworkAccessAllowed = !quickPreview
             options.isSynchronous = false
 
             let requestID = manager.requestImage(for: asset, targetSize: targetSize, contentMode: contentMode, options: options) { image, info in
+                // An error or cancellation is the last callback even when it
+                // is flagged degraded; skipping it would wait forever.
+                if info?[PHImageErrorKey] != nil || (info?[PHImageCancelledKey] as? Bool) == true {
+                    state.resume(returning: image)
+                    return
+                }
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-                if isDegraded { return }
+                // A preview takes the first picture it gets, degraded or not.
+                // The full-quality request waits for the final one. The state
+                // resumes once, so later callbacks are ignored.
+                if isDegraded && !(quickPreview && image != nil) { return }
                 state.resume(returning: image)
             }
             state.setRequestID(requestID)
@@ -421,6 +456,15 @@ nonisolated func loadLivePhoto(
                 contentMode: .aspectFit,
                 options: options
             ) { livePhoto, info in
+                // An error or a cancellation ends the request, whether or not
+                // that last callback is flagged degraded. Checked first: a
+                // failed download whose final answer was marked degraded used
+                // to be skipped like any preview, and the request then waited
+                // forever, with LIVE doing nothing however often it was tapped.
+                if info?[PHImageErrorKey] != nil || (info?[PHImageCancelledKey] as? Bool) == true {
+                    state.resume(returning: nil)
+                    return
+                }
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                 if isDegraded { return }
                 state.resume(returning: livePhoto)

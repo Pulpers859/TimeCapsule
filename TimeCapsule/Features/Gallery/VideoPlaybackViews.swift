@@ -147,17 +147,28 @@ final class PlayerProgressObserver {
     private var onPlayingChange: ((Bool) -> Void)?
     private var latestCurrentTime: Double = 0
     private var latestDuration: Double = 0
+    /// Whether the video is held up waiting for data, and why it failed if it
+    /// did. Without these a video whose iCloud original would not arrive was
+    /// a black screen with a pause button, stuck at 0:00, saying nothing.
+    private var onWaitingChange: ((Bool) -> Void)?
+    private var onFailure: ((String) -> Void)?
+    private var statusObservations: [NSKeyValueObservation] = []
+    private var failureObserver: NSObjectProtocol?
 
     func attach(
         to player: AVPlayer?,
         onCurrentTimeChange: @escaping (Double) -> Void,
         onDurationChange: @escaping (Double) -> Void,
-        onPlayingChange: @escaping (Bool) -> Void
+        onPlayingChange: @escaping (Bool) -> Void,
+        onWaitingChange: @escaping (Bool) -> Void = { _ in },
+        onFailure: @escaping (String) -> Void = { _ in }
     ) {
         detach()
         self.onCurrentTimeChange = onCurrentTimeChange
         self.onDurationChange = onDurationChange
         self.onPlayingChange = onPlayingChange
+        self.onWaitingChange = onWaitingChange
+        self.onFailure = onFailure
 
         self.player = player
         latestCurrentTime = 0
@@ -178,6 +189,29 @@ final class PlayerProgressObserver {
             Task { @MainActor [weak self, weak player] in
                 guard let self, let player, self.player === player else { return }
                 self.publishSnapshot(for: player, currentTimeOverride: seconds)
+            }
+        }
+
+        // KVO calls back on whatever thread the change happened on, so the
+        // observations are made by a nonisolated helper and only the hop back
+        // to the main actor touches this object.
+        let statusChanged: @MainActor @Sendable () -> Void = { [weak self, weak player] in
+            guard let self, let player, self.player === player else { return }
+            self.publishStatus(for: player)
+        }
+        statusObservations = Self.observeStatus(of: player, then: statusChanged)
+        if let currentItem = player.currentItem {
+            failureObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemFailedToPlayToEndTime,
+                object: currentItem,
+                queue: .main
+            ) { [weak self, weak player] note in
+                let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError
+                let reason = error?.localizedDescription ?? "Playback stopped."
+                Task { @MainActor [weak self, weak player] in
+                    guard let self, let player, self.player === player else { return }
+                    self.onFailure?(reason)
+                }
             }
         }
 
@@ -217,6 +251,10 @@ final class PlayerProgressObserver {
         if let playbackEndObserver {
             NotificationCenter.default.removeObserver(playbackEndObserver)
         }
+        if let failureObserver {
+            NotificationCenter.default.removeObserver(failureObserver)
+        }
+        statusObservations.forEach { $0.invalidate() }
     }
 
     func detach() {
@@ -228,6 +266,13 @@ final class PlayerProgressObserver {
             NotificationCenter.default.removeObserver(playbackEndObserver)
         }
         playbackEndObserver = nil
+        if let failureObserver {
+            NotificationCenter.default.removeObserver(failureObserver)
+        }
+        failureObserver = nil
+        statusObservations.forEach { $0.invalidate() }
+        statusObservations = []
+        onWaitingChange?(false)
         player = nil
         latestCurrentTime = 0
         latestDuration = 0
@@ -265,6 +310,35 @@ final class PlayerProgressObserver {
                 self.publishSnapshot(for: player, currentTimeOverride: bounded)
             }
         }
+    }
+
+    nonisolated private static func observeStatus(
+        of player: AVPlayer,
+        then changed: @escaping @MainActor @Sendable () -> Void
+    ) -> [NSKeyValueObservation] {
+        var observations = [
+            player.observe(\.timeControlStatus, options: [.initial, .new]) { _, _ in
+                Task { @MainActor in changed() }
+            }
+        ]
+        if let item = player.currentItem {
+            observations.append(item.observe(\.status, options: [.initial, .new]) { _, _ in
+                Task { @MainActor in changed() }
+            })
+        }
+        return observations
+    }
+
+    /// Waiting means asked to play but held up for data — what an iCloud
+    /// video that is still downloading, or never arrives, looks like.
+    private func publishStatus(for player: AVPlayer) {
+        if player.currentItem?.status == .failed {
+            onWaitingChange?(false)
+            onFailure?(player.currentItem?.error?.localizedDescription ?? "The video could not be played.")
+            return
+        }
+        onWaitingChange?(player.timeControlStatus == .waitingToPlayAtSpecifiedRate)
+        publishSnapshot(for: player)
     }
 
     private func publishSnapshot(for player: AVPlayer, currentTimeOverride: Double? = nil) {

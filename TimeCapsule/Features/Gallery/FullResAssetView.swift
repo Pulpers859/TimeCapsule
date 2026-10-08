@@ -36,12 +36,34 @@ struct FullResAssetView: View {
     @State private var scrubPosition: Double = 0
     @State private var isScrubbing = false
     @State private var didFail = false
+    /// The video is asked to play but held up for data, typically an iCloud
+    /// original still arriving.
+    @State private var isVideoWaiting = false
+    /// Why the video could not play, from the player itself.
+    @State private var videoFailure: String? = nil
     /// Bumped whenever a newly loaded player is installed, purely so
     /// `onChange` has something to react to.
     @State private var playerGeneration = 0
 
+    /// A photo's still is not keyed on `isCurrent`; a video's is, because
+    /// only the current page may hold a player.
+    ///
+    /// The still used to be, and every swipe onto a page whose photo was
+    /// still downloading from iCloud cancelled that download and started it
+    /// again from nothing — and the page just left did the same. Browsing at
+    /// a normal pace, an iCloud-only photo could keep restarting and never
+    /// arrive. The Live Photo, which does depend on being current, has its
+    /// own task, `liveTaskID`.
     private var mediaTaskID: String {
-        "\(asset.localIdentifier)|render:\(shouldRender)|current:\(isCurrent)"
+        asset.mediaType == .video
+            ? "\(asset.localIdentifier)|render:\(shouldRender)|current:\(isCurrent)"
+            : "\(asset.localIdentifier)|render:\(shouldRender)"
+    }
+
+    /// Restarts when the page becomes current or stops being it, and once
+    /// the still first appears, since the motion waits for the still.
+    private var liveTaskID: String {
+        "\(asset.localIdentifier)|render:\(shouldRender)|current:\(isCurrent)|still:\(image != nil)"
     }
 
     var body: some View {
@@ -82,6 +104,30 @@ struct FullResAssetView: View {
                             // again. The video then played under the share
                             // sheet. Before the split, being blocked hid
                             // these controls; it still does.
+                            if let videoFailure {
+                                ContentUnavailableView(
+                                    "Couldn't Play Video",
+                                    systemImage: "exclamationmark.triangle",
+                                    description: Text(videoFailure)
+                                )
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(Color.black)
+                            } else if isVideoWaiting && isCurrent && isPlaybackAllowed {
+                                // Black with a pause button and 0:00 was all
+                                // a stalled iCloud video ever showed.
+                                VStack(spacing: 12) {
+                                    ProgressView()
+                                        .tint(.white)
+                                    Text("Loading video…")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.white.opacity(0.8))
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .allowsHitTesting(false)
+                                .accessibilityElement(children: .combine)
+                            }
+
                             if showControls && isCurrent && isPlaybackAllowed {
                                 VideoPlaybackControls(
                                     currentTime: isScrubbing ? scrubPosition : currentTime,
@@ -168,9 +214,9 @@ struct FullResAssetView: View {
             }
         }
         .task(id: mediaTaskID) {
-            // Every run starts without one. The task re-runs whenever this
-            // page stops or starts being the current one, and a neighbour
-            // should never hold a Live Photo's video.
+            // Every run starts without one: a run means a different memory,
+            // or for a video a change of current page, and neither should
+            // keep the previous Live Photo's video.
             livePhoto = nil
             guard shouldRender else {
                 releasePlayer()
@@ -196,6 +242,8 @@ struct FullResAssetView: View {
                     // as the replacement took to arrive, which for an iCloud
                     // original is a download.
                     releasePlayer()
+                    isVideoWaiting = false
+                    videoFailure = nil
                     let loadedPlayer = await loadPlayer(from: asset)
                     guard !Task.isCancelled else {
                         discard(loadedPlayer)
@@ -207,7 +255,9 @@ struct FullResAssetView: View {
                         to: loadedPlayer,
                         onCurrentTimeChange: { currentTime = $0 },
                         onDurationChange: { duration = $0 },
-                        onPlayingChange: { isPlaying = $0 }
+                        onPlayingChange: { isPlaying = $0 },
+                        onWaitingChange: { isVideoWaiting = $0 },
+                        onFailure: { videoFailure = $0 }
                     )
                     // Playback is applied by `.onChange(of: playerGeneration)`
                     // below, not decided here.
@@ -229,14 +279,7 @@ struct FullResAssetView: View {
                     playerGeneration += 1
                 } else {
                     releasePlayer()
-                    let preview = await loadImage(
-                        from: asset,
-                        targetSize: CGSize(width: 2732, height: 2732),
-                        contentMode: .aspectFit
-                    )
-                    guard !Task.isCancelled else { return }
-                    image = preview
-                    didFail = preview == nil
+                    guard await loadStill() else { return }
                 }
             } else {
                 didFail = false
@@ -249,25 +292,24 @@ struct FullResAssetView: View {
                 // returns early too, so on that path it was never released
                 // here at all.
                 releasePlayer()
-                let loadedImage = await loadImage(
-                    from: asset,
-                    targetSize: CGSize(width: 2732, height: 2732),
-                    contentMode: .aspectFit
-                )
-                guard !Task.isCancelled else { return }
-                image = loadedImage
-                didFail = loadedImage == nil
-
-                // After the still, never before it — see `loadLivePhoto`.
-                // Same size as the still, so the motion lines up with it.
-                guard isCurrent, loadedImage != nil, asset.mediaSubtypes.contains(.photoLive) else { return }
-                let loadedLivePhoto = await loadLivePhoto(
-                    from: asset,
-                    targetSize: CGSize(width: 2732, height: 2732)
-                )
-                guard !Task.isCancelled else { return }
-                livePhoto = loadedLivePhoto
+                guard await loadStill() else { return }
             }
+        }
+        // The Live Photo's motion, for the current page only, started as soon
+        // as the photo first shows rather than after its full-quality copy.
+        // A separate task so the still is not re-requested when the page
+        // becomes current, and the motion is not held behind it.
+        .task(id: liveTaskID) {
+            livePhoto = nil
+            guard shouldRender, isCurrent, image != nil,
+                  asset.mediaType == .image,
+                  asset.mediaSubtypes.contains(.photoLive) else { return }
+            let loadedLivePhoto = await loadLivePhoto(
+                from: asset,
+                targetSize: CGSize(width: 2732, height: 2732)
+            )
+            guard !Task.isCancelled else { return }
+            livePhoto = loadedLivePhoto
         }
         .onChange(of: isCurrent) { _, current in
             // Leaving the focused page is the only thing that releases the
@@ -300,6 +342,28 @@ struct FullResAssetView: View {
         }
     }
 
+    /// Shows what the phone already holds at once, then the full-quality
+    /// copy when it arrives. Returns false if the task was cancelled.
+    ///
+    /// Starts from a cleared image: this task re-runs only when the page is
+    /// given a different memory, and the previous one's photo must not stand
+    /// in for it while the new one loads.
+    private func loadStill() async -> Bool {
+        image = nil
+        let target = CGSize(width: 2732, height: 2732)
+        let preview = await loadQuickPreview(from: asset, targetSize: target)
+        guard !Task.isCancelled else { return false }
+        if let preview { image = preview }
+
+        let full = await loadImage(from: asset, targetSize: target, contentMode: .aspectFit)
+        guard !Task.isCancelled else { return false }
+        if let full { image = full }
+        // Failed only if there is nothing at all to show. A preview with no
+        // full-quality copy behind it is still the photo.
+        didFail = image == nil
+        return true
+    }
+
     /// Brings the player in line with the current block state.
     ///
     /// Idempotent, and safe to call with no player or on a page that is not
@@ -329,6 +393,8 @@ struct FullResAssetView: View {
     }
 
     private func resetPlaybackState() {
+        isVideoWaiting = false
+        videoFailure = nil
         scrubPosition = 0
         currentTime = 0
         duration = 0

@@ -23,7 +23,7 @@ struct MediaLoadReadout: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button(isRunning ? "Testing… (up to 60s)" : "Test Loading This Memory") {
+            Button(isRunning ? "Testing… (can take a minute or two)" : "Test Loading This Memory") {
                 Task { await run() }
             }
             .disabled(isRunning)
@@ -59,7 +59,12 @@ struct MediaLoadReadout: View {
         append("  type=\(describe(asset.mediaType)) live=\(asset.mediaSubtypes.contains(.photoLive)) duration=\(String(format: "%.1f", asset.duration))s")
         append("  size=\(asset.pixelWidth)x\(asset.pixelHeight) source=\(asset.sourceType.rawValue)")
         for resource in PHAssetResource.assetResources(for: asset) {
-            append("  resource type=\(resource.type.rawValue) \(resource.originalFilename)")
+            // `locallyAvailable` is not public API, so it is only read when
+            // the object answers to it; reading an unknown key would crash.
+            let local: String = resource.responds(to: NSSelectorFromString("locallyAvailable"))
+                ? "\(resource.value(forKey: "locallyAvailable") ?? "?")"
+                : "unknown"
+            append("  resource type=\(resource.type.rawValue) onPhone=\(local) \(resource.originalFilename)")
         }
 
         append("")
@@ -155,6 +160,11 @@ nonisolated enum MediaLoadProbe {
             continuation.resume(returning: String(format: "%.2fs ", seconds) + outcome + " | progress: " + progressText)
         }
 
+        var progressText: String {
+            lock.lock(); defer { lock.unlock() }
+            return progress.isEmpty ? "none" : "\(progress.count) updates, last \(Int((progress.last ?? 0) * 100))%"
+        }
+
         static func describe(_ error: Error) -> String {
             let ns = error as NSError
             return "\(ns.domain) \(ns.code) \(ns.localizedDescription)"
@@ -236,12 +246,13 @@ nonisolated enum MediaLoadProbe {
         }
         let requestTime = String(format: "%.2fs", Date().timeIntervalSince(probe.start))
         guard let playerItem = item.0 else {
-            return "\(requestTime) NO PLAYER ITEM \(item.1)"
+            return "\(requestTime) NO PLAYER ITEM \(item.1) | progress: \(probe.progressText)"
         }
         // Photos handing back an item is not the same as it playing: ask the
         // item itself whether it can, and how long it took to say so.
         let status = await readiness(of: playerItem)
-        return "\(requestTime) item ok \(item.1) | then \(status)"
+        let source = (playerItem.asset as? AVURLAsset).map { $0.url.isFileURL ? "file" : "STREAM \($0.url.scheme ?? "?")" } ?? "not a URL asset"
+        return "\(requestTime) item ok \(item.1) | progress: \(probe.progressText) | source: \(source)\n  \(status)"
     }
 
     nonisolated final class Once: @unchecked Sendable {
@@ -256,22 +267,58 @@ nonisolated enum MediaLoadProbe {
         }
     }
 
+    /// Photos handing back an item is not the same as it playing. The
+    /// viewer's broken state was exactly this: an item with a duration, a
+    /// pause button showing, and time stuck at 0:00. So this plays it, muted,
+    /// and watches for five seconds.
     static func readiness(of item: AVPlayerItem) async -> String {
         let player = AVPlayer(playerItem: item)
+        player.isMuted = true
+        let layer = AVPlayerLayer(player: player)
         let start = Date()
+        var lines: [String] = []
+
+        var ready = false
         for _ in 0..<60 {
-            switch item.status {
-            case .readyToPlay:
-                let duration = item.duration.seconds
-                _ = player
-                return String(format: "readyToPlay after %.2fs, duration %.1fs, tracks %d", Date().timeIntervalSince(start), duration.isFinite ? duration : -1, item.tracks.count)
-            case .failed:
-                return "FAILED: " + (item.error.map(Probe.describe) ?? "no error")
-            default:
-                try? await Task.sleep(for: .milliseconds(500))
-            }
+            if item.status == .readyToPlay { ready = true; break }
+            if item.status == .failed { break }
+            try? await Task.sleep(for: .milliseconds(500))
         }
-        return "STILL NOT READY after 30s"
+        switch item.status {
+        case .failed:
+            return "item FAILED: " + (item.error.map(Probe.describe) ?? "no error")
+        case .readyToPlay:
+            let duration = item.duration.seconds
+            lines.append(String(format: "readyToPlay after %.2fs, duration %.1fs", Date().timeIntervalSince(start), duration.isFinite ? duration : -1))
+        default:
+            return "item STILL NOT READY after 30s"
+        }
+        guard ready else { return lines.joined(separator: "\n  ") }
+
+        player.play()
+        try? await Task.sleep(for: .seconds(5))
+        let reason = player.reasonForWaitingToPlay?.rawValue ?? "none"
+        let status: String
+        switch player.timeControlStatus {
+        case .playing: status = "playing"
+        case .paused: status = "PAUSED"
+        case .waitingToPlayAtSpecifiedRate: status = "WAITING"
+        @unknown default: status = "unknown"
+        }
+        let loaded = item.loadedTimeRanges.map { range -> String in
+            let r = range.timeRangeValue
+            return String(format: "%.1f-%.1fs", r.start.seconds, (r.start + r.duration).seconds)
+        }.joined(separator: ",")
+        lines.append(String(format: "after 5s of play: %@ (waiting reason: %@), time %.2fs", status, reason, item.currentTime().seconds))
+        lines.append("keepUp=\(item.isPlaybackLikelyToKeepUp) bufferEmpty=\(item.isPlaybackBufferEmpty) loaded=\(loaded.isEmpty ? "none" : loaded) firstFrameReady=\(layer.isReadyForDisplay)")
+        if let event = item.errorLog()?.events.last {
+            lines.append("errorLog: \(event.errorDomain) \(event.errorStatusCode) \(event.errorComment ?? "")")
+        }
+        if item.status == .failed {
+            lines.append("item FAILED during play: " + (item.error.map(Probe.describe) ?? "no error"))
+        }
+        player.pause()
+        return lines.joined(separator: "\n  ")
     }
 
     static func networkSummary() async -> String {
