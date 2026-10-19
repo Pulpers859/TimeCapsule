@@ -114,158 +114,19 @@ struct FullResAssetView: View {
         return portrait.width * portrait.height >= landscape.width * landscape.height ? portrait : landscape
     }
 
+    /// Restarts when the page becomes current or stops being it, and once
+    /// the still first appears, since the motion waits for the still.
+    private var liveTaskID: String {
+        "\(asset.localIdentifier)|render:\(shouldRender)|current:\(isCurrent)|still:\(image != nil)"
+    }
+
     var body: some View {
         Group {
             if shouldRender {
                 if asset.mediaType == .video {
-                    ZStack(alignment: .bottom) {
-                        if let player {
-                            PlainVideoPlayerView(player: player)
-                                .background(Color.black)
-                                .accessibilityElement()
-                                .accessibilityLabel(spokenMediaLabel)
-                                .accessibilityValue(isCurrent ? "Current memory" : "")
-                                // The photo branch got an activate action for
-                                // exactly this reason and the video branch did
-                                // not. With the chrome hidden — which also
-                                // hides the playback controls — VoiceOver had
-                                // nothing to activate here, so Close, Share,
-                                // Delete, Info and the transport were all
-                                // unreachable until the user paged to a photo.
-                                .accessibilityAction(.default, onToggleChrome)
-                                .accessibilityHint("Double tap to show or hide the controls.")
-
-                            // `isPlaybackAllowed` as well as `isCurrent`.
-                            //
-                            // Splitting `isActive` in two and gating only on
-                            // `isCurrent` left a live, enabled play button
-                            // during a block that presents no modal of its
-                            // own: `isPreparingShare` and `isDeleting` only
-                            // `.disabled()` the three chrome buttons, and
-                            // these controls have no `.disabled` at all. So
-                            // the user could tap ▶ while a share export ran
-                            // and restart audio the block exists to stop —
-                            // and because `isPlaybackAllowed` is one derived
-                            // flag over five inputs, the hand-off from
-                            // `isPreparingShare` to `shareItem` changes no
-                            // value, fires no `onChange`, and never paused it
-                            // again. The video then played under the share
-                            // sheet. Before the split, being blocked hid
-                            // these controls; it still does.
-                            if let videoFailure {
-                                ContentUnavailableView(
-                                    "Couldn't Play Video",
-                                    systemImage: "exclamationmark.triangle",
-                                    description: Text(videoFailure)
-                                )
-                                .foregroundStyle(.white)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(Color.black)
-                            } else if showsVideoWaiting && isCurrent && isPlaybackAllowed {
-                                // Black with a pause button and 0:00 was all
-                                // a stalled iCloud video ever showed.
-                                VStack(spacing: 12) {
-                                    ProgressView()
-                                        .tint(.white)
-                                    Text("Loading video…")
-                                        .font(.subheadline)
-                                        .foregroundStyle(.white.opacity(0.8))
-                                }
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .allowsHitTesting(false)
-                                .accessibilityElement(children: .combine)
-                            }
-
-                            // Not over a failure: play and scrub do nothing
-                            // for a video that cannot play.
-                            if showControls && isCurrent && isPlaybackAllowed && videoFailure == nil {
-                                VideoPlaybackControls(
-                                    currentTime: isScrubbing ? scrubPosition : currentTime,
-                                    duration: duration,
-                                    isPlaying: isPlaying,
-                                    onTogglePlayPause: {
-                                        progressObserver.togglePlayPause()
-                                    },
-                                    onSkipBack: {
-                                        let destination = max(currentTime - 10, 0)
-                                        progressObserver.seek(to: destination)
-                                        currentTime = destination
-                                    },
-                                    sliderBinding: Binding(
-                                        get: {
-                                            isScrubbing ? scrubPosition : currentTime
-                                        },
-                                        set: { newValue in
-                                            scrubPosition = newValue
-                                        }
-                                    ),
-                                    onEditingChanged: { editing in
-                                        onScrubbingChanged(editing)
-                                        if editing {
-                                            scrubPosition = currentTime
-                                            isScrubbing = true
-                                        } else {
-                                            isScrubbing = false
-                                            progressObserver.seek(to: scrubPosition)
-                                            currentTime = scrubPosition
-                                        }
-                                    }
-                                )
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 22)
-                            }
-                        } else if let image {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                        } else if didFail {
-                            ContentUnavailableView("Couldn't Load Video", systemImage: "exclamationmark.triangle")
-                                .foregroundStyle(.white)
-                        } else {
-                            ProgressView()
-                                .tint(.white)
-                                // The video spinner, not just the photo one.
-                                // This is the slower of the two: it covers a
-                                // full `AVPlayerItem` download for an iCloud
-                                // original.
-                                .accessibilityLabel("Loading \(spokenMediaLabel)")
-                        }
-                    }
-                    .background(Color.black)
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: onToggleChrome)
+                    videoContent
                 } else {
-                    if let image {
-                        PhotoZoomScrollView(
-                            image: image,
-                            accessibilityDescription: spokenMediaLabel,
-                            isCurrentMemory: isCurrent,
-                            livePhoto: livePhoto,
-                            livePlaybackRequest: livePlaybackRequest,
-                            isPlaybackAllowed: isPlaybackAllowed,
-                            onZoomStateChange: { zoomed in
-                                onZoomStateChange(zoomed)
-                                if zoomed { wantsDetail = true }
-                            },
-                            onSingleTap: onToggleChrome
-                        )
-                        .overlay(alignment: .bottom) {
-                            if isCurrent && showControls {
-                                stillStatusBadge
-                            }
-                        }
-                    } else if didFail {
-                        ContentUnavailableView("Couldn't Load Photo", systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.white)
-                    } else {
-                        ProgressView()
-                            .tint(.white)
-                            // Previously inherited from the container label
-                            // that moved onto the media itself. An iCloud
-                            // original takes seconds, and for all of them this
-                            // page announced nothing at all.
-                            .accessibilityLabel("Loading \(spokenMediaLabel)")
-                    }
+                    photoContent
                 }
             } else {
                 Color.black
@@ -445,6 +306,167 @@ struct FullResAssetView: View {
             livePhoto = nil
             didFail = false
             resetPlaybackState()
+        }
+    }
+
+    /// Split out of `body`, which had grown past what the compiler can
+    /// type-check in reasonable time.
+    @ViewBuilder
+    private var videoContent: some View {
+        ZStack(alignment: .bottom) {
+            if let player {
+                PlainVideoPlayerView(player: player)
+                    .background(Color.black)
+                    .accessibilityElement()
+                    .accessibilityLabel(spokenMediaLabel)
+                    .accessibilityValue(isCurrent ? "Current memory" : "")
+                    // The photo branch got an activate action for
+                    // exactly this reason and the video branch did
+                    // not. With the chrome hidden — which also
+                    // hides the playback controls — VoiceOver had
+                    // nothing to activate here, so Close, Share,
+                    // Delete, Info and the transport were all
+                    // unreachable until the user paged to a photo.
+                    .accessibilityAction(.default, onToggleChrome)
+                    .accessibilityHint("Double tap to show or hide the controls.")
+
+                // `isPlaybackAllowed` as well as `isCurrent`.
+                //
+                // Splitting `isActive` in two and gating only on
+                // `isCurrent` left a live, enabled play button
+                // during a block that presents no modal of its
+                // own: `isPreparingShare` and `isDeleting` only
+                // `.disabled()` the three chrome buttons, and
+                // these controls have no `.disabled` at all. So
+                // the user could tap ▶ while a share export ran
+                // and restart audio the block exists to stop —
+                // and because `isPlaybackAllowed` is one derived
+                // flag over five inputs, the hand-off from
+                // `isPreparingShare` to `shareItem` changes no
+                // value, fires no `onChange`, and never paused it
+                // again. The video then played under the share
+                // sheet. Before the split, being blocked hid
+                // these controls; it still does.
+                if let videoFailure {
+                    ContentUnavailableView(
+                        "Couldn't Play Video",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(videoFailure)
+                    )
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
+                } else if showsVideoWaiting && isCurrent && isPlaybackAllowed {
+                    // Black with a pause button and 0:00 was all
+                    // a stalled iCloud video ever showed.
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .tint(.white)
+                        Text("Loading video…")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .combine)
+                }
+
+                // Not over a failure: play and scrub do nothing
+                // for a video that cannot play.
+                if showControls && isCurrent && isPlaybackAllowed && videoFailure == nil {
+                    videoPlaybackControls
+                }
+            } else if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else if didFail {
+                ContentUnavailableView("Couldn't Load Video", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.white)
+            } else {
+                ProgressView()
+                    .tint(.white)
+                    // The video spinner, not just the photo one.
+                    // This is the slower of the two: it covers a
+                    // full `AVPlayerItem` download for an iCloud
+                    // original.
+                    .accessibilityLabel("Loading \(spokenMediaLabel)")
+            }
+        }
+        .background(Color.black)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onToggleChrome)
+    }
+
+    private var videoPlaybackControls: some View {
+        VideoPlaybackControls(
+            currentTime: isScrubbing ? scrubPosition : currentTime,
+            duration: duration,
+            isPlaying: isPlaying,
+            onTogglePlayPause: {
+                progressObserver.togglePlayPause()
+            },
+            onSkipBack: {
+                let destination = max(currentTime - 10, 0)
+                progressObserver.seek(to: destination)
+                currentTime = destination
+            },
+            sliderBinding: Binding(
+                get: {
+                    isScrubbing ? scrubPosition : currentTime
+                },
+                set: { newValue in
+                    scrubPosition = newValue
+                }
+            ),
+            onEditingChanged: { editing in
+                onScrubbingChanged(editing)
+                if editing {
+                    scrubPosition = currentTime
+                    isScrubbing = true
+                } else {
+                    isScrubbing = false
+                    progressObserver.seek(to: scrubPosition)
+                    currentTime = scrubPosition
+                }
+            }
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 22)
+    }
+
+    @ViewBuilder
+    private var photoContent: some View {
+        if let image {
+            PhotoZoomScrollView(
+                image: image,
+                accessibilityDescription: spokenMediaLabel,
+                isCurrentMemory: isCurrent,
+                livePhoto: livePhoto,
+                livePlaybackRequest: livePlaybackRequest,
+                isPlaybackAllowed: isPlaybackAllowed,
+                onZoomStateChange: { zoomed in
+                    onZoomStateChange(zoomed)
+                    if zoomed { wantsDetail = true }
+                },
+                onSingleTap: onToggleChrome
+            )
+            .overlay(alignment: .bottom) {
+                if isCurrent && showControls {
+                    stillStatusBadge
+                }
+            }
+        } else if didFail {
+            ContentUnavailableView("Couldn't Load Photo", systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.white)
+        } else {
+            ProgressView()
+                .tint(.white)
+                // Previously inherited from the container label
+                // that moved onto the media itself. An iCloud
+                // original takes seconds, and for all of them this
+                // page announced nothing at all.
+                .accessibilityLabel("Loading \(spokenMediaLabel)")
         }
     }
 
