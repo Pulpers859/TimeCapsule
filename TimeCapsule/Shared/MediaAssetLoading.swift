@@ -410,6 +410,12 @@ nonisolated func loadImage(
                     state.resume(returning: image)
                     return
                 }
+                // Phone only, and the answer is that it would need iCloud:
+                // that is the final word, degraded or not.
+                if source == .phoneOnly, (info?[PHImageResultIsInCloudKey] as? Bool) == true {
+                    state.resume(returning: nil)
+                    return
+                }
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                 // The thumbnail takes its one answer, degraded or not. The
                 // others wait for the final one. The state resumes once, so

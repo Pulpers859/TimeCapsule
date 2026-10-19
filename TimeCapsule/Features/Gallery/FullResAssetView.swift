@@ -85,26 +85,33 @@ struct FullResAssetView: View {
         "\(asset.localIdentifier)|render:\(shouldRender)|detail:\(wantsDetail)"
     }
 
-    /// The screen in pixels. A photo fitted to the screen at 1x needs no
-    /// more than this, and asking for more is what turns "Optimize iPhone
-    /// Storage" into a download: the phone keeps a copy about this size,
-    /// and a 2732px request was larger than it.
+    /// The photo's own shape fitted to the screen, in pixels: exactly what
+    /// is shown at 1x, and no more.
+    ///
+    /// Asking for more is what turns "Optimize iPhone Storage" into a
+    /// download, because the copy the phone keeps is about screen-sized. The
+    /// first attempt at this was a square the length of the screen's long
+    /// side, which for a 4:3 photo asked for 2151×2868 to show 1320×1760 —
+    /// on a Pro Max more than the 2732 it replaced. Both orientations are
+    /// tried, since the viewer rotates, and the larger kept.
     private var screenPixelSize: CGSize {
         let screen = UIApplication.shared.connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.screen }
             .first
         let points = screen?.bounds.size ?? CGSize(width: 440, height: 956)
         let scale = screen?.scale ?? 3
-        let longest = max(points.width, points.height) * scale
-        // Square, so a landscape photo gets the same detail across the
-        // screen's width as a portrait one does down its height.
-        return CGSize(width: longest, height: longest)
-    }
+        let short = min(points.width, points.height) * scale
+        let long = max(points.width, points.height) * scale
+        let photoWidth = CGFloat(max(asset.pixelWidth, 1))
+        let photoHeight = CGFloat(max(asset.pixelHeight, 1))
 
-    /// Restarts when the page becomes current or stops being it, and once
-    /// the still first appears, since the motion waits for the still.
-    private var liveTaskID: String {
-        "\(asset.localIdentifier)|render:\(shouldRender)|current:\(isCurrent)|still:\(image != nil)"
+        func fitted(width: CGFloat, height: CGFloat) -> CGSize {
+            let ratio = min(width / photoWidth, height / photoHeight, 1)
+            return CGSize(width: (photoWidth * ratio).rounded(.up), height: (photoHeight * ratio).rounded(.up))
+        }
+        let portrait = fitted(width: short, height: long)
+        let landscape = fitted(width: long, height: short)
+        return portrait.width * portrait.height >= landscape.width * landscape.height ? portrait : landscape
     }
 
     var body: some View {
@@ -265,10 +272,13 @@ struct FullResAssetView: View {
             }
         }
         .task(id: mediaTaskID) {
-            // Every run starts without one: a run means a different memory,
-            // or for a video a change of current page, and neither should
-            // keep the previous Live Photo's video.
-            livePhoto = nil
+            // A different memory, or for a video a change of current page,
+            // must not keep the previous Live Photo's video. A retry of the
+            // same photo keeps it: nothing would load it again, since the
+            // Live Photo's own task does not restart for a retry.
+            if asset.mediaType == .video || stillAssetID != asset.localIdentifier {
+                livePhoto = nil
+            }
             guard shouldRender else {
                 releasePlayer()
                 image = nil
@@ -367,13 +377,26 @@ struct FullResAssetView: View {
         // Full resolution once the user zooms in, swapped in under the zoom
         // (`display(image:)` keeps the zoom for the same aspect ratio).
         .task(id: detailTaskID) {
-            guard wantsDetail, shouldRender, asset.mediaType == .image else { return }
+            guard wantsDetail, shouldRender, asset.mediaType == .image, !hasDetail else { return }
+            // Zoomed in on a copy that is not yet full resolution: say so
+            // while it comes, as for the first download.
+            stillState = .downloading(0)
+            let report: @Sendable (Double) -> Void = { value in
+                Task { @MainActor in
+                    if case .downloading = stillState { stillState = .downloading(value) }
+                }
+            }
             let detailed = await loadImage(
                 from: asset,
                 targetSize: CGSize(width: 4032, height: 4032),
-                contentMode: .aspectFit
+                contentMode: .aspectFit,
+                onProgress: report
             )
-            guard !Task.isCancelled, let detailed, stillAssetID == asset.localIdentifier else { return }
+            guard !Task.isCancelled, stillAssetID == asset.localIdentifier else { return }
+            guard let detailed else {
+                stillState = .couldNotDownload
+                return
+            }
             image = detailed
             hasDetail = true
             stillState = .settled
@@ -469,7 +492,7 @@ struct FullResAssetView: View {
         } else {
             // Only a thumbnail to show: say so, rather than let it pass for
             // the photo.
-            stillState = image == nil ? .settled : .couldNotDownload
+            stillState = (image == nil || hasDetail) ? .settled : .couldNotDownload
         }
         didFail = image == nil
         return true
@@ -504,7 +527,10 @@ struct FullResAssetView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(.black.opacity(0.55), in: Capsule())
-            .padding(.bottom, 14)
+            // Above the bottom controls, which sit over the page and are
+            // drawn on top of it: at 14pt this went under the counter, and
+            // the Try Again capsule under the info and LIVE buttons.
+            .padding(.bottom, 76)
             .allowsHitTesting(false)
         case .couldNotDownload:
             Button {
@@ -518,7 +544,10 @@ struct FullResAssetView: View {
                     .background(.black.opacity(0.6), in: Capsule())
                     .contentShape(Capsule())
             }
-            .padding(.bottom, 14)
+            // Above the bottom controls, which sit over the page and are
+            // drawn on top of it: at 14pt this went under the counter, and
+            // the Try Again capsule under the info and LIVE buttons.
+            .padding(.bottom, 76)
         }
     }
 
