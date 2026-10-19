@@ -47,6 +47,21 @@ struct FullResAssetView: View {
     /// load is tried again. Taking `isCurrent` out of a photo's task id
     /// removed the retry that used to come with every return to the page.
     @State private var stillRetry = 0
+    /// Whether the photo on screen is the real thing yet, said on screen so
+    /// a placeholder is never mistaken for it. The quick thumbnail used to
+    /// be left standing, blurry, with nothing to say a download was still
+    /// running — or had failed.
+    @State private var stillState: StillState = .settled
+    /// Set once the user zooms in. Full resolution is only visible then, so
+    /// it is only fetched then; at 1x a screen-sized copy is pixel for pixel
+    /// what is shown.
+    @State private var wantsDetail = false
+    /// Which memory `image` belongs to, so a retry can keep the copy on
+    /// screen while a different memory starts from nothing.
+    @State private var stillAssetID: String? = nil
+    /// The zoom-time full-resolution copy has replaced the screen-sized one,
+    /// which must not then be put back over it.
+    @State private var hasDetail = false
     /// Bumped whenever a newly loaded player is installed, purely so
     /// `onChange` has something to react to.
     @State private var playerGeneration = 0
@@ -64,6 +79,26 @@ struct FullResAssetView: View {
         asset.mediaType == .video
             ? "\(asset.localIdentifier)|render:\(shouldRender)|current:\(isCurrent)"
             : "\(asset.localIdentifier)|render:\(shouldRender)|retry:\(stillRetry)"
+    }
+
+    private var detailTaskID: String {
+        "\(asset.localIdentifier)|render:\(shouldRender)|detail:\(wantsDetail)"
+    }
+
+    /// The screen in pixels. A photo fitted to the screen at 1x needs no
+    /// more than this, and asking for more is what turns "Optimize iPhone
+    /// Storage" into a download: the phone keeps a copy about this size,
+    /// and a 2732px request was larger than it.
+    private var screenPixelSize: CGSize {
+        let screen = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.screen }
+            .first
+        let points = screen?.bounds.size ?? CGSize(width: 440, height: 956)
+        let scale = screen?.scale ?? 3
+        let longest = max(points.width, points.height) * scale
+        // Square, so a landscape photo gets the same detail across the
+        // screen's width as a portrait one does down its height.
+        return CGSize(width: longest, height: longest)
     }
 
     /// Restarts when the page becomes current or stops being it, and once
@@ -201,9 +236,17 @@ struct FullResAssetView: View {
                             livePhoto: livePhoto,
                             livePlaybackRequest: livePlaybackRequest,
                             isPlaybackAllowed: isPlaybackAllowed,
-                            onZoomStateChange: onZoomStateChange,
+                            onZoomStateChange: { zoomed in
+                                onZoomStateChange(zoomed)
+                                if zoomed { wantsDetail = true }
+                            },
                             onSingleTap: onToggleChrome
                         )
+                        .overlay(alignment: .bottom) {
+                            if isCurrent && showControls {
+                                stillStatusBadge
+                            }
+                        }
                     } else if didFail {
                         ContentUnavailableView("Couldn't Load Photo", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.white)
@@ -229,6 +272,8 @@ struct FullResAssetView: View {
             guard shouldRender else {
                 releasePlayer()
                 image = nil
+                stillAssetID = nil
+                resetStillState()
                 didFail = false
                 resetPlaybackState()
                 return
@@ -314,10 +359,24 @@ struct FullResAssetView: View {
                   asset.mediaSubtypes.contains(.photoLive) else { return }
             let loadedLivePhoto = await loadLivePhoto(
                 from: asset,
-                targetSize: CGSize(width: 2732, height: 2732)
+                targetSize: screenPixelSize
             )
             guard !Task.isCancelled else { return }
             livePhoto = loadedLivePhoto
+        }
+        // Full resolution once the user zooms in, swapped in under the zoom
+        // (`display(image:)` keeps the zoom for the same aspect ratio).
+        .task(id: detailTaskID) {
+            guard wantsDetail, shouldRender, asset.mediaType == .image else { return }
+            let detailed = await loadImage(
+                from: asset,
+                targetSize: CGSize(width: 4032, height: 4032),
+                contentMode: .aspectFit
+            )
+            guard !Task.isCancelled, let detailed, stillAssetID == asset.localIdentifier else { return }
+            image = detailed
+            hasDetail = true
+            stillState = .settled
         }
         // Shown only once a wait passes half a second, so a short buffer at
         // the start does not flash a spinner over a video that is fine.
@@ -331,7 +390,7 @@ struct FullResAssetView: View {
             showsVideoWaiting = true
         }
         .onChange(of: isCurrent) { _, current in
-            if current, didFail, asset.mediaType != .video {
+            if current, didFail || stillState == .couldNotDownload, asset.mediaType != .video {
                 stillRetry += 1
             }
             // Leaving the focused page is the only thing that releases the
@@ -358,32 +417,109 @@ struct FullResAssetView: View {
             onScrubbingChanged(false)
             releasePlayer()
             image = nil
+            stillAssetID = nil
+            resetStillState()
             livePhoto = nil
             didFail = false
             resetPlaybackState()
         }
     }
 
-    /// Shows what the phone already holds at once, then the full-quality
-    /// copy when it arrives. Returns false if the task was cancelled.
+    /// The thumbnail at once, then the sharp copy the phone holds, and only
+    /// failing that a download — with its progress on screen, and a way to
+    /// try again if it fails. Returns false if the task was cancelled.
     ///
-    /// Starts from a cleared image: this task re-runs only when the page is
-    /// given a different memory, and the previous one's photo must not stand
-    /// in for it while the new one loads.
+    /// A different memory starts from a cleared image, so the previous one's
+    /// photo never stands in for it. A retry of the same one keeps what is
+    /// already showing.
     private func loadStill() async -> Bool {
-        image = nil
-        let target = CGSize(width: 2732, height: 2732)
-        let preview = await loadQuickPreview(from: asset, targetSize: target)
-        guard !Task.isCancelled else { return false }
-        if let preview { image = preview }
+        if stillAssetID != asset.localIdentifier {
+            image = nil
+            resetStillState()
+            stillAssetID = asset.localIdentifier
+        }
+        let target = screenPixelSize
 
-        let full = await loadImage(from: asset, targetSize: target, contentMode: .aspectFit)
+        if image == nil {
+            let thumbnail = await loadImage(from: asset, targetSize: target, contentMode: .aspectFit, source: .instantThumbnail)
+            guard !Task.isCancelled else { return false }
+            if image == nil, let thumbnail { image = thumbnail }
+        }
+
+        let onPhone = await loadImage(from: asset, targetSize: target, contentMode: .aspectFit, source: .phoneOnly)
         guard !Task.isCancelled else { return false }
-        if let full { image = full }
-        // Failed only if there is nothing at all to show. A preview with no
-        // full-quality copy behind it is still the photo.
+        if let onPhone {
+            if !hasDetail { image = onPhone }
+            stillState = .settled
+            didFail = false
+            return true
+        }
+
+        stillState = .downloading(0)
+        let report: @Sendable (Double) -> Void = { value in
+            Task { @MainActor in
+                if case .downloading = stillState { stillState = .downloading(value) }
+            }
+        }
+        let downloaded = await loadImage(from: asset, targetSize: target, contentMode: .aspectFit, onProgress: report)
+        guard !Task.isCancelled else { return false }
+        if let downloaded {
+            if !hasDetail { image = downloaded }
+            stillState = .settled
+        } else {
+            // Only a thumbnail to show: say so, rather than let it pass for
+            // the photo.
+            stillState = image == nil ? .settled : .couldNotDownload
+        }
         didFail = image == nil
         return true
+    }
+
+    private func resetStillState() {
+        stillState = .settled
+        wantsDetail = false
+        hasDetail = false
+    }
+
+    enum StillState: Equatable {
+        case settled
+        case downloading(Double)
+        case couldNotDownload
+    }
+
+    @ViewBuilder
+    private var stillStatusBadge: some View {
+        switch stillState {
+        case .settled:
+            EmptyView()
+        case .downloading(let progress):
+            Label(
+                progress > 0
+                    ? "Downloading from iCloud · \(Int(progress * 100))%"
+                    : "Downloading from iCloud…",
+                systemImage: "icloud.and.arrow.down"
+            )
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.black.opacity(0.55), in: Capsule())
+            .padding(.bottom, 14)
+            .allowsHitTesting(false)
+        case .couldNotDownload:
+            Button {
+                stillRetry += 1
+            } label: {
+                Label("Couldn't get the full photo · Try Again", systemImage: "arrow.clockwise")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.black.opacity(0.6), in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .padding(.bottom, 14)
+        }
     }
 
     /// Brings the player in line with the current block state.

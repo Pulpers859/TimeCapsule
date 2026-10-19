@@ -358,37 +358,26 @@ nonisolated func dayIsEmptyOnlyBecauseOfExclusions() async -> Bool {
     return MemoryLibrary.count(on: date, exclusions: MemoryExclusions.Context.unfiltered) > 0
 }
 
+/// Where an image may come from, from quickest to slowest.
+nonisolated enum ImageSource: Sendable {
+    /// The phone's smallest cached copy, in one quick answer. Blurry at full
+    /// screen, so only ever a placeholder for one of the others.
+    case instantThumbnail
+    /// The best copy already on the phone, without going to iCloud. With
+    /// "Optimize iPhone Storage" that is usually a screen-sized copy, which
+    /// is all a photo shown at 1x needs. `nil` if it would need a download.
+    case phoneOnly
+    /// Downloading from iCloud if it has to.
+    case anywhere
+}
+
 @concurrent
 nonisolated func loadImage(
     from asset: PHAsset,
     targetSize: CGSize = CGSize(width: 800, height: 800),
-    contentMode: PHImageContentMode = .aspectFill
-) async -> UIImage? {
-    await requestImage(from: asset, targetSize: targetSize, contentMode: contentMode, quickPreview: false)
-}
-
-/// Whatever the phone already holds for this photo, without going to iCloud:
-/// usually a smaller copy, in a fraction of a second.
-///
-/// The viewer shows this first and then swaps in `loadImage`'s full-quality
-/// result. Before, it waited for the full-quality image alone, and with
-/// "Optimize iPhone Storage" that can be an iCloud download of the whole
-/// original — seconds of a spinner over a photo the phone could have shown at
-/// once. `nil` if the phone holds nothing for it.
-@concurrent
-nonisolated func loadQuickPreview(
-    from asset: PHAsset,
-    targetSize: CGSize
-) async -> UIImage? {
-    await requestImage(from: asset, targetSize: targetSize, contentMode: .aspectFit, quickPreview: true)
-}
-
-@concurrent
-nonisolated private func requestImage(
-    from asset: PHAsset,
-    targetSize: CGSize,
-    contentMode: PHImageContentMode,
-    quickPreview: Bool
+    contentMode: PHImageContentMode = .aspectFill,
+    source: ImageSource = .anywhere,
+    onProgress: (@Sendable (Double) -> Void)? = nil
 ) async -> UIImage? {
     let state = ImageRequestState()
     return await withTaskCancellationHandler(operation: {
@@ -397,10 +386,21 @@ nonisolated private func requestImage(
 
             let manager = PHImageManager.default()
             let options = PHImageRequestOptions()
-            // `.fastFormat` answers once with whatever is quickest, and does
-            // no high-quality pass alongside `loadImage`'s own.
-            options.deliveryMode = quickPreview ? .fastFormat : .highQualityFormat
-            options.isNetworkAccessAllowed = !quickPreview
+            switch source {
+            case .instantThumbnail:
+                // One answer, whatever is quickest, and no high-quality pass.
+                options.deliveryMode = .fastFormat
+                options.isNetworkAccessAllowed = false
+            case .phoneOnly:
+                options.deliveryMode = .highQualityFormat
+                options.isNetworkAccessAllowed = false
+            case .anywhere:
+                options.deliveryMode = .highQualityFormat
+                options.isNetworkAccessAllowed = true
+                if let onProgress {
+                    options.progressHandler = { value, _, _, _ in onProgress(value) }
+                }
+            }
             options.isSynchronous = false
 
             let requestID = manager.requestImage(for: asset, targetSize: targetSize, contentMode: contentMode, options: options) { image, info in
@@ -411,10 +411,10 @@ nonisolated private func requestImage(
                     return
                 }
                 let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-                // A preview takes its one answer, degraded or not, image or
-                // not. The full-quality request waits for the final one. The
-                // state resumes once, so later callbacks are ignored.
-                if isDegraded && !quickPreview { return }
+                // The thumbnail takes its one answer, degraded or not. The
+                // others wait for the final one. The state resumes once, so
+                // later callbacks are ignored.
+                if isDegraded && source != .instantThumbnail { return }
                 state.resume(returning: image)
             }
             state.setRequestID(requestID)
